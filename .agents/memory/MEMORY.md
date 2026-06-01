@@ -1,1 +1,2 @@
 - [sql.js on Node 24](sqljs-on-node24.md) — schedule api-server uses sql.js (WASM), not better-sqlite3; persist after every write, single-process only.
+- [УТП .docx import](utp-docx-import.md) — real УТП docs: multiple tables (pick by topic-like rows), multi-row merged headers (positional cols), toNumber must require a real digit (NaN leak).
