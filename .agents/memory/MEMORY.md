@@ -1,0 +1,1 @@
+- [better-sqlite3 native build](better-sqlite3-native-build.md) — node-gyp native installs fail in Replit (no Node-24 prebuilds, no Python); validate JS half with `npm install --ignore-scripts` + `vite build`.
