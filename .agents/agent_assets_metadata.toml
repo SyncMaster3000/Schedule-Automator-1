@@ -6,3 +6,9 @@ id = "kszTqRUgw-ITMd0NA8YRQ"
 uri = "file://schedule-app.tar.gz"
 type = "unspecified"
 title = "Проект schedule-app (исходники)"
+
+[[outputs]]
+id = "g-cjHmTW6NwvDVVRdy1Uw"
+uri = "file://schedule-app.zip"
+type = "unspecified"
+title = "Проект schedule-app (.zip со скриптами запуска)"
