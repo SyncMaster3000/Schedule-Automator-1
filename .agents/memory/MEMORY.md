@@ -1,1 +1,1 @@
-- [better-sqlite3 native build](better-sqlite3-native-build.md) — node-gyp native installs fail in Replit (no Node-24 prebuilds, no Python); validate JS half with `npm install --ignore-scripts` + `vite build`.
+- [sql.js on Node 24](sqljs-on-node24.md) — schedule api-server uses sql.js (WASM), not better-sqlite3; persist after every write, single-process only.
