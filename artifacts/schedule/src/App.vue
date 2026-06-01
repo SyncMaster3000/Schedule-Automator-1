@@ -6,7 +6,7 @@ import { RouterLink, RouterView } from "vue-router";
 <template>
   <div class="flex h-full">
     <!-- Боковая панель -->
-    <aside class="flex w-60 shrink-0 flex-col border-r border-slate-200 bg-white">
+    <aside class="flex w-60 shrink-0 flex-col border-r border-slate-200 bg-white/80 backdrop-blur-sm">
       <div class="flex items-center gap-2 px-5 py-5">
         <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-600 text-white">
           <svg

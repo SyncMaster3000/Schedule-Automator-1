@@ -1,5 +1,10 @@
 uploads = []
-generated = []
+
+[[generated]]
+id = "svM1kswVRDaYYiYbJ-c4g"
+uri = "file://artifacts/schedule/src/assets/app-background.png"
+type = "image"
+title = "app background"
 
 [[outputs]]
 id = "kszTqRUgw-ITMd0NA8YRQ"
