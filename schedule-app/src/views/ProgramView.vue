@@ -235,8 +235,9 @@ onMounted(async () => {
         <p class="text-sm text-slate-500">Очередь тем (FIFO). Распределяются в порядке следования.</p>
         <button class="btn-primary" @click="runImport">Импорт УТП (.docx)</button>
       </div>
-      <div v-if="!topics.length" class="card p-10 text-center text-slate-400">
-        Темы не загружены. Импортируйте файл УТП.
+      <div v-if="!topics.length" class="card flex flex-col items-center gap-4 p-12 text-center">
+        <div class="text-slate-400">Темы ещё не загружены. Импортируйте учебно-тематический план из файла Word (.docx).</div>
+        <button class="btn-primary" @click="runImport">Импорт УТП (.docx)</button>
       </div>
       <div v-else class="card overflow-hidden">
         <table class="w-full">

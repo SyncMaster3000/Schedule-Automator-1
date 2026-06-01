@@ -32,14 +32,14 @@ module.exports = {
   "ref:rooms:add": (data) => {
     const info = getDb()
       .prepare("INSERT INTO rooms (number, type, capacity) VALUES (?, ?, ?)")
-      .run(data.number, data.type || null, data.capacity || null);
+      .run(data.number, data.type || null, data.capacity ?? null);
     return { id: info.lastInsertRowid };
   },
 
   "ref:rooms:update": (data) => {
     getDb()
       .prepare("UPDATE rooms SET number = ?, type = ?, capacity = ? WHERE id = ?")
-      .run(data.number, data.type || null, data.capacity || null, data.id);
+      .run(data.number, data.type || null, data.capacity ?? null, data.id);
     return { id: data.id };
   },
 
