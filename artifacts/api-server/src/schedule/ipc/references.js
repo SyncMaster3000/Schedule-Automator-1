@@ -65,4 +65,43 @@ export default {
     tx();
     return { count: slots.length };
   },
+
+  // --- Именованные сетки учебных часов (несколько вариантов) ---
+  "ref:grids:list": () =>
+    getDb()
+      .prepare("SELECT * FROM time_grids ORDER BY sort_order, id")
+      .all()
+      .map((g) => ({
+        id: g.id,
+        name: g.name,
+        sort_order: g.sort_order,
+        slots: JSON.parse(g.slots_json || "[]"),
+      })),
+
+  // Создание или обновление сетки (по наличию id)
+  "ref:grids:save": (data) => {
+    const db = getDb();
+    const slotsJson = JSON.stringify(data.slots || []);
+    if (data.id) {
+      db.prepare("UPDATE time_grids SET name = ?, slots_json = ? WHERE id = ?").run(
+        data.name || "Без названия",
+        slotsJson,
+        data.id
+      );
+      return { id: data.id };
+    }
+    const order =
+      (db.prepare("SELECT MAX(sort_order) AS m FROM time_grids").get().m || 0) + 1;
+    const info = db
+      .prepare(
+        "INSERT INTO time_grids (name, slots_json, sort_order, created_at) VALUES (?, ?, ?, ?)"
+      )
+      .run(data.name || "Без названия", slotsJson, order, new Date().toISOString());
+    return { id: info.lastInsertRowid };
+  },
+
+  "ref:grids:delete": (id) => {
+    getDb().prepare("DELETE FROM time_grids WHERE id = ?").run(id);
+    return { id };
+  },
 };

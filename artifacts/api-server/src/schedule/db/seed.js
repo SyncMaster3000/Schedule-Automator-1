@@ -9,6 +9,8 @@ function seedReferences() {
   const roomCount = db.prepare("SELECT COUNT(*) AS c FROM rooms").get().c;
   const slotCount = db.prepare("SELECT COUNT(*) AS c FROM time_slots").get().c;
 
+  seedDefaultGrid(db);
+
   if (teacherCount > 0 && roomCount > 0 && slotCount > 0) return;
 
   const data = seedData;
@@ -37,6 +39,20 @@ function seedReferences() {
     }
   });
   tx();
+
+  seedDefaultGrid(db);
+}
+
+// Создаём одну именованную сетку «Основная сетка» из базовых слотов,
+// если именованных сеток ещё нет. Так per-day выбор сетки работает «из коробки».
+function seedDefaultGrid(db) {
+  const gridCount = db.prepare("SELECT COUNT(*) AS c FROM time_grids").get().c;
+  if (gridCount > 0) return;
+  const slots = db.prepare("SELECT start, end, is_break FROM time_slots ORDER BY start").all();
+  if (!slots.length) return;
+  db.prepare(
+    "INSERT INTO time_grids (name, slots_json, sort_order, created_at) VALUES (?, ?, ?, ?)"
+  ).run("Основная сетка", JSON.stringify(slots), 1, new Date().toISOString());
 }
 
 export { seedReferences };

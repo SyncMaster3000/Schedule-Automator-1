@@ -35,6 +35,7 @@ const READONLY = new Set([
   "ref:teachers:list",
   "ref:rooms:list",
   "ref:slots:list",
+  "ref:grids:list",
   "schedule:listByPeriod",
   "conflicts:check",
   "versions:list",

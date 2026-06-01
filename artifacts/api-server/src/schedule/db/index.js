@@ -88,6 +88,15 @@ CREATE TABLE IF NOT EXISTS time_slots (
   is_break INTEGER NOT NULL DEFAULT 0
 );
 
+-- Именованные сетки учебных часов: несколько разных вариантов на выбор.
+CREATE TABLE IF NOT EXISTS time_grids (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  slots_json TEXT NOT NULL DEFAULT '[]',
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS schedule_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   period_id INTEGER NOT NULL,
@@ -278,6 +287,8 @@ function runMigrations() {
   addColumnIfMissing("program_topics", "roundtable_hours", "roundtable_hours REAL NOT NULL DEFAULT 0");
   addColumnIfMissing("program_topics", "excluded", "excluded INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing("program_topics", "is_section", "is_section INTEGER NOT NULL DEFAULT 0");
+  // Вид занятия по умолчанию для темы (напр. «Зачёт»/«Экзамен» из формы аттестации)
+  addColumnIfMissing("program_topics", "default_lesson_type", "default_lesson_type TEXT");
 }
 
 // Однократная асинхронная инициализация (sql.js грузится асинхронно).

@@ -25,7 +25,7 @@ const importPreview = ref(null); // { topics, meta }
 // --- Период ---
 const showPeriod = ref(false);
 const periodForm = ref(blankPeriod());
-const slotsTemplate = ref([]);
+const grids = ref([]); // именованные сетки учебных часов
 
 function blankPeriod() {
   return {
@@ -34,6 +34,7 @@ function blankPeriod() {
     end_date: "",
     groups: "",
     autofill: true,
+    grid_id: null,
     time_grid: [],
   };
 }
@@ -96,10 +97,17 @@ async function toggleExcluded(t) {
 }
 
 function openPeriod() {
-  // Подставляем базовую сетку из справочника
   periodForm.value = blankPeriod();
-  periodForm.value.time_grid = JSON.parse(JSON.stringify(slotsTemplate.value));
+  // По умолчанию — первая доступная сетка учебных часов
+  if (grids.value.length) selectGrid(grids.value[0].id);
   showPeriod.value = true;
+}
+
+// Выбор сетки учебных часов для всего периода
+function selectGrid(id) {
+  periodForm.value.grid_id = id;
+  const grid = grids.value.find((g) => g.id === id);
+  periodForm.value.time_grid = grid ? JSON.parse(JSON.stringify(grid.slots)) : [];
 }
 
 async function createPeriod() {
@@ -177,7 +185,7 @@ const statusLabel = {
 onMounted(async () => {
   await loadAll();
   try {
-    slotsTemplate.value = await api.references.slots();
+    grids.value = await api.references.grids();
   } catch (e) {
     /* пусто */
   }
@@ -422,12 +430,23 @@ onMounted(async () => {
           <label class="label">Группы (через запятую)</label>
           <input v-model="periodForm.groups" class="input" placeholder="Группа А, Группа Б" />
         </div>
+        <div>
+          <label class="label">Сетка учебных часов</label>
+          <select
+            :value="periodForm.grid_id"
+            class="input"
+            @change="selectGrid(Number($event.target.value))"
+          >
+            <option v-if="!grids.length" :value="null">Нет сеток — создайте в справочнике</option>
+            <option v-for="g in grids" :key="g.id" :value="g.id">{{ g.name }}</option>
+          </select>
+        </div>
         <label class="flex items-center gap-2 text-sm text-slate-600">
           <input v-model="periodForm.autofill" type="checkbox" />
           Автоматически заполнить темами из очереди
         </label>
         <p class="text-xs text-slate-400">
-          Сетка занятий ({{ periodForm.time_grid.length }} слотов) берётся из справочника.
+          В сетке слотов: {{ periodForm.time_grid.length }}.
         </p>
       </div>
       <template #footer>

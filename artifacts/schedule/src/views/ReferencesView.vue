@@ -10,7 +10,7 @@ const info = ref("");
 
 const teachers = ref([]);
 const rooms = ref([]);
-const slots = ref([]);
+const grids = ref([]);
 
 const newTeacher = ref({ fio: "", department: "" });
 const newRoom = ref({ number: "", type: "", capacity: null });
@@ -18,6 +18,7 @@ const newRoom = ref({ number: "", type: "", capacity: null });
 // Редактирование существующих записей
 const editTeacher = ref(null);
 const editRoom = ref(null);
+const editGrid = ref(null); // редактируемая сетка учебных часов { id?, name, slots[] }
 
 function flash(msg) {
   info.value = msg;
@@ -33,10 +34,10 @@ function normCap(v) {
 async function loadAll() {
   error.value = "";
   try {
-    [teachers.value, rooms.value, slots.value] = await Promise.all([
+    [teachers.value, rooms.value, grids.value] = await Promise.all([
       api.references.teachers(),
       api.references.rooms(),
-      api.references.slots(),
+      api.references.grids(),
     ]);
   } catch (e) {
     error.value = e.message;
@@ -132,21 +133,52 @@ async function removeRoom(id) {
   }
 }
 
-// --- Слоты ---
+// --- Сетки учебных часов (несколько именованных вариантов) ---
+function newGrid() {
+  editGrid.value = {
+    name: "",
+    slots: [{ start: "09:00", end: "10:30", is_break: 0 }],
+  };
+}
+function openGrid(g) {
+  editGrid.value = JSON.parse(JSON.stringify(g));
+}
 function addSlot() {
-  slots.value.push({ start: "09:00", end: "10:30", is_break: 0 });
+  editGrid.value.slots.push({ start: "09:00", end: "10:30", is_break: 0 });
 }
 function removeSlot(idx) {
-  slots.value.splice(idx, 1);
+  editGrid.value.slots.splice(idx, 1);
 }
-async function saveSlots() {
+async function saveGrid() {
+  if (!editGrid.value.name.trim()) {
+    error.value = "Укажите название сетки";
+    return;
+  }
   try {
-    await api.references.saveSlots(JSON.parse(JSON.stringify(slots.value)));
-    slots.value = await api.references.slots();
-    flash("Сетка занятий сохранена");
+    await api.references.saveGrid({
+      id: editGrid.value.id,
+      name: editGrid.value.name.trim(),
+      slots: JSON.parse(JSON.stringify(editGrid.value.slots)),
+    });
+    editGrid.value = null;
+    grids.value = await api.references.grids();
+    flash("Сетка учебных часов сохранена");
   } catch (e) {
     error.value = e.message;
   }
+}
+async function removeGrid(id) {
+  if (!confirm("Удалить сетку учебных часов?")) return;
+  try {
+    await api.references.removeGrid(id);
+    grids.value = await api.references.grids();
+    flash("Сетка удалена");
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+function lessonSlotCount(g) {
+  return (g.slots || []).filter((s) => !s.is_break).length;
 }
 
 onMounted(loadAll);
@@ -167,7 +199,7 @@ onMounted(loadAll);
         Аудитории ({{ rooms.length }})
       </button>
       <button class="tab" :class="{ 'tab-active': tab === 'slots' }" @click="tab = 'slots'">
-        Временные слоты
+        Учебные часы ({{ grids.length }})
       </button>
     </div>
 
@@ -236,26 +268,41 @@ onMounted(loadAll);
       </table>
     </div>
 
-    <!-- Слоты -->
+    <!-- Сетки учебных часов -->
     <div v-if="tab === 'slots'" class="card p-5">
-      <p class="mb-3 text-sm text-slate-500">
-        Базовая сетка занятий. Отметьте перерывы — они не заполняются автоматически.
-      </p>
-      <div class="space-y-2">
-        <div v-for="(s, i) in slots" :key="i" class="flex items-center gap-2">
-          <input v-model="s.start" type="time" class="input w-32" />
-          <span class="text-slate-400">—</span>
-          <input v-model="s.end" type="time" class="input w-32" />
-          <label class="flex items-center gap-1 text-sm text-slate-600">
-            <input type="checkbox" :checked="!!s.is_break" @change="s.is_break = $event.target.checked ? 1 : 0" />
-            Перерыв
-          </label>
-          <button class="btn-ghost text-red-500" @click="removeSlot(i)">✕</button>
-        </div>
+      <div class="mb-4 flex items-center justify-between">
+        <p class="text-sm text-slate-500">
+          Сетки учебных часов. Создавайте несколько вариантов — их можно выбирать
+          при создании расписания и для отдельного дня в конструкторе.
+        </p>
+        <button class="btn-primary shrink-0" @click="newGrid">+ Новая сетка</button>
       </div>
-      <div class="mt-4 flex gap-2">
-        <button class="btn-secondary" @click="addSlot">+ Слот</button>
-        <button class="btn-primary" @click="saveSlots">Сохранить сетку</button>
+      <div v-if="!grids.length" class="text-sm text-slate-400">
+        Сеток пока нет. Создайте первую, чтобы планировать занятия.
+      </div>
+      <div v-else class="grid gap-3 sm:grid-cols-2">
+        <div v-for="g in grids" :key="g.id" class="rounded-lg border border-slate-200 p-4">
+          <div class="flex items-start justify-between">
+            <h3 class="font-semibold text-slate-800">{{ g.name }}</h3>
+            <div class="flex gap-1">
+              <button class="btn-ghost" @click="openGrid(g)">Изменить</button>
+              <button class="btn-ghost text-red-500" @click="removeGrid(g.id)">✕</button>
+            </div>
+          </div>
+          <p class="mt-1 text-xs text-slate-500">
+            Занятий в день: {{ lessonSlotCount(g) }} · всего слотов: {{ g.slots.length }}
+          </p>
+          <div class="mt-2 flex flex-wrap gap-1">
+            <span
+              v-for="(s, i) in g.slots"
+              :key="i"
+              class="badge"
+              :class="s.is_break ? 'bg-slate-100 text-slate-400' : 'bg-blue-50 text-blue-700'"
+            >
+              {{ s.start }}–{{ s.end }}{{ s.is_break ? " (перерыв)" : "" }}
+            </span>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -296,6 +343,40 @@ onMounted(loadAll);
       <template #footer>
         <button class="btn-secondary" @click="editRoom = null">Отмена</button>
         <button class="btn-primary" @click="saveRoom">Сохранить</button>
+      </template>
+    </AppModal>
+
+    <!-- Редактор сетки учебных часов -->
+    <AppModal
+      v-if="editGrid"
+      :title="editGrid.id ? 'Изменить сетку' : 'Новая сетка'"
+      @close="editGrid = null"
+    >
+      <div class="space-y-3">
+        <div>
+          <label class="label">Название сетки *</label>
+          <input v-model="editGrid.name" class="input" placeholder="Напр.: Сокращённый день" />
+        </div>
+        <p class="text-sm text-slate-500">
+          Отметьте перерывы — они не заполняются занятиями автоматически.
+        </p>
+        <div class="space-y-2">
+          <div v-for="(s, i) in editGrid.slots" :key="i" class="flex items-center gap-2">
+            <input v-model="s.start" type="time" class="input w-32" />
+            <span class="text-slate-400">—</span>
+            <input v-model="s.end" type="time" class="input w-32" />
+            <label class="flex items-center gap-1 text-sm text-slate-600">
+              <input type="checkbox" :checked="!!s.is_break" @change="s.is_break = $event.target.checked ? 1 : 0" />
+              Перерыв
+            </label>
+            <button class="btn-ghost text-red-500" @click="removeSlot(i)">✕</button>
+          </div>
+        </div>
+        <button class="btn-secondary" @click="addSlot">+ Слот</button>
+      </div>
+      <template #footer>
+        <button class="btn-secondary" @click="editGrid = null">Отмена</button>
+        <button class="btn-primary" @click="saveGrid">Сохранить</button>
       </template>
     </AppModal>
   </div>

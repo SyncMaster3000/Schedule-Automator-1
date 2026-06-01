@@ -35,6 +35,20 @@ async function load() {
   }
 }
 
+// Открыть форму создания, подставив утверждающего/подписанта из последнего
+// расписания (programs.list отсортирован по updated_at DESC). Поля редактируемы.
+function openCreate() {
+  const prev = programs.value[0];
+  form.value = blankForm();
+  if (prev) {
+    form.value.approver_name = prev.approver_name || "";
+    form.value.approver_title = prev.approver_title || "";
+    form.value.signer_name = prev.signer_name || "";
+    form.value.signer_title = prev.signer_title || "";
+  }
+  showCreate.value = true;
+}
+
 async function create() {
   if (!form.value.title.trim()) {
     error.value = "Укажите название программы";
@@ -74,9 +88,11 @@ onMounted(load);
     <div class="mb-6 flex items-center justify-between">
       <div>
         <h1 class="text-2xl font-bold text-slate-800">Учебные программы</h1>
-        <p class="text-sm text-slate-500">Создание и ведение расписаний по УТП</p>
+        <p class="text-sm text-slate-500">
+          Создание и ведение расписаний на основании учебно-тематических планов
+        </p>
       </div>
-      <button class="btn-primary" @click="showCreate = true">+ Новая программа</button>
+      <button class="btn-primary" @click="openCreate">+ Новое расписание</button>
     </div>
 
     <div v-if="error" class="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -120,7 +136,7 @@ onMounted(load);
       </div>
     </div>
 
-    <AppModal v-if="showCreate" title="Новая программа" @close="showCreate = false">
+    <AppModal v-if="showCreate" title="Новое расписание" @close="showCreate = false">
       <div class="space-y-3">
         <div>
           <label class="label">Название программы *</label>

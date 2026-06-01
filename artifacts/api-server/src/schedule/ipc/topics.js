@@ -19,13 +19,13 @@ export default {
         `INSERT INTO program_topics
           (program_id, utp_number, title, total_hours, lecture_hours, practice_hours,
            roundtable_hours, default_dept, note, status, scheduled_hours,
-           excluded, is_section, sort_order)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)`
+           excluded, is_section, default_lesson_type, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?)`
       );
       topics.forEach((t, idx) => {
         insert.run(
           programId,
-          t.utp_number || String(idx + 1),
+          t.utp_number != null ? t.utp_number : String(idx + 1),
           t.title,
           t.total_hours || 0,
           t.lecture_hours || 0,
@@ -35,6 +35,7 @@ export default {
           t.note || null,
           t.excluded ? 1 : 0,
           t.is_section ? 1 : 0,
+          t.default_lesson_type || null,
           t.sort_order != null ? t.sort_order : idx + 1
         );
       });

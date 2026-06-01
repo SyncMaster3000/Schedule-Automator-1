@@ -153,6 +153,9 @@ export const api = {
     removeRoom: (id) => call("ref:rooms:delete", id),
     slots: () => call("ref:slots:list"),
     saveSlots: (d) => call("ref:slots:save", d),
+    grids: () => call("ref:grids:list"),
+    saveGrid: (d) => call("ref:grids:save", d),
+    removeGrid: (id) => call("ref:grids:delete", id),
   },
   schedule: {
     listByPeriod: (periodId, crossPeriod = false) =>

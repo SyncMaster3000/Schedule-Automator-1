@@ -53,6 +53,17 @@ function isAggregateRow(cells) {
   return /^(всего|итого|форма)/.test(first);
 }
 
+// Строка формы итоговой аттестации: «Форма итоговой аттестации: Зачет/Экзамен».
+// Возвращает вид занятия («Зачёт»/«Экзамен») либо null. Текст может быть разнесён
+// по нескольким ячейкам, поэтому склеиваем всю строку.
+function detectAssessment(cells) {
+  const joined = normalize(cells.join(" "));
+  if (!/форма/.test(joined) || !/аттестац/.test(joined)) return null;
+  if (/экзамен/.test(joined)) return "Экзамен";
+  if (/зач[её]т/.test(joined)) return "Зачёт";
+  return null;
+}
+
 // Похожа ли строка на тему/раздел УТП (для оценки таблицы и выбора нужной)
 function looksLikeTopicRow(cells) {
   if (cells.length < 3) return false;
@@ -179,6 +190,29 @@ async function importUtp(input) {
     const cells = getCells(tr);
     if (cells.length < 3) continue;
     if (isColumnNumberRow(cells)) continue;
+
+    // Форма итоговой аттестации (Зачёт/Экзамен) — отдельное занятие в расписании.
+    // По умолчанию занимает 6 академических часов (3 занятия по 2 часа).
+    const assessment = detectAssessment(cells);
+    if (assessment) {
+      order += 1;
+      topics.push({
+        utp_number: "",
+        title: assessment,
+        total_hours: 6,
+        lecture_hours: 0,
+        practice_hours: 0,
+        roundtable_hours: 0,
+        note: "",
+        is_section: 0,
+        excluded: 0,
+        status: "pending",
+        default_lesson_type: assessment,
+        sort_order: order,
+      });
+      continue;
+    }
+
     if (isAggregateRow(cells)) continue;
 
     const number = (cells[cols.number] || "").trim();

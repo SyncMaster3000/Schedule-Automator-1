@@ -25,6 +25,13 @@ const crossPeriod = ref(false);
 const error = ref("");
 const info = ref("");
 
+// Сетки учебных часов (для выбора другой сетки на отдельный день)
+const grids = ref([]);
+const dayGrid = ref({}); // выбранная сетка по дате: { 'yyyy-mm-dd': gridId }
+
+// Поведение при перетаскивании: поменять местами два занятия или сместить весь ряд
+const dragMode = ref("swap"); // 'swap' | 'shift'
+
 // --- Редактор занятия ---
 const editing = ref(null); // копия занятия
 const editConflicts = ref([]);
@@ -138,12 +145,14 @@ async function load() {
     const data = await api.schedule.listByPeriod(periodId.value, crossPeriod.value);
     period.value = data.period;
     items.value = data.items.map(normalize);
-    [topics.value, groups.value, teachers.value, rooms.value] = await Promise.all([
-      api.topics.list(programId.value),
-      api.groups.list(periodId.value),
-      api.references.teachers(),
-      api.references.rooms(),
-    ]);
+    [topics.value, groups.value, teachers.value, rooms.value, grids.value] =
+      await Promise.all([
+        api.topics.list(programId.value),
+        api.groups.list(periodId.value),
+        api.references.teachers(),
+        api.references.rooms(),
+        api.references.grids(),
+      ]);
   } catch (e) {
     error.value = e.message;
   }
@@ -247,10 +256,14 @@ async function deleteItem() {
 
 // Drag-and-drop: занятия меняются местами по дням и часам. Слоты (дата+время)
 // остаются на своих позициях, а перетаскивание переносит занятие в другой слот.
+// Два режима: «Поменять местами» (swap — затрагиваются только два занятия) и
+// «Сместить весь ряд» (shift — все занятия сдвигаются по позициям).
 const dragSlots = ref([]);
+const dragOrder = ref([]);
 
 function onDragStart() {
-  // Снимок текущих слотов в порядке отображения — до изменения порядка.
+  // Снимок текущих слотов и порядка занятий — до изменения порядка.
+  dragOrder.value = [...items.value];
   dragSlots.value = items.value.map((it) => ({
     date: it.date,
     start_time: it.start_time,
@@ -258,36 +271,107 @@ function onDragStart() {
   }));
 }
 
-async function onDragEnd() {
+async function onDragEnd(evt) {
   const slots = dragSlots.value;
-  if (!slots.length) return;
+  if (!slots.length) {
+    dragOrder.value = [];
+    return;
+  }
   error.value = "";
   try {
-    // После перестановки переназначаем слоты позиционно и сохраняем изменившиеся.
-    for (let i = 0; i < items.value.length; i++) {
-      const slot = slots[i];
-      const it = items.value[i];
-      if (!slot) break;
-      if (
-        it.date === slot.date &&
-        it.start_time === slot.start_time &&
-        it.end_time === slot.end_time
-      )
-        continue;
-      await api.schedule.saveItem({
-        ...it,
-        date: slot.date,
-        start_time: slot.start_time,
-        end_time: slot.end_time,
-        crossPeriod: crossPeriod.value,
-      });
+    if (dragMode.value === "swap") {
+      await swapItems(evt);
+    } else {
+      await shiftItems(slots);
     }
-    info.value = "Занятия переставлены по дням и часам";
     await load();
   } catch (e) {
     error.value = e.message;
   } finally {
     dragSlots.value = [];
+    dragOrder.value = [];
+  }
+}
+
+// Поменять местами только перетянутое и целевое занятие (их слоты дата+время).
+async function swapItems(evt) {
+  const oldIndex = evt?.oldIndex;
+  const newIndex = evt?.newIndex;
+  const order = dragOrder.value;
+  const slots = dragSlots.value;
+  if (oldIndex == null || newIndex == null || oldIndex === newIndex) return;
+  const moved = order[oldIndex];
+  const target = order[newIndex];
+  if (!moved || !target || moved === target) return;
+  await api.schedule.saveItem({
+    ...moved,
+    date: slots[newIndex].date,
+    start_time: slots[newIndex].start_time,
+    end_time: slots[newIndex].end_time,
+    crossPeriod: crossPeriod.value,
+  });
+  await api.schedule.saveItem({
+    ...target,
+    date: slots[oldIndex].date,
+    start_time: slots[oldIndex].start_time,
+    end_time: slots[oldIndex].end_time,
+    crossPeriod: crossPeriod.value,
+  });
+  info.value = "Занятия поменялись местами";
+}
+
+// Сместить весь ряд: переназначаем слоты позиционно и сохраняем изменившиеся.
+async function shiftItems(slots) {
+  for (let i = 0; i < items.value.length; i++) {
+    const slot = slots[i];
+    const it = items.value[i];
+    if (!slot) break;
+    if (
+      it.date === slot.date &&
+      it.start_time === slot.start_time &&
+      it.end_time === slot.end_time
+    )
+      continue;
+    await api.schedule.saveItem({
+      ...it,
+      date: slot.date,
+      start_time: slot.start_time,
+      end_time: slot.end_time,
+      crossPeriod: crossPeriod.value,
+    });
+  }
+  info.value = "Занятия переставлены по дням и часам";
+}
+
+// Применить выбранную сетку учебных часов к одному дню: занятия этого дня
+// перенумеровываются по слотам выбранной сетки (по порядку, перерывы пропускаются).
+async function applyDayGrid(date, gridId) {
+  dayGrid.value[date] = gridId;
+  const grid = grids.value.find((g) => g.id === gridId);
+  if (!grid) return;
+  const lessonSlots = (grid.slots || []).filter((s) => !s.is_break);
+  const dayItems = items.value.filter((it) => it.date === date);
+  if (lessonSlots.length < dayItems.length) {
+    error.value = `В сетке «${grid.name}» только ${lessonSlots.length} занятий в день, а в этом дне ${dayItems.length}. Лишние останутся без изменений.`;
+  } else {
+    error.value = "";
+  }
+  try {
+    for (let i = 0; i < dayItems.length && i < lessonSlots.length; i++) {
+      const it = dayItems[i];
+      const s = lessonSlots[i];
+      if (it.start_time === s.start && it.end_time === s.end) continue;
+      await api.schedule.saveItem({
+        ...it,
+        start_time: s.start,
+        end_time: s.end,
+        crossPeriod: crossPeriod.value,
+      });
+    }
+    info.value = `Для дня применена сетка «${grid.name}»`;
+    await load();
+  } catch (e) {
+    error.value = e.message;
   }
 }
 
@@ -405,6 +489,13 @@ onMounted(load);
       <button v-if="selected.length" class="btn-ghost text-slate-500" @click="selected = []">
         Сбросить
       </button>
+      <div class="flex items-center gap-2 border-l border-slate-200 pl-3 text-slate-600">
+        <span>При перетаскивании:</span>
+        <select v-model="dragMode" class="input h-8 w-auto py-0 text-sm">
+          <option value="swap">Поменять местами два</option>
+          <option value="shift">Сместить весь ряд</option>
+        </select>
+      </div>
     </div>
 
     <div v-if="!items.length" class="card p-10 text-center text-slate-400">
@@ -428,6 +519,16 @@ onMounted(load);
         >
           <span class="h-px flex-1 bg-blue-100"></span>
           {{ formatDayHeader(it.date) }}
+          <select
+            v-if="grids.length"
+            :value="dayGrid[it.date] ?? ''"
+            class="input h-7 w-auto py-0 text-xs font-normal text-slate-600"
+            title="Применить сетку учебных часов к этому дню"
+            @change="applyDayGrid(it.date, Number($event.target.value))"
+          >
+            <option value="" disabled>Сетка дня…</option>
+            <option v-for="g in grids" :key="g.id" :value="g.id">{{ g.name }}</option>
+          </select>
           <span class="h-px flex-1 bg-blue-100"></span>
         </div>
         <div
@@ -453,7 +554,7 @@ onMounted(load);
               {{ itemTitle(it) }}
             </div>
             <div class="truncate text-xs text-slate-500">
-              {{ it.lesson_type }} ·
+              <template v-if="it.lesson_type">{{ it.lesson_type }} · </template>
               {{ teacherNames(it.teacher_ids) || "преп. не назначен" }} ·
               ауд. {{ roomNumber(it.room_id) }}
             </div>
@@ -502,6 +603,7 @@ onMounted(load);
         <div>
           <label class="label">Вид занятия</label>
           <select v-model="editing.lesson_type" class="input">
+            <option :value="''">— Без вида (орг. мероприятие) —</option>
             <option>Лекция</option>
             <option>Практическое занятие</option>
             <option>Семинар</option>

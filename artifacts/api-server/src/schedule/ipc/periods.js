@@ -11,6 +11,14 @@ function plannedSlots(topic) {
   const addType = (hours, type) => {
     for (let h = 0; h < (hours || 0); h += HOURS_PER_SLOT) slots.push(type);
   };
+
+  // Тема с заданным видом по умолчанию (напр. «Зачёт»/«Экзамен» из формы
+  // итоговой аттестации) — все её часы заполняются этим видом занятия.
+  if (topic.default_lesson_type) {
+    addType(topic.total_hours || HOURS_PER_SLOT, topic.default_lesson_type);
+    return slots;
+  }
+
   addType(topic.lecture_hours, "Лекция");
   addType(topic.practice_hours, "Практическое занятие");
   addType(topic.roundtable_hours, "Круглый стол");
