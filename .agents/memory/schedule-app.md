@@ -16,5 +16,14 @@ description: How to type/template-check the Vue schedule artifact and key data-m
 - autofill emits Лекция / Практическое занятие / Круглый стол from lecture/practice/roundtable hours.
 - Bulk-assign in ScheduleBuilder spreads a normalized item (teacher_ids/group_ids are arrays) into api.schedule.saveItem, which JSON.stringifies them — keep that array shape.
 
+# api-server is built, not hot-reloaded
+- The `artifacts/api-server` dev workflow runs `pnpm run build && pnpm run start` (esbuild → dist/index.mjs), so it only rebuilds on **restart**. Editing `src/schedule/**` does NOT take effect until you restart the `artifacts/api-server: API Server` workflow.
+- Symptom of forgetting: source is provably correct (verified via node test) but the running app shows old behavior (e.g. user reports portrait export / sections not importable). Always restart api-server after backend edits, then re-test.
+
 # Export
-- docxExport renders Times New Roman, merged Дата/День cells per day, "Тема X.Y title" for topics (plain title for is_section rows), stacked teachers, signature footer. Test renderer in isolation with synthetic items + mammoth (no DB needed).
+- docxExport renders Times New Roman, landscape orientation, merged Дата/День cells per day, "Тема X.Y title" for topics (plain title for is_section rows), stacked teachers, signature footer. Test renderer in isolation with synthetic items + mammoth or jszip (no DB needed).
+- The «…» program name in the header subtitle comes from `program.description` (full official name), falling back to `program.title`.
+- Дата/День data cells use vertical text via `TextDirection.BOTTOM_TO_TOP_LEFT_TO_RIGHT` (XML `w:textDirection w:val="btLr"`) plus vMerge. Verify export XML for `w:orient="landscape"`, `w:vMerge w:val="restart"`, and `w:textDirection w:val="btLr"`.
+
+# Schedule constructor drag-and-drop
+- ScheduleBuilder drag swaps lessons by day+time: `onDragStart` snapshots the ordered slots (date/start_time/end_time), `onDragEnd` reassigns those slots positionally to the reordered items and persists each changed item via api.schedule.saveItem. Slots stay fixed; dragging moves which lesson occupies which slot.

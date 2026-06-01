@@ -8,24 +8,36 @@ import { RouterLink, RouterView } from "vue-router";
     <!-- Боковая панель -->
     <aside class="flex w-60 shrink-0 flex-col border-r border-slate-200 bg-white">
       <div class="flex items-center gap-2 px-5 py-5">
-        <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-600 text-white font-bold">
-          Р
+        <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-600 text-white">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            class="h-5 w-5"
+          >
+            <rect x="3" y="4" width="18" height="18" rx="2" />
+            <path d="M16 2v4M8 2v4M3 10h18" />
+            <path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01" />
+          </svg>
         </div>
         <div>
-          <div class="text-sm font-semibold text-slate-800">Расписание</div>
-          <div class="text-xs text-slate-400">Конструктор УТП</div>
+          <div class="text-sm font-semibold text-slate-800">Конструктор расписаний</div>
         </div>
       </div>
 
       <nav class="flex-1 space-y-1 px-3">
         <RouterLink to="/" class="nav-link" active-class="nav-active">
-          Программы
+          Создать расписание
         </RouterLink>
         <RouterLink to="/references" class="nav-link" active-class="nav-active">
-          Справочники
+          Список преподавателей, аудиторий, учебных часов
         </RouterLink>
         <RouterLink to="/archive" class="nav-link" active-class="nav-active">
-          Архив версий
+          Архив расписаний
         </RouterLink>
       </nav>
 

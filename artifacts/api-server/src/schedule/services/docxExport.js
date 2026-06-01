@@ -14,6 +14,7 @@ import {
   VerticalMergeType,
   BorderStyle,
   PageOrientation,
+  TextDirection,
 } from "docx";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -40,13 +41,17 @@ function pLines(lines, { align = AlignmentType.LEFT, bold = false, size = BODY_S
 }
 
 // Ячейка с одним или несколькими абзацами (например, преподаватели по строкам)
-function cell(content, { bold = false, align = AlignmentType.LEFT, width, verticalMerge } = {}) {
+function cell(
+  content,
+  { bold = false, align = AlignmentType.LEFT, width, verticalMerge, textDirection } = {}
+) {
   const lines = Array.isArray(content) ? content : [content];
   return new TableCell({
     verticalAlign: VerticalAlign.CENTER,
     width: width ? { size: width, type: WidthType.PERCENTAGE } : undefined,
     borders: CELL_BORDERS,
     verticalMerge,
+    textDirection,
     children:
       verticalMerge === VerticalMergeType.CONTINUE
         ? [new Paragraph({ children: [] })]
@@ -84,9 +89,12 @@ function buildHeader(program, dateRange, groupName) {
   out.push(...pLines("__.__.20__", { align: AlignmentType.RIGHT }));
   out.push(...pLines("", {}));
   out.push(...pLines("РАСПИСАНИЕ", { align: AlignmentType.CENTER, bold: true, size: 28 }));
+  // Полное наименование программы для шапки берём из описания (официальное
+  // название), а короткий program.title оставляем как запасной вариант.
+  const fullName = (program.description || "").trim() || program.title;
   const subtitle =
     `учебных занятий по образовательной программе повышения квалификации ` +
-    `«${program.title}»` +
+    `«${fullName}»` +
     (dateRange ? ` (${dateRange})` : "") +
     (groupName ? `, учебная группа № ${groupName}` : "");
   out.push(...pLines(subtitle, { align: AlignmentType.CENTER }));
@@ -138,10 +146,12 @@ function buildTable(items, ctx, groupColumn) {
       cell(firstOfDay ? fmtDate(it.date) : "", {
         align: AlignmentType.CENTER,
         verticalMerge: merge,
+        textDirection: TextDirection.BOTTOM_TO_TOP_LEFT_TO_RIGHT,
       }),
       cell(firstOfDay ? weekdayRu(it.date) : "", {
         align: AlignmentType.CENTER,
         verticalMerge: merge,
+        textDirection: TextDirection.BOTTOM_TO_TOP_LEFT_TO_RIGHT,
       }),
       cell(`${it.start_time}-${it.end_time}`, { align: AlignmentType.CENTER }),
       cell(topicLabel(it)),

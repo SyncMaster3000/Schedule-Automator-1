@@ -245,7 +245,52 @@ async function deleteItem() {
   await load();
 }
 
-// Пересчёт дат/времени по текущему порядку (после drag-and-drop)
+// Drag-and-drop: занятия меняются местами по дням и часам. Слоты (дата+время)
+// остаются на своих позициях, а перетаскивание переносит занятие в другой слот.
+const dragSlots = ref([]);
+
+function onDragStart() {
+  // Снимок текущих слотов в порядке отображения — до изменения порядка.
+  dragSlots.value = items.value.map((it) => ({
+    date: it.date,
+    start_time: it.start_time,
+    end_time: it.end_time,
+  }));
+}
+
+async function onDragEnd() {
+  const slots = dragSlots.value;
+  if (!slots.length) return;
+  error.value = "";
+  try {
+    // После перестановки переназначаем слоты позиционно и сохраняем изменившиеся.
+    for (let i = 0; i < items.value.length; i++) {
+      const slot = slots[i];
+      const it = items.value[i];
+      if (!slot) break;
+      if (
+        it.date === slot.date &&
+        it.start_time === slot.start_time &&
+        it.end_time === slot.end_time
+      )
+        continue;
+      await api.schedule.saveItem({
+        ...it,
+        date: slot.date,
+        start_time: slot.start_time,
+        end_time: slot.end_time,
+        crossPeriod: crossPeriod.value,
+      });
+    }
+    info.value = "Занятия переставлены по дням и часам";
+    await load();
+  } catch (e) {
+    error.value = e.message;
+  } finally {
+    dragSlots.value = [];
+  }
+}
+
 async function applyOrder() {
   error.value = "";
   try {
@@ -367,7 +412,14 @@ onMounted(load);
     </div>
 
     <!-- Список занятий с drag-and-drop -->
-    <VueDraggableNext v-else v-model="items" handle=".drag-handle" class="space-y-2">
+    <VueDraggableNext
+      v-else
+      v-model="items"
+      handle=".drag-handle"
+      class="space-y-2"
+      @start="onDragStart"
+      @end="onDragEnd"
+    >
       <div v-for="(it, idx) in items" :key="it.id">
         <!-- Заголовок дня -->
         <div
