@@ -242,12 +242,14 @@ async function importUtp(input) {
   }
 
   // Авто-исключение разделов-агрегатов: если за разделом (римская цифра) сразу
-  // следуют подтемы (десятичные номера) — это сумма, его не планируем (excluded=1).
-  // Раздел без подтем (напр. «II. Особенности…») — самостоятельная тема, оставляем.
+  // следуют подтемы с десятичными номерами (1.1, 1.2…) — это сумма, её не
+  // планируем (excluded=1). Раздел без таких подтем (напр. «II. Особенности…»,
+  // за которым идёт форма аттестации) — самостоятельная тема, оставляем.
+  const isSubtopicNumber = (s) => /\d\./.test((s || "").trim());
   for (let i = 0; i < topics.length; i++) {
     if (!topics[i].is_section) continue;
     const next = topics[i + 1];
-    topics[i].excluded = next && !next.is_section ? 1 : 0;
+    topics[i].excluded = next && !next.is_section && isSubtopicNumber(next.utp_number) ? 1 : 0;
   }
 
   if (!topics.length) {

@@ -43,12 +43,39 @@ const bulkOpen = ref(false);
 const bulk = ref({ teacher_ids: [], room_id: null, applyTeachers: true, applyRoom: false });
 const bulkTeacherFilter = ref("");
 
-// Заголовок занятия: «Тема X.Y Название» (раздел и произвольные — без префикса)
+// Заголовок занятия: «Тема X.Y Название». Номер показываем и для разделов
+// (римские цифры), если он есть; произвольные занятия — без префикса.
 function itemTitle(it) {
   if (it.custom_title) return it.custom_title;
-  if (it.is_section) return it.topic_title || "Без темы";
   if (it.utp_number) return `Тема ${it.utp_number} ${it.topic_title || ""}`.trim();
   return it.topic_title || "Без темы";
+}
+
+// Пустое «окошко» в расписании: полностью незаполненный слот (без темы,
+// названия, вида занятия, преподавателей, аудитории, групп и примечания).
+// Создаётся при смещении ряда, чтобы оставить место для вписания занятия.
+function isEmptyItem(it) {
+  return (
+    !it.topic_id &&
+    !it.custom_title &&
+    !it.lesson_type &&
+    !it.room_id &&
+    !(it.teacher_ids && it.teacher_ids.length) &&
+    !(it.group_ids && it.group_ids.length) &&
+    !it.note
+  );
+}
+
+// Удалить пустое окошко напрямую из списка (без открытия редактора).
+async function deleteEmpty(it) {
+  error.value = "";
+  try {
+    await api.schedule.deleteItem(it.id);
+    await load();
+    info.value = "Свободное окошко удалено";
+  } catch (e) {
+    error.value = e.message;
+  }
 }
 
 // Заголовок дня в списке занятий: «Понедельник, 01.06.2026»
@@ -278,16 +305,21 @@ async function onDragEnd(evt) {
     return;
   }
   error.value = "";
+  let failMsg = "";
   try {
     if (dragMode.value === "swap") {
       await swapItems(evt);
     } else {
-      await shiftItems(slots);
+      await shiftItems(evt);
     }
-    await load();
   } catch (e) {
-    error.value = e.message;
+    failMsg = e.message;
   } finally {
+    // Всегда перечитываем состояние из БД, чтобы восстановить корректный порядок
+    // (в т.ч. при отмене из-за нехватки слотов). Ошибку выставляем после load(),
+    // т.к. load() очищает error в начале.
+    await load();
+    if (failMsg) error.value = failMsg;
     dragSlots.value = [];
     dragOrder.value = [];
   }
@@ -320,27 +352,65 @@ async function swapItems(evt) {
   info.value = "Занятия поменялись местами";
 }
 
-// Сместить весь ряд: переназначаем слоты позиционно и сохраняем изменившиеся.
-async function shiftItems(slots) {
-  for (let i = 0; i < items.value.length; i++) {
-    const slot = slots[i];
-    const it = items.value[i];
-    if (!slot) break;
+// Сместить весь ряд: на исходную позицию перетянутого занятия вставляется
+// пустое «окошко», а все последующие занятия сдвигаются вниз на один слот
+// по сетке всего периода (дата × время). Окошко остаётся для вписания занятия.
+async function shiftItems(evt) {
+  const oldIndex = evt?.oldIndex;
+  const newIndex = evt?.newIndex;
+  if (oldIndex == null || newIndex == null || oldIndex === newIndex) return;
+
+  const cells = gridCells.value;
+  // items.value уже переставлен draggable. Вставляем пустое окошко (null)
+  // на исходную позицию перетянутого занятия.
+  const ordered = [...items.value];
+  ordered.splice(oldIndex, 0, null);
+
+  if (ordered.length > cells.length) {
+    throw new Error(
+      `Недостаточно слотов в сетке периода: требуется ${ordered.length}, ` +
+        `доступно ${cells.length}. Расширьте даты периода или сетку учебных часов.`
+    );
+  }
+
+  // Назначаем каждому элементу ячейку по порядку; пустому окошку — занятие-заглушку.
+  for (let i = 0; i < ordered.length; i++) {
+    const cell = cells[i];
+    const entry = ordered[i];
+    if (entry === null) {
+      await api.schedule.saveItem({
+        id: null,
+        period_id: periodId.value,
+        program_id: programId.value,
+        topic_id: null,
+        custom_title: null,
+        lesson_type: null,
+        date: cell.date,
+        start_time: cell.start,
+        end_time: cell.end,
+        teacher_ids: [],
+        room_id: null,
+        group_ids: [],
+        note: null,
+        crossPeriod: crossPeriod.value,
+      });
+      continue;
+    }
     if (
-      it.date === slot.date &&
-      it.start_time === slot.start_time &&
-      it.end_time === slot.end_time
+      entry.date === cell.date &&
+      entry.start_time === cell.start &&
+      entry.end_time === cell.end
     )
       continue;
     await api.schedule.saveItem({
-      ...it,
-      date: slot.date,
-      start_time: slot.start_time,
-      end_time: slot.end_time,
+      ...entry,
+      date: cell.date,
+      start_time: cell.start,
+      end_time: cell.end,
       crossPeriod: crossPeriod.value,
     });
   }
-  info.value = "Занятия переставлены по дням и часам";
+  info.value = "Ряд смещён вниз; оставлено свободное окошко";
 }
 
 // Применить выбранную сетку учебных часов к одному дню: занятия этого дня
@@ -531,7 +601,27 @@ onMounted(load);
           </select>
           <span class="h-px flex-1 bg-blue-100"></span>
         </div>
+        <!-- Свободное окошко: пустой слот для вписания занятия -->
         <div
+          v-if="isEmptyItem(it)"
+          class="card flex items-center gap-3 border-2 border-dashed border-slate-300 bg-slate-50/70 px-4 py-3 transition"
+        >
+          <span class="drag-handle cursor-grab select-none text-slate-300">⋮⋮</span>
+          <div class="w-24 shrink-0 text-sm">
+            <div class="text-slate-400">{{ it.start_time }}–{{ it.end_time }}</div>
+          </div>
+          <div class="min-w-0 flex-1">
+            <div class="truncate font-medium italic text-slate-400">Свободное окошко</div>
+            <div class="truncate text-xs text-slate-400">
+              Нажмите «Вписать занятие», чтобы заполнить слот
+            </div>
+          </div>
+          <button class="btn-secondary" @click="openEditor(it)">Вписать занятие</button>
+          <button class="btn-ghost text-slate-400" @click="deleteEmpty(it)">Удалить</button>
+        </div>
+        <!-- Обычное занятие -->
+        <div
+          v-else
           class="card flex items-center gap-3 px-4 py-3 transition"
           :class="{
             'conflict-row border-red-200': it.conflicts && it.conflicts.length,

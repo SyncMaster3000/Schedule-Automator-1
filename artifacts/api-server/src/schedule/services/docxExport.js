@@ -102,11 +102,11 @@ function buildHeader(program, dateRange, groupName) {
   return out;
 }
 
-// Заголовок темы: раздел — только название; обычная тема — «Тема X.Y Название».
+// Заголовок темы: «Тема X.Y Название» (номер показываем и для разделов с
+// римской цифрой); произвольное занятие — его название.
 function topicLabel(it) {
   if (it.custom_title) return it.custom_title;
   const title = it.topic_title || "";
-  if (it.is_section) return title;
   if (it.utp_number) return `Тема ${it.utp_number} ${title}`.trim();
   return title;
 }
@@ -190,7 +190,18 @@ function buildFooter(program) {
 
 // Главная функция экспорта. Возвращает Buffer .docx
 async function exportSchedule(data) {
-  const { program, items, periods, groupColumn } = data;
+  const { program, periods, groupColumn } = data;
+  // Пустые «окошки» — полностью незаполненные слоты — в документ не выводим.
+  // Занятие без названия, но с видом/преподавателем/аудиторией/группой — выводим.
+  const isBlankRow = (it) =>
+    !it.topic_id &&
+    !it.custom_title &&
+    !it.lesson_type &&
+    !it.room_id &&
+    JSON.parse(it.teacher_ids || "[]").length === 0 &&
+    JSON.parse(it.group_ids || "[]").length === 0 &&
+    !it.note;
+  const items = (data.items || []).filter((it) => !isBlankRow(it));
   const ctx = {
     teachersById: data.teachersById || {},
     roomsById: data.roomsById || {},
