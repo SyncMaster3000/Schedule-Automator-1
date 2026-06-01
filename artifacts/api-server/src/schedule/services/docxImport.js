@@ -65,11 +65,16 @@ function looksLikeTopicRow(cells) {
 // Определение индексов колонок по заголовку (используется, только если есть
 // «плоская» строка заголовка шириной с данными — иначе остаётся позиционная схема)
 function detectColumns(headerCells) {
-  const map = { total: -1, lecture: -1, practice: -1, note: -1 };
+  const map = { total: -1, lecture: -1, practice: -1, roundtable: -1, note: -1 };
   headerCells.forEach((raw, i) => {
     const h = normalize(raw);
     if (map.total === -1 && h.includes("всего")) map.total = i;
     else if (map.lecture === -1 && h.includes("лекц")) map.lecture = i;
+    else if (
+      map.roundtable === -1 &&
+      (h.includes("кругл") || h.includes("стол"))
+    )
+      map.roundtable = i;
     else if (
       map.practice === -1 &&
       (h.includes("практ") || h.includes("иное") || h.includes("семинар"))
@@ -137,6 +142,8 @@ async function importUtp(input) {
     total: 2,
     lecture: 3,
     practice: 4,
+    // «Круглые столы» — отдельная колонка перед примечанием (когда ширина ≥ 7)
+    roundtable: dataWidth >= 7 ? dataWidth - 2 : -1,
     note: dataWidth > 5 ? dataWidth - 1 : -1,
   };
 
@@ -160,6 +167,7 @@ async function importUtp(input) {
       if (detected.total >= 0) cols.total = detected.total;
       if (detected.lecture >= 0) cols.lecture = detected.lecture;
       if (detected.practice >= 0) cols.practice = detected.practice;
+      if (detected.roundtable >= 0) cols.roundtable = detected.roundtable;
       if (detected.note >= 0) cols.note = detected.note;
       break;
     }
@@ -174,14 +182,14 @@ async function importUtp(input) {
     if (isAggregateRow(cells)) continue;
 
     const number = (cells[cols.number] || "").trim();
-    if (isSectionNumber(number)) continue; // раздел — пропускаем
+    const isSection = isSectionNumber(number); // раздел (римская цифра)
 
     const title = (cells[cols.title] || "").trim();
     if (!title) continue;
 
     const total = toNumber(cells[cols.total]);
-    // Берём только строки, похожие на темы: с номером темы либо с указанием часов
-    if (!isTopicNumber(number) && total <= 0) continue;
+    // Берём строки, похожие на темы/разделы: с номером либо с указанием часов
+    if (!isTopicNumber(number) && !isSection && total <= 0) continue;
 
     order += 1;
     topics.push({
@@ -190,10 +198,22 @@ async function importUtp(input) {
       total_hours: total,
       lecture_hours: toNumber(cells[cols.lecture]),
       practice_hours: toNumber(cells[cols.practice]),
+      roundtable_hours: cols.roundtable >= 0 ? toNumber(cells[cols.roundtable]) : 0,
       note: cols.note >= 0 ? (cells[cols.note] || "").trim() : "",
+      is_section: isSection ? 1 : 0,
+      excluded: 0,
       status: "pending",
       sort_order: order,
     });
+  }
+
+  // Авто-исключение разделов-агрегатов: если за разделом (римская цифра) сразу
+  // следуют подтемы (десятичные номера) — это сумма, его не планируем (excluded=1).
+  // Раздел без подтем (напр. «II. Особенности…») — самостоятельная тема, оставляем.
+  for (let i = 0; i < topics.length; i++) {
+    if (!topics[i].is_section) continue;
+    const next = topics[i + 1];
+    topics[i].excluded = next && !next.is_section ? 1 : 0;
   }
 
   if (!topics.length) {

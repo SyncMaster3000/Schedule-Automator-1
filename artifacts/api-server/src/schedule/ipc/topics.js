@@ -18,8 +18,9 @@ export default {
       const insert = db.prepare(
         `INSERT INTO program_topics
           (program_id, utp_number, title, total_hours, lecture_hours, practice_hours,
-           default_dept, note, status, scheduled_hours, sort_order)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?)`
+           roundtable_hours, default_dept, note, status, scheduled_hours,
+           excluded, is_section, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)`
       );
       topics.forEach((t, idx) => {
         insert.run(
@@ -29,8 +30,11 @@ export default {
           t.total_hours || 0,
           t.lecture_hours || 0,
           t.practice_hours || 0,
+          t.roundtable_hours || 0,
           t.default_dept || null,
           t.note || null,
+          t.excluded ? 1 : 0,
+          t.is_section ? 1 : 0,
           t.sort_order != null ? t.sort_order : idx + 1
         );
       });
@@ -45,7 +49,7 @@ export default {
     db.prepare(
       `UPDATE program_topics SET
         utp_number = ?, title = ?, total_hours = ?, lecture_hours = ?,
-        practice_hours = ?, default_dept = ?, note = ?
+        practice_hours = ?, roundtable_hours = ?, default_dept = ?, note = ?, excluded = ?
        WHERE id = ?`
     ).run(
       data.utp_number,
@@ -53,11 +57,21 @@ export default {
       data.total_hours || 0,
       data.lecture_hours || 0,
       data.practice_hours || 0,
+      data.roundtable_hours || 0,
       data.default_dept || null,
       data.note || null,
+      data.excluded ? 1 : 0,
       data.id
     );
     return { id: data.id };
+  },
+
+  // Быстрое переключение «включить/исключить из расписания»
+  "topics:setExcluded": (data) => {
+    getDb()
+      .prepare("UPDATE program_topics SET excluded = ? WHERE id = ?")
+      .run(data.excluded ? 1 : 0, data.id);
+    return { id: data.id, excluded: data.excluded ? 1 : 0 };
   },
 
   "topics:delete": (id) => {
@@ -69,7 +83,9 @@ export default {
   "topics:queueStatus": (programId) => {
     const db = getDb();
     const rows = db
-      .prepare("SELECT status, total_hours, scheduled_hours FROM program_topics WHERE program_id = ?")
+      .prepare(
+        "SELECT status, total_hours, scheduled_hours FROM program_topics WHERE program_id = ? AND excluded = 0"
+      )
       .all(programId);
     const total = rows.length;
     const scheduled = rows.filter((r) => r.status === "scheduled" || r.status === "completed").length;

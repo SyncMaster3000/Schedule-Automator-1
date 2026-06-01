@@ -1,2 +1,1 @@
-- [sql.js on Node 24](sqljs-on-node24.md) — schedule api-server uses sql.js (WASM), not better-sqlite3; persist after every write, single-process only.
-- [УТП .docx import](utp-docx-import.md) — real УТП docs: multiple tables (pick by topic-like rows), multi-row merged headers (positional cols), toNumber must require a real digit (NaN leak).
+- [Schedule app build/verify](schedule-app.md) — no vue-tsc; validate SFCs via `PORT=4999 BASE_PATH=/ pnpm --filter @workspace/schedule run build`. Data model: excluded/roundtable_hours/is_section; bulk-assign needs array teacher_ids.

@@ -10,7 +10,7 @@ function listByPeriod(periodId, crossPeriod = false) {
 
   const items = db
     .prepare(
-      `SELECT si.*, tp.utp_number, tp.title AS topic_title
+      `SELECT si.*, tp.utp_number, tp.title AS topic_title, tp.is_section
        FROM schedule_items si
        LEFT JOIN program_topics tp ON tp.id = si.topic_id
        WHERE si.period_id = ?

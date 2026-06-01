@@ -39,6 +39,9 @@ CREATE TABLE IF NOT EXISTS program_topics (
   status TEXT NOT NULL DEFAULT 'pending',
   assigned_period_id INTEGER,
   scheduled_hours REAL NOT NULL DEFAULT 0,
+  roundtable_hours REAL NOT NULL DEFAULT 0,
+  excluded INTEGER NOT NULL DEFAULT 0,
+  is_section INTEGER NOT NULL DEFAULT 0,
   sort_order INTEGER NOT NULL DEFAULT 0,
   FOREIGN KEY (program_id) REFERENCES programs(id) ON DELETE CASCADE
 );
@@ -258,9 +261,23 @@ async function init(dataDir) {
   }
   raw.run("PRAGMA foreign_keys = ON");
   raw.run(SCHEMA);
+  runMigrations();
   dbWrapper = buildWrapper();
   persist();
   return dbWrapper;
+}
+
+// Идемпотентные миграции для уже существующих БД: добавляем недостающие столбцы.
+function addColumnIfMissing(table, column, ddl) {
+  const res = raw.exec(`PRAGMA table_info(${table})`);
+  const names = res.length ? res[0].values.map((v) => v[1]) : [];
+  if (!names.includes(column)) raw.run(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+}
+
+function runMigrations() {
+  addColumnIfMissing("program_topics", "roundtable_hours", "roundtable_hours REAL NOT NULL DEFAULT 0");
+  addColumnIfMissing("program_topics", "excluded", "excluded INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing("program_topics", "is_section", "is_section INTEGER NOT NULL DEFAULT 0");
 }
 
 // Однократная асинхронная инициализация (sql.js грузится асинхронно).

@@ -83,6 +83,18 @@ async function removeTopic(id) {
   await loadAll();
 }
 
+// Включить/исключить тему из расписания (без перезагрузки всего)
+async function toggleExcluded(t) {
+  const next = t.excluded ? 0 : 1;
+  try {
+    await api.topics.setExcluded({ id: t.id, excluded: next });
+    t.excluded = next;
+    queue.value = await api.topics.queueStatus(programId.value);
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
 function openPeriod() {
   // Подставляем базовую сетку из справочника
   periodForm.value = blankPeriod();
@@ -239,26 +251,46 @@ onMounted(async () => {
         <div class="text-slate-400">Темы ещё не загружены. Импортируйте учебно-тематический план из файла Word (.docx).</div>
         <button class="btn-primary" @click="runImport">Импорт УТП (.docx)</button>
       </div>
-      <div v-else class="card overflow-hidden">
+      <div v-else>
+      <p class="mb-3 text-xs text-slate-400">
+        Снимите галочку «В расписании», чтобы исключить строку из автозаполнения и
+        экспорта (например, итоговый раздел-сумму). Часы: Лекции / Практические / Круглый стол.
+      </p>
+      <div class="card overflow-hidden">
         <table class="w-full">
           <thead>
             <tr class="text-left text-xs uppercase text-slate-400">
+              <th class="table-cell w-24 text-center">В расписании</th>
               <th class="table-cell w-12">№</th>
               <th class="table-cell">Тема</th>
               <th class="table-cell w-20">Часы</th>
-              <th class="table-cell w-24">Лек/Практ</th>
+              <th class="table-cell w-28">Лек/Пр/КС</th>
               <th class="table-cell w-28">Статус</th>
               <th class="table-cell w-12"></th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="t in topics" :key="t.id">
+            <tr v-for="t in topics" :key="t.id" :class="{ 'opacity-50': t.excluded }">
+              <td class="table-cell text-center">
+                <input
+                  type="checkbox"
+                  :checked="!t.excluded"
+                  @change="toggleExcluded(t)"
+                />
+              </td>
               <td class="table-cell text-slate-400">{{ t.utp_number }}</td>
-              <td class="table-cell">{{ t.title }}</td>
-              <td class="table-cell">{{ t.total_hours }}</td>
-              <td class="table-cell text-slate-500">{{ t.lecture_hours }}/{{ t.practice_hours }}</td>
               <td class="table-cell">
+                <span v-if="t.is_section" class="badge mr-2 bg-blue-100 text-blue-700">Раздел</span>
+                <span :class="{ 'line-through': t.excluded }">{{ t.title }}</span>
+              </td>
+              <td class="table-cell">{{ t.total_hours }}</td>
+              <td class="table-cell text-slate-500">
+                {{ t.lecture_hours }}/{{ t.practice_hours }}/{{ t.roundtable_hours || 0 }}
+              </td>
+              <td class="table-cell">
+                <span v-if="t.excluded" class="badge bg-slate-100 text-slate-500">Исключена</span>
                 <span
+                  v-else
                   class="badge"
                   :class="{
                     'bg-slate-100 text-slate-600': t.status === 'pending',
@@ -275,6 +307,7 @@ onMounted(async () => {
             </tr>
           </tbody>
         </table>
+      </div>
       </div>
     </div>
 
@@ -330,22 +363,34 @@ onMounted(async () => {
       @close="importPreview = null"
     >
       <p class="mb-3 text-sm text-slate-500">
-        Найдено тем: {{ importPreview.topics.length }}. Проверьте и подтвердите.
+        Найдено строк: {{ importPreview.topics.length }}. Снимите галочку «Вкл.» у строк,
+        которые не нужно планировать (например, разделы-суммы). Часы: Лек/Практ/Круглый стол.
       </p>
       <div class="max-h-96 overflow-auto rounded-lg border border-slate-200">
         <table class="w-full">
           <thead class="sticky top-0 bg-slate-50">
             <tr class="text-left text-xs uppercase text-slate-400">
+              <th class="table-cell w-14 text-center">Вкл.</th>
               <th class="table-cell">№</th>
               <th class="table-cell">Тема</th>
               <th class="table-cell w-16">Часы</th>
+              <th class="table-cell w-24">Лек/Пр/КС</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="(t, i) in importPreview.topics" :key="i">
+            <tr v-for="(t, i) in importPreview.topics" :key="i" :class="{ 'opacity-50': t.excluded }">
+              <td class="table-cell text-center">
+                <input type="checkbox" :checked="!t.excluded" @change="t.excluded = t.excluded ? 0 : 1" />
+              </td>
               <td class="table-cell text-slate-400">{{ t.utp_number }}</td>
-              <td class="table-cell">{{ t.title }}</td>
+              <td class="table-cell">
+                <span v-if="t.is_section" class="badge mr-2 bg-blue-100 text-blue-700">Раздел</span>
+                {{ t.title }}
+              </td>
               <td class="table-cell">{{ t.total_hours }}</td>
+              <td class="table-cell text-slate-500">
+                {{ t.lecture_hours }}/{{ t.practice_hours }}/{{ t.roundtable_hours || 0 }}
+              </td>
             </tr>
           </tbody>
         </table>

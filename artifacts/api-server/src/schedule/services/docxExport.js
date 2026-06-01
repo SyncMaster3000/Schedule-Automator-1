@@ -1,4 +1,4 @@
-// Генерация расписания в .docx по образцу (шапка УТВЕРЖДАЮ, таблица, подписи, сноска).
+// Генерация расписания в .docx по образцу (шапка УТВЕРЖДАЮ, таблица, подписи).
 // Используется библиотека docx для полного контроля над вёрсткой.
 import {
   Document,
@@ -11,27 +11,46 @@ import {
   WidthType,
   AlignmentType,
   VerticalAlign,
+  VerticalMergeType,
+  BorderStyle,
+  PageOrientation,
 } from "docx";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale";
 
-function pCenter(text, opts = {}) {
-  return new Paragraph({
-    alignment: AlignmentType.CENTER,
-    children: [new TextRun({ text, ...opts })],
-  });
+const FONT = "Times New Roman";
+const BODY_SIZE = 24; // 12pt (half-points)
+
+const CELL_BORDERS = {
+  top: { style: BorderStyle.SINGLE, size: 4, color: "000000" },
+  bottom: { style: BorderStyle.SINGLE, size: 4, color: "000000" },
+  left: { style: BorderStyle.SINGLE, size: 4, color: "000000" },
+  right: { style: BorderStyle.SINGLE, size: 4, color: "000000" },
+};
+
+function pLines(lines, { align = AlignmentType.LEFT, bold = false, size = BODY_SIZE } = {}) {
+  const arr = Array.isArray(lines) ? lines : [lines];
+  return arr.map(
+    (text) =>
+      new Paragraph({
+        alignment: align,
+        children: [new TextRun({ text: text || "", bold, size, font: FONT })],
+      })
+  );
 }
 
-function cell(text, { bold = false, align = AlignmentType.LEFT, width } = {}) {
+// Ячейка с одним или несколькими абзацами (например, преподаватели по строкам)
+function cell(content, { bold = false, align = AlignmentType.LEFT, width, verticalMerge } = {}) {
+  const lines = Array.isArray(content) ? content : [content];
   return new TableCell({
     verticalAlign: VerticalAlign.CENTER,
     width: width ? { size: width, type: WidthType.PERCENTAGE } : undefined,
-    children: [
-      new Paragraph({
-        alignment: align,
-        children: [new TextRun({ text: text || "", bold, size: 20 })],
-      }),
-    ],
+    borders: CELL_BORDERS,
+    verticalMerge,
+    children:
+      verticalMerge === VerticalMergeType.CONTINUE
+        ? [new Paragraph({ children: [] })]
+        : pLines(lines.length ? lines : [""], { align, bold }),
   });
 }
 
@@ -52,35 +71,42 @@ function fmtDate(dateStr) {
 }
 
 function buildHeader(program, dateRange, groupName) {
-  const approverTitle = program.approver_title || "Начальник Института";
+  const approverLines = (program.approver_title || "Начальник Института")
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
   const approverName = program.approver_name || "";
-  return [
-    new Paragraph({
-      alignment: AlignmentType.RIGHT,
-      children: [new TextRun({ text: "УТВЕРЖДАЮ", bold: true })],
-    }),
-    new Paragraph({
-      alignment: AlignmentType.RIGHT,
-      children: [new TextRun({ text: approverTitle })],
-    }),
-    new Paragraph({
-      alignment: AlignmentType.RIGHT,
-      children: [new TextRun({ text: approverName })],
-    }),
-    new Paragraph({
-      alignment: AlignmentType.RIGHT,
-      children: [new TextRun({ text: "__.__.20__" })],
-    }),
-    new Paragraph({ text: "" }),
-    pCenter("РАСПИСАНИЕ", { bold: true, size: 28 }),
-    pCenter(
-      `учебных занятий по образовательной программе «${program.title}»${
-        dateRange ? ` (${dateRange})` : ""
-      }${groupName ? `, учебная группа ${groupName}` : ""}`,
-      { size: 24 }
-    ),
-    new Paragraph({ text: "" }),
+  const out = [
+    ...pLines("УТВЕРЖДАЮ", { align: AlignmentType.RIGHT, bold: true }),
+    ...approverLines.flatMap((l) => pLines(l, { align: AlignmentType.RIGHT })),
   ];
+  if (approverName) out.push(...pLines(approverName, { align: AlignmentType.RIGHT }));
+  out.push(...pLines("__.__.20__", { align: AlignmentType.RIGHT }));
+  out.push(...pLines("", {}));
+  out.push(...pLines("РАСПИСАНИЕ", { align: AlignmentType.CENTER, bold: true, size: 28 }));
+  const subtitle =
+    `учебных занятий по образовательной программе повышения квалификации ` +
+    `«${program.title}»` +
+    (dateRange ? ` (${dateRange})` : "") +
+    (groupName ? `, учебная группа № ${groupName}` : "");
+  out.push(...pLines(subtitle, { align: AlignmentType.CENTER }));
+  out.push(...pLines("", {}));
+  return out;
+}
+
+// Заголовок темы: раздел — только название; обычная тема — «Тема X.Y Название».
+function topicLabel(it) {
+  if (it.custom_title) return it.custom_title;
+  const title = it.topic_title || "";
+  if (it.is_section) return title;
+  if (it.utp_number) return `Тема ${it.utp_number} ${title}`.trim();
+  return title;
+}
+
+function teacherLines(it, ctx) {
+  return JSON.parse(it.teacher_ids || "[]")
+    .map((id) => ctx.teachersById[id]?.fio)
+    .filter(Boolean);
 }
 
 function buildTable(items, ctx, groupColumn) {
@@ -101,30 +127,27 @@ function buildTable(items, ctx, groupColumn) {
 
   let lastDate = null;
   for (const it of items) {
-    const dateText = it.date === lastDate ? "" : fmtDate(it.date);
-    const dayText = it.date === lastDate ? "" : weekdayRu(it.date);
+    const firstOfDay = it.date !== lastDate;
     lastDate = it.date;
+    const merge = firstOfDay ? VerticalMergeType.RESTART : VerticalMergeType.CONTINUE;
 
-    const topicTitle = it.custom_title
-      ? it.custom_title
-      : it.utp_number
-      ? `Тема ${it.utp_number} ${it.topic_title || ""}`.trim()
-      : it.topic_title || "";
-
-    const teachers = JSON.parse(it.teacher_ids || "[]")
-      .map((id) => ctx.teachersById[id]?.fio)
-      .filter(Boolean)
-      .join(", ");
+    const teachers = teacherLines(it, ctx);
     const room = it.room_id ? ctx.roomsById[it.room_id]?.number || "" : "";
 
     const cells = [
-      cell(dateText, { align: AlignmentType.CENTER }),
-      cell(dayText, { align: AlignmentType.CENTER }),
+      cell(firstOfDay ? fmtDate(it.date) : "", {
+        align: AlignmentType.CENTER,
+        verticalMerge: merge,
+      }),
+      cell(firstOfDay ? weekdayRu(it.date) : "", {
+        align: AlignmentType.CENTER,
+        verticalMerge: merge,
+      }),
       cell(`${it.start_time}-${it.end_time}`, { align: AlignmentType.CENTER }),
-      cell(topicTitle),
-      cell(it.lesson_type || ""),
-      cell(teachers),
-      cell(room),
+      cell(topicLabel(it)),
+      cell(it.lesson_type || "", { align: AlignmentType.CENTER }),
+      cell(teachers.length ? teachers : [""]),
+      cell(room, { align: AlignmentType.CENTER }),
     ];
     if (groupColumn) {
       const gids = JSON.parse(it.group_ids || "[]");
@@ -144,23 +167,15 @@ function buildTable(items, ctx, groupColumn) {
 }
 
 function buildFooter(program) {
-  const signerTitle = program.signer_title || "Начальник учебного отдела";
+  const signerLines = (program.signer_title || "Начальник учебного отдела")
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
   const signerName = program.signer_name || "";
-  return [
-    new Paragraph({ text: "" }),
-    new Paragraph({
-      children: [
-        new TextRun({
-          text: "* после 40 минут занятий предусмотрен перерыв 5 минут",
-          italics: true,
-          size: 18,
-        }),
-      ],
-    }),
-    new Paragraph({ text: "" }),
-    new Paragraph({ children: [new TextRun({ text: signerTitle })] }),
-    new Paragraph({ children: [new TextRun({ text: signerName })] }),
-  ];
+  const out = [...pLines("", {}), ...pLines("", {})];
+  for (const l of signerLines) out.push(...pLines(l, {}));
+  if (signerName) out.push(...pLines(signerName, {}));
+  return out;
 }
 
 // Главная функция экспорта. Возвращает Buffer .docx
@@ -189,10 +204,18 @@ async function exportSchedule(data) {
   ];
 
   const doc = new Document({
+    styles: {
+      default: {
+        document: { run: { font: FONT, size: BODY_SIZE } },
+      },
+    },
     sections: [
       {
         properties: {
-          page: { margin: { top: 720, bottom: 720, left: 1000, right: 720 } },
+          page: {
+            size: { orientation: PageOrientation.LANDSCAPE },
+            margin: { top: 720, bottom: 720, left: 1000, right: 720 },
+          },
         },
         children,
       },

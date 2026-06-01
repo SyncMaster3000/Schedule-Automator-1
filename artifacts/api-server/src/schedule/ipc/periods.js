@@ -4,6 +4,31 @@ import { eachDayOfInterval, parseISO, format } from "date-fns";
 
 const HOURS_PER_SLOT = 2; // академических часов в одном слоте по умолчанию
 
+// Список видов занятий темы по часам: Лекция / Практическое занятие / Круглый стол.
+// Если разбивки нет — равномерно заполняем общий объём практическими занятиями.
+function plannedSlots(topic) {
+  const slots = [];
+  const addType = (hours, type) => {
+    for (let h = 0; h < (hours || 0); h += HOURS_PER_SLOT) slots.push(type);
+  };
+  addType(topic.lecture_hours, "Лекция");
+  addType(topic.practice_hours, "Практическое занятие");
+  addType(topic.roundtable_hours, "Круглый стол");
+
+  const planned =
+    (topic.lecture_hours || 0) +
+    (topic.practice_hours || 0) +
+    (topic.roundtable_hours || 0);
+  const total = topic.total_hours || 0;
+
+  if (slots.length === 0) {
+    addType(total || HOURS_PER_SLOT, "Практическое занятие");
+  } else if (total > planned) {
+    addType(total - planned, "Практическое занятие");
+  }
+  return slots;
+}
+
 function listPeriods(programId) {
   return getDb()
     .prepare("SELECT * FROM periods WHERE program_id = ? ORDER BY sort_order")
@@ -117,7 +142,7 @@ const handlers = {
     const topics = db
       .prepare(
         `SELECT * FROM program_topics
-         WHERE program_id = ? AND status IN ('pending', 'partial')
+         WHERE program_id = ? AND excluded = 0 AND status IN ('pending', 'partial')
          ORDER BY (status = 'partial') DESC, sort_order`
       )
       .all(programId);
@@ -133,16 +158,12 @@ const handlers = {
 
     const tx = db.transaction(() => {
       for (const topic of topics) {
-        const already = topic.scheduled_hours || 0;
-        let remaining = (topic.total_hours || 0) - already;
-        if (remaining <= 0) remaining = topic.total_hours || HOURS_PER_SLOT;
-        let lectureLeft = Math.max(0, (topic.lecture_hours || 0) - already);
+        const slots = plannedSlots(topic);
+        let placed = 0;
 
-        while (remaining > 0 && cellIdx < cells.length) {
+        for (const lessonType of slots) {
+          if (cellIdx >= cells.length) break;
           const cell = cells[cellIdx++];
-          const lessonType = lectureLeft > 0 ? "Лекция" : "Практическое занятие";
-          if (lectureLeft > 0) lectureLeft -= HOURS_PER_SLOT;
-
           insertItem.run(
             periodId,
             programId,
@@ -156,11 +177,11 @@ const handlers = {
             created
           );
           created += 1;
-          remaining -= HOURS_PER_SLOT;
+          placed += 1;
         }
 
-        const fullyScheduled = remaining <= 0;
-        const scheduledHours = (topic.total_hours || 0) - Math.max(0, remaining);
+        const fullyScheduled = placed >= slots.length;
+        const scheduledHours = placed * HOURS_PER_SLOT;
         db.prepare(
           `UPDATE program_topics SET status = ?, assigned_period_id = ?, scheduled_hours = ?
            WHERE id = ?`

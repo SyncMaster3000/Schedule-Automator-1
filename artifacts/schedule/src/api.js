@@ -125,6 +125,7 @@ export const api = {
     list: (programId) => call("topics:list", programId),
     save: (data) => call("topics:save", data),
     update: (data) => call("topics:update", data),
+    setExcluded: (data) => call("topics:setExcluded", data),
     remove: (id) => call("topics:delete", id),
     queueStatus: (programId) => call("topics:queueStatus", programId),
   },

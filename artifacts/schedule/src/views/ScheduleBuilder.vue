@@ -28,6 +28,88 @@ const info = ref("");
 // --- Редактор занятия ---
 const editing = ref(null); // копия занятия
 const editConflicts = ref([]);
+const teacherFilter = ref(""); // поиск преподавателя по фамилии в редакторе
+
+// --- Массовое назначение ---
+const selected = ref([]); // id выбранных занятий
+const bulkOpen = ref(false);
+const bulk = ref({ teacher_ids: [], room_id: null, applyTeachers: true, applyRoom: false });
+const bulkTeacherFilter = ref("");
+
+// Заголовок занятия: «Тема X.Y Название» (раздел и произвольные — без префикса)
+function itemTitle(it) {
+  if (it.custom_title) return it.custom_title;
+  if (it.is_section) return it.topic_title || "Без темы";
+  if (it.utp_number) return `Тема ${it.utp_number} ${it.topic_title || ""}`.trim();
+  return it.topic_title || "Без темы";
+}
+
+// Заголовок дня в списке занятий: «Понедельник, 01.06.2026»
+const WEEKDAYS = [
+  "воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота",
+];
+function formatDayHeader(dateStr) {
+  if (!dateStr) return "";
+  const d = new Date(dateStr + "T00:00:00");
+  if (Number.isNaN(d.getTime())) return dateStr;
+  const wd = WEEKDAYS[d.getDay()];
+  const [y, m, day] = dateStr.split("-");
+  return `${wd[0].toUpperCase()}${wd.slice(1)}, ${day}.${m}.${y}`;
+}
+
+// Фильтрация преподавателей по введённым буквам фамилии
+function filterTeachers(query) {
+  const q = (query || "").trim().toLowerCase();
+  if (!q) return teachers.value;
+  return teachers.value.filter((t) => t.fio.toLowerCase().includes(q));
+}
+const filteredTeachers = computed(() => filterTeachers(teacherFilter.value));
+const filteredBulkTeachers = computed(() => filterTeachers(bulkTeacherFilter.value));
+
+function isSelected(id) {
+  return selected.value.includes(id);
+}
+function toggleSelect(id) {
+  const i = selected.value.indexOf(id);
+  if (i >= 0) selected.value.splice(i, 1);
+  else selected.value.push(id);
+}
+const allSelected = computed(
+  () => items.value.length > 0 && selected.value.length === items.value.length
+);
+function toggleSelectAll() {
+  selected.value = allSelected.value ? [] : items.value.map((it) => it.id);
+}
+
+function openBulk() {
+  bulk.value = { teacher_ids: [], room_id: null, applyTeachers: true, applyRoom: false };
+  bulkTeacherFilter.value = "";
+  bulkOpen.value = true;
+}
+function bulkToggleTeacher(id) {
+  const arr = bulk.value.teacher_ids;
+  const i = arr.indexOf(id);
+  if (i >= 0) arr.splice(i, 1);
+  else arr.push(id);
+}
+async function applyBulk() {
+  error.value = "";
+  try {
+    const chosen = items.value.filter((it) => selected.value.includes(it.id));
+    for (const it of chosen) {
+      const payload = { ...it, crossPeriod: crossPeriod.value };
+      if (bulk.value.applyTeachers) payload.teacher_ids = [...bulk.value.teacher_ids];
+      if (bulk.value.applyRoom) payload.room_id = bulk.value.room_id;
+      await api.schedule.saveItem(payload);
+    }
+    bulkOpen.value = false;
+    selected.value = [];
+    info.value = `Изменено занятий: ${chosen.length}`;
+    await load();
+  } catch (e) {
+    error.value = e.message;
+  }
+}
 
 const totalConflicts = computed(() =>
   items.value.reduce((n, it) => n + (it.conflicts?.length || 0), 0)
@@ -89,11 +171,13 @@ function conflictTitle(it) {
 }
 
 function openEditor(it) {
+  teacherFilter.value = "";
   editing.value = JSON.parse(JSON.stringify(it));
   editConflicts.value = it.conflicts || [];
 }
 
 function newItem() {
+  teacherFilter.value = "";
   const cell = gridCells.value[items.value.length] || gridCells.value[0] || {
     date: period.value.start_date,
     start: "09:00",
@@ -260,41 +344,76 @@ onMounted(load);
       <button class="btn-primary" @click="newItem">+ Занятие</button>
     </div>
 
+    <!-- Панель массовых действий -->
+    <div
+      v-if="items.length"
+      class="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-2 text-sm"
+    >
+      <label class="flex items-center gap-2 text-slate-600">
+        <input type="checkbox" :checked="allSelected" @change="toggleSelectAll" />
+        Выбрать все
+      </label>
+      <span class="text-slate-500">Выбрано: {{ selected.length }}</span>
+      <button class="btn-secondary ml-auto" :disabled="!selected.length" @click="openBulk">
+        Назначить преподавателей / аудиторию
+      </button>
+      <button v-if="selected.length" class="btn-ghost text-slate-500" @click="selected = []">
+        Сбросить
+      </button>
+    </div>
+
     <div v-if="!items.length" class="card p-10 text-center text-slate-400">
       Нет занятий. Добавьте занятие или вернитесь к периоду для автозаполнения.
     </div>
 
     <!-- Список занятий с drag-and-drop -->
     <VueDraggableNext v-else v-model="items" handle=".drag-handle" class="space-y-2">
-      <div
-        v-for="it in items"
-        :key="it.id"
-        class="card flex items-center gap-3 px-4 py-3 transition"
-        :class="{ 'conflict-row border-red-200': it.conflicts && it.conflicts.length }"
-        :title="conflictTitle(it)"
-      >
-        <span class="drag-handle cursor-grab select-none text-slate-300">⋮⋮</span>
-        <div class="w-32 shrink-0 text-sm">
-          <div class="font-medium text-slate-700">{{ it.date }}</div>
-          <div class="text-slate-400">{{ it.start_time }}–{{ it.end_time }}</div>
-        </div>
-        <div class="min-w-0 flex-1">
-          <div class="truncate font-medium text-slate-800">
-            {{ it.custom_title || it.topic_title || "Без темы" }}
-          </div>
-          <div class="truncate text-xs text-slate-500">
-            {{ it.lesson_type }} ·
-            {{ teacherNames(it.teacher_ids) || "преп. не назначен" }} ·
-            ауд. {{ roomNumber(it.room_id) }}
-          </div>
-        </div>
-        <span
-          v-if="it.conflicts && it.conflicts.length"
-          class="badge bg-red-100 text-red-700"
+      <div v-for="(it, idx) in items" :key="it.id">
+        <!-- Заголовок дня -->
+        <div
+          v-if="idx === 0 || items[idx - 1].date !== it.date"
+          class="mb-1 mt-3 flex items-center gap-2 px-1 text-sm font-semibold text-blue-700"
         >
-          накладка
-        </span>
-        <button class="btn-secondary" @click="openEditor(it)">Изменить</button>
+          <span class="h-px flex-1 bg-blue-100"></span>
+          {{ formatDayHeader(it.date) }}
+          <span class="h-px flex-1 bg-blue-100"></span>
+        </div>
+        <div
+          class="card flex items-center gap-3 px-4 py-3 transition"
+          :class="{
+            'conflict-row border-red-200': it.conflicts && it.conflicts.length,
+            'ring-2 ring-blue-300': isSelected(it.id),
+          }"
+          :title="conflictTitle(it)"
+        >
+          <input
+            type="checkbox"
+            class="shrink-0"
+            :checked="isSelected(it.id)"
+            @change="toggleSelect(it.id)"
+          />
+          <span class="drag-handle cursor-grab select-none text-slate-300">⋮⋮</span>
+          <div class="w-24 shrink-0 text-sm">
+            <div class="text-slate-400">{{ it.start_time }}–{{ it.end_time }}</div>
+          </div>
+          <div class="min-w-0 flex-1">
+            <div class="truncate font-medium text-slate-800">
+              {{ itemTitle(it) }}
+            </div>
+            <div class="truncate text-xs text-slate-500">
+              {{ it.lesson_type }} ·
+              {{ teacherNames(it.teacher_ids) || "преп. не назначен" }} ·
+              ауд. {{ roomNumber(it.room_id) }}
+            </div>
+          </div>
+          <span
+            v-if="it.conflicts && it.conflicts.length"
+            class="badge bg-red-100 text-red-700"
+          >
+            накладка
+          </span>
+          <button class="btn-secondary" @click="openEditor(it)">Изменить</button>
+        </div>
       </div>
     </VueDraggableNext>
 
@@ -347,9 +466,17 @@ onMounted(load);
         </div>
         <div>
           <label class="label">Преподаватели</label>
+          <input
+            v-model="teacherFilter"
+            class="input mb-2"
+            placeholder="Поиск по фамилии…"
+          />
           <div class="max-h-32 overflow-auto rounded-lg border border-slate-200 p-2">
+            <p v-if="!filteredTeachers.length" class="text-xs text-slate-400">
+              Преподаватели не найдены
+            </p>
             <label
-              v-for="t in teachers"
+              v-for="t in filteredTeachers"
               :key="t.id"
               class="flex items-center gap-2 py-0.5 text-sm"
             >
@@ -397,6 +524,70 @@ onMounted(load);
         <button v-if="editing.id" class="btn-danger mr-auto" @click="deleteItem">Удалить</button>
         <button class="btn-secondary" @click="editing = null">Отмена</button>
         <button class="btn-primary" @click="saveItem">Сохранить</button>
+      </template>
+    </AppModal>
+
+    <!-- Массовое назначение -->
+    <AppModal v-if="bulkOpen" title="Массовое назначение" @close="bulkOpen = false">
+      <p class="mb-4 text-sm text-slate-500">
+        Будет применено к {{ selected.length }} выбранным занятиям. Отметьте, что именно
+        назначить.
+      </p>
+
+      <label class="mb-2 flex items-center gap-2 text-sm font-medium text-slate-700">
+        <input type="checkbox" v-model="bulk.applyTeachers" />
+        Назначить преподавателей
+      </label>
+      <div :class="{ 'pointer-events-none opacity-50': !bulk.applyTeachers }">
+        <input
+          v-model="bulkTeacherFilter"
+          class="input mb-2"
+          placeholder="Поиск по фамилии…"
+        />
+        <div class="max-h-40 overflow-auto rounded-lg border border-slate-200 p-2">
+          <p v-if="!filteredBulkTeachers.length" class="text-xs text-slate-400">
+            Преподаватели не найдены
+          </p>
+          <label
+            v-for="t in filteredBulkTeachers"
+            :key="t.id"
+            class="flex items-center gap-2 py-0.5 text-sm"
+          >
+            <input
+              type="checkbox"
+              :checked="bulk.teacher_ids.includes(t.id)"
+              @change="bulkToggleTeacher(t.id)"
+            />
+            {{ t.fio }}
+          </label>
+        </div>
+        <p class="mt-1 text-xs text-slate-400">
+          Если не выбрать ни одного — преподаватели будут очищены у выбранных занятий.
+        </p>
+      </div>
+
+      <label class="mb-2 mt-4 flex items-center gap-2 text-sm font-medium text-slate-700">
+        <input type="checkbox" v-model="bulk.applyRoom" />
+        Назначить аудиторию
+      </label>
+      <select
+        v-model.number="bulk.room_id"
+        class="input"
+        :disabled="!bulk.applyRoom"
+      >
+        <option :value="null">— не выбрана —</option>
+        <option v-for="r in rooms" :key="r.id" :value="r.id">{{ r.number }}</option>
+      </select>
+
+      <template #footer>
+        <button class="btn-secondary" @click="bulkOpen = false">Отмена</button>
+        <button
+          class="btn-primary"
+          :disabled="!bulk.applyTeachers && !bulk.applyRoom"
+          @click="applyBulk"
+        >
+          Применить
+        </button>
       </template>
     </AppModal>
   </div>
