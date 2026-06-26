@@ -315,6 +315,8 @@ function runMigrations() {
   addColumnIfMissing("schedule_audit", "author", "author TEXT");
   // Номер учебной группы для нелекционных занятий в групповом режиме (А/Б).
   addColumnIfMissing("schedule_items", "group_label", "group_label TEXT");
+  // Закрепление: 1 — занятие закреплено (не перемещается при авто-операциях).
+  addColumnIfMissing("schedule_items", "is_pinned", "is_pinned INTEGER NOT NULL DEFAULT 0");
   // Визуальная метка изменения: 1 — занятие изменено после создания, 0 — просмотрено.
   addColumnIfMissing("schedule_items", "is_modified", "is_modified INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing("schedule_items", "modified_at", "modified_at TEXT");

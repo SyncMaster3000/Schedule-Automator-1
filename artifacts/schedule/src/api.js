@@ -170,6 +170,9 @@ export const api = {
     restoreToQueue: (data) => call("schedule:restoreToQueue", data),
     bulkUpdate: (data) => call("schedule:bulkUpdate", data),
     clearChangeMark: (id) => call("schedule:clearChangeMark", id),
+    setPin: (data) => call("schedule:setPin", data),
+    bulkShift: (data) => call("schedule:bulkShift", data),
+    moveSelected: (data) => call("schedule:moveSelected", data),
   },
   conflicts: {
     check: (data) => call("conflicts:check", data),

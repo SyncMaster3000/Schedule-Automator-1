@@ -314,6 +314,202 @@ export default {
     return { updated: ids.length };
   },
 
+  // Закрепить / открепить занятие. Закреплённые не перемещаются при авто-операциях.
+  "schedule:setPin": ({ itemId, pinned }) => {
+    getDb()
+      .prepare("UPDATE schedule_items SET is_pinned = ? WHERE id = ?")
+      .run(pinned ? 1 : 0, itemId);
+    return { id: itemId, is_pinned: pinned ? 1 : 0 };
+  },
+
+  // Массовое смещение занятий вниз на n слотов сетки.
+  // scope: 'all' | 'week' | 'day'. Для 'week'/'day' нужна опорная дата (date).
+  // Закреплённые занятия не смещаются. Если слотов не хватает — бросает ошибку.
+  "schedule:bulkShift": ({ periodId, scope, date, n }) => {
+    const db = getDb();
+    const period = db.prepare("SELECT * FROM periods WHERE id = ?").get(periodId);
+    if (!period) throw new Error("Период не найден");
+    if (!n || n < 1) throw new Error("Число слотов должно быть не менее 1");
+
+    const timeGrid = JSON.parse(period.time_grid_json || "[]");
+    const cells = buildCells(
+      period.start_date,
+      period.end_date,
+      timeGrid,
+      period.work_week || "mon-fri"
+    );
+
+    // Все занятия периода, отсортированные по дате+времени
+    const allItems = db
+      .prepare(
+        "SELECT * FROM schedule_items WHERE period_id = ? ORDER BY date, start_time, sort_order"
+      )
+      .all(periodId);
+
+    // Фильтр: какие занятия попадают в scope
+    function inScope(it) {
+      if (scope === "day") return it.date === date;
+      if (scope === "week") {
+        // Неделя определяется по Пн–Вс относительно опорной даты
+        const d = new Date(it.date + "T00:00:00");
+        const ref = new Date(date + "T00:00:00");
+        const dMon = new Date(ref); dMon.setDate(ref.getDate() - ((ref.getDay() + 6) % 7));
+        const dSun = new Date(dMon); dSun.setDate(dMon.getDate() + 6);
+        return d >= dMon && d <= dSun;
+      }
+      return true; // 'all'
+    }
+
+    const toShift = allItems.filter((it) => inScope(it) && !it.is_pinned);
+    if (!toShift.length) return { shifted: 0 };
+
+    // Индекс первого занятия в сетке ячеек
+    const firstCellKey = `${toShift[0].date} ${toShift[0].start_time}`;
+    const firstCellIdx = cells.findIndex(
+      (c) => `${c.date} ${c.start}` === firstCellKey
+    );
+    if (firstCellIdx < 0) throw new Error("Первое занятие выходит за пределы сетки");
+
+    // Проверить, есть ли n свободных слотов перед первым занятием
+    if (firstCellIdx < n)
+      throw new Error(
+        `Недостаточно слотов перед первым занятием для смещения на ${n}. ` +
+        `Доступно ${firstCellIdx} свободных слотов.`
+      );
+
+    // Проверить, что хватает ячеек в хвосте
+    const lastCellKey = `${toShift[toShift.length - 1].date} ${toShift[toShift.length - 1].start_time}`;
+    const lastCellIdx = cells.findIndex(
+      (c) => `${c.date} ${c.start}` === lastCellKey
+    );
+    if (lastCellIdx + n >= cells.length)
+      throw new Error(
+        "Смещение выходит за конец периода — нет свободных слотов в конце."
+      );
+
+    const selfStudy = period.empty_slot_mode === "self_study";
+
+    const tx = db.transaction(() => {
+      // Сместить каждое занятие в сетке вниз на n ячеек
+      for (const it of toShift) {
+        const curKey = `${it.date} ${it.start_time}`;
+        const curIdx = cells.findIndex((c) => `${c.date} ${c.start}` === curKey);
+        if (curIdx < 0) continue;
+        const newCell = cells[curIdx + n];
+        if (!newCell) continue;
+        db.prepare(
+          `UPDATE schedule_items SET date = ?, start_time = ?, end_time = ?,
+            start_dt = ?, end_dt = ? WHERE id = ?`
+        ).run(
+          newCell.date, newCell.start, newCell.end,
+          `${newCell.date}T${newCell.start}:00`,
+          `${newCell.date}T${newCell.end}:00`,
+          it.id
+        );
+      }
+      // Заполнить освободившиеся верхние слоты пустыми/самоподготовка занятиями
+      const takenAfter = new Set(
+        db.prepare("SELECT date, start_time FROM schedule_items WHERE period_id = ?")
+          .all(periodId).map((e) => `${e.date} ${e.start_time}`)
+      );
+      let order =
+        (db.prepare("SELECT MAX(sort_order) AS m FROM schedule_items WHERE period_id = ?")
+          .get(periodId).m || 0) + 1;
+      for (let i = firstCellIdx; i < firstCellIdx + n && i < cells.length; i++) {
+        const c = cells[i];
+        const key = `${c.date} ${c.start}`;
+        if (takenAfter.has(key)) continue;
+        db.prepare(
+          `INSERT INTO schedule_items
+            (period_id, program_id, topic_id, date, start_time, end_time, start_dt, end_dt,
+             lesson_type, custom_title, teacher_ids, room_id, group_ids, group_label, note, sort_order)
+           VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, '[]', NULL, '[]', NULL, NULL, ?)`
+        ).run(
+          periodId, period.program_id, c.date, c.start, c.end,
+          `${c.date}T${c.start}:00`, `${c.date}T${c.end}:00`,
+          selfStudy ? "self_study" : "empty",
+          selfStudy ? "Самоподготовка" : null,
+          order++
+        );
+      }
+    });
+    tx();
+    return { shifted: toShift.length };
+  },
+
+  // Переместить выделенные занятия к указанному слоту, сохраняя взаимный порядок.
+  // Выделенные занятия (itemIds) вставляются подряд начиная с targetDate+targetStartTime;
+  // занятия, занимавшие эти слоты, перемещаются на освободившиеся позиции.
+  "schedule:moveSelected": ({ itemIds, targetDate, targetStartTime, periodId }) => {
+    const db = getDb();
+    const period = db.prepare("SELECT * FROM periods WHERE id = ?").get(periodId);
+    if (!period) throw new Error("Период не найден");
+    if (!itemIds || !itemIds.length) return { moved: 0 };
+
+    const timeGrid = JSON.parse(period.time_grid_json || "[]");
+    const cells = buildCells(
+      period.start_date,
+      period.end_date,
+      timeGrid,
+      period.work_week || "mon-fri"
+    );
+
+    // Все занятия периода, отсортированные по дате+времени
+    const allItems = db
+      .prepare(
+        "SELECT * FROM schedule_items WHERE period_id = ? ORDER BY date, start_time, sort_order"
+      )
+      .all(periodId);
+
+    const idSet = new Set(itemIds);
+    // Выделенные в их текущем порядке
+    const selected = allItems.filter((it) => idSet.has(it.id));
+    // Остальные
+    const rest = allItems.filter((it) => !idSet.has(it.id));
+
+    // Найти целевой индекс в rest (первый элемент rest, чья ячейка >= target)
+    const targetKey = `${targetDate} ${targetStartTime}`;
+    const targetCellIdx = cells.findIndex((c) => `${c.date} ${c.start}` === targetKey);
+    if (targetCellIdx < 0) throw new Error("Целевой слот не найден в сетке периода");
+
+    // Перестроить полный порядок: rest[0..insertAt-1] + selected + rest[insertAt..]
+    // insertAt = позиция в rest, соответствующая targetCellIdx
+    // Для простоты: вставляем перед первым элементом rest, чья дата >= targetDate
+    let insertAt = rest.findIndex(
+      (it) => it.date > targetDate || (it.date === targetDate && it.start_time >= targetStartTime)
+    );
+    if (insertAt < 0) insertAt = rest.length;
+
+    const newOrder = [
+      ...rest.slice(0, insertAt),
+      ...selected,
+      ...rest.slice(insertAt),
+    ];
+
+    if (newOrder.length > cells.length)
+      throw new Error("Недостаточно слотов в сетке для перемещения занятий");
+
+    const tx = db.transaction(() => {
+      for (let i = 0; i < newOrder.length; i++) {
+        const it = newOrder[i];
+        const cell = cells[i];
+        if (!cell) continue;
+        if (it.date === cell.date && it.start_time === cell.start) continue;
+        db.prepare(
+          `UPDATE schedule_items SET date = ?, start_time = ?, end_time = ?,
+            start_dt = ?, end_dt = ? WHERE id = ?`
+        ).run(
+          cell.date, cell.start, cell.end,
+          `${cell.date}T${cell.start}:00`,
+          `${cell.date}T${cell.end}:00`,
+          it.id
+        );
+      }
+    });
+    tx();
+    return { moved: selected.length };
+  },
+
   // Снять метку изменения с занятия (пользователь просмотрел изменение).
   "schedule:clearChangeMark": (id) => {
     getDb()

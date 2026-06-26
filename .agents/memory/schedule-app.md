@@ -39,6 +39,13 @@ description: Durable quirks for the ported Electron schedule app — build/verif
 - Снимает is_modified/modified_at/change_desc с занятия. Пишущий → не добавлять в READONLY.
 - is_modified отображается как янтарная точка в строке и кнопка «Снять отметку» в редакторе.
 
+## Закрепление, смещение, перемещение выделенных (T11/T5/T1)
+- `is_pinned` колонка на `schedule_items` (DEFAULT 0). Канал `schedule:setPin {itemId, pinned}` — write.
+- `schedule:bulkShift {periodId, scope, date?, n}` — смещает не-закреплённые занятия вниз на n слотов, освобождённые верхние слоты заполняет пустыми/self_study. Если n > firstCellIdx — бросает ошибку.
+- `schedule:moveSelected {itemIds, targetDate, targetStartTime, periodId}` — переставляет выделенные в новую позицию, остальные занятия сдвигаются, порядок выделенных сохраняется.
+- shiftItems (drag режим «ряд») проверяет is_pinned и абортирует с сообщением если хоть одно закреплено.
+- Все три канала — WRITE, в READONLY не добавлять.
+
 ## Assessment-import uniqueness limitation (known, accepted)
 - УТП import creates a зачёт/экзамен topic with `utp_number: ""` and `default_lesson_type` set. There is a UNIQUE index on `program_topics(program_id, utp_number)`. Regular topics never emit `""` (they fall back to `String(order)`), so a single assessment row is safe — but a document with TWO assessment rows would collide and fail the whole import.
 - **Why:** empty utp_number is deliberate (assessment shows no number in the УТП column).

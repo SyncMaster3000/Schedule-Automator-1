@@ -74,6 +74,14 @@ const bulkOpen = ref(false);
 const bulk = ref({ teacher_ids: [], room_id: null, applyTeachers: true, applyRoom: false });
 const bulkTeacherFilter = ref("");
 
+// --- Массовое смещение (T5) ---
+const bulkShiftOpen = ref(false);
+const bulkShiftForm = ref({ scope: "all", date: "", n: 1 });
+
+// --- Перемещение выделенных (T1) ---
+const moveOpen = ref(false);
+const moveTarget = ref({ date: "", start_time: "" });
+
 // Заголовок занятия: «Тема X.Y Название». Номер показываем и для разделов
 // (римские цифры), если он есть; произвольные занятия — без префикса.
 function itemTitle(it) {
@@ -657,6 +665,15 @@ async function shiftItems(evt) {
     );
   }
 
+  // Закреплённые занятия нельзя смещать в режиме «ряд»
+  const hasPinned = ordered.some((it) => it && it.is_pinned);
+  if (hasPinned) {
+    error.value =
+      "Нельзя сместить ряд: среди занятий есть закреплённые. Открепите их и попробуйте снова.";
+    await load();
+    return;
+  }
+
   // Назначаем каждому элементу ячейку по порядку; пустому окошку — занятие-заглушку.
   for (let i = 0; i < ordered.length; i++) {
     const cell = cells[i];
@@ -694,7 +711,77 @@ async function shiftItems(evt) {
       crossPeriod: crossPeriod.value,
     });
   }
-  info.value = "Ряд смещен вниз; оставлено свободное окошко";
+  info.value = "Ряд смещён вниз; оставлено свободное окошко";
+}
+
+// --- T11: Закрепить / открепить занятие ---
+async function togglePin(it) {
+  const pinned = !it.is_pinned;
+  try {
+    await api.schedule.setPin({ itemId: it.id, pinned });
+    it.is_pinned = pinned ? 1 : 0;
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
+// --- T5: Массовое смещение вниз ---
+function openBulkShift() {
+  const first = items.value.find((it) => !isEmptyItem(it));
+  bulkShiftForm.value = {
+    scope: "all",
+    date: first?.date || "",
+    n: 1,
+  };
+  error.value = "";
+  bulkShiftOpen.value = true;
+}
+
+async function applyBulkShift() {
+  try {
+    error.value = "";
+    const f = bulkShiftForm.value;
+    const res = await api.schedule.bulkShift({
+      periodId: periodId.value,
+      scope: f.scope,
+      date: f.date || undefined,
+      n: Number(f.n),
+    });
+    bulkShiftOpen.value = false;
+    info.value = `Смещено занятий: ${res.shifted}`;
+    await load();
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
+// --- T1: Переместить выделенные к указанному слоту ---
+function openMoveSelected() {
+  const first = items.value.find((it) => isSelected(it.id));
+  moveTarget.value = {
+    date: first?.date || period.value?.start_date || "",
+    start_time: first?.start_time || "",
+  };
+  error.value = "";
+  moveOpen.value = true;
+}
+
+async function applyMoveSelected() {
+  try {
+    error.value = "";
+    const res = await api.schedule.moveSelected({
+      itemIds: [...selected.value],
+      targetDate: moveTarget.value.date,
+      targetStartTime: moveTarget.value.start_time,
+      periodId: periodId.value,
+    });
+    moveOpen.value = false;
+    info.value = `Перемещено занятий: ${res.moved}`;
+    selected.value = [];
+    await load();
+  } catch (e) {
+    error.value = e.message;
+  }
 }
 
 // Применить выбранную сетку учебных часов к одному дню: занятия этого дня
@@ -825,6 +912,7 @@ onMounted(load);
         <button class="btn-secondary" @click="fillGrid">Заполнить сетку</button>
         <button class="btn-secondary" @click="openHistory">История</button>
         <button class="btn-secondary" @click="applyOrder">Применить порядок</button>
+        <button class="btn-secondary" @click="openBulkShift">Сдвинуть вниз…</button>
         <button class="btn-secondary" @click="exportDocx">Экспорт</button>
         <button class="btn-primary" :disabled="hasConflicts" @click="approve">
           Утвердить
@@ -857,6 +945,14 @@ onMounted(load);
       <span class="text-slate-500">Выбрано: {{ selected.length }}</span>
       <button class="btn-secondary ml-auto" :disabled="!selected.length" @click="openBulk">
         Назначить преподавателей / аудиторию
+      </button>
+      <button
+        v-if="selected.length"
+        class="btn-secondary"
+        @click="openMoveSelected"
+        title="Переместить выделенные занятия к выбранному слоту, сохраняя взаимный порядок"
+      >
+        Переместить выделенные…
       </button>
       <button v-if="selected.length" class="btn-ghost text-slate-500" @click="selected = []">
         Сбросить
@@ -951,6 +1047,12 @@ onMounted(load);
             :checked="isSelected(it.id)"
             @change="toggleSelect(it.id)"
           />
+          <button
+            class="shrink-0 text-base leading-none transition"
+            :class="it.is_pinned ? 'text-blue-500' : 'text-slate-200 hover:text-slate-400'"
+            :title="it.is_pinned ? 'Открепить занятие' : 'Закрепить занятие (не смещать при авто-операциях)'"
+            @click.stop="togglePin(it)"
+          >📌</button>
           <span class="drag-handle cursor-grab select-none text-slate-300">⋮⋮</span>
           <div class="w-24 shrink-0 text-sm">
             <div class="text-slate-400">{{ it.start_time }}–{{ it.end_time }}</div>
@@ -977,6 +1079,11 @@ onMounted(load);
               ауд. {{ roomNumber(it.room_id) }}
             </div>
           </div>
+          <span
+            v-if="it.is_pinned"
+            class="badge bg-blue-50 text-blue-600"
+            title="Занятие закреплено — не перемещается при авто-операциях"
+          >📌 закреп.</span>
           <span
             v-if="it.conflicts && it.conflicts.length"
             class="badge bg-red-100 text-red-700"
@@ -1340,6 +1447,127 @@ onMounted(load);
       <template #footer>
         <button class="btn-secondary" @click="approveOpen = false">Отмена</button>
         <button class="btn-primary" @click="doApprove">Утвердить</button>
+      </template>
+    </AppModal>
+
+    <!-- T5: Модал массового смещения вниз -->
+    <AppModal v-if="bulkShiftOpen" title="Сдвинуть занятия вниз" @close="bulkShiftOpen = false">
+      <div class="space-y-4 text-sm">
+        <p class="text-slate-600">
+          Занятия смещаются на N слотов сетки вниз. Закреплённые занятия пропускаются.
+          Освободившиеся слоты сверху становятся пустыми окошками.
+        </p>
+
+        <div>
+          <label class="mb-1 block font-medium text-slate-700">Что сместить</label>
+          <div class="space-y-1">
+            <label class="flex items-center gap-2">
+              <input type="radio" v-model="bulkShiftForm.scope" value="all" />
+              Всё расписание целиком
+            </label>
+            <label class="flex items-center gap-2">
+              <input type="radio" v-model="bulkShiftForm.scope" value="week" />
+              Одну неделю
+            </label>
+            <label class="flex items-center gap-2">
+              <input type="radio" v-model="bulkShiftForm.scope" value="day" />
+              Один день
+            </label>
+          </div>
+        </div>
+
+        <div v-if="bulkShiftForm.scope !== 'all'">
+          <label class="mb-1 block font-medium text-slate-700">
+            {{ bulkShiftForm.scope === 'day' ? 'Дата' : 'Любая дата из нужной недели' }}
+          </label>
+          <input
+            type="date"
+            v-model="bulkShiftForm.date"
+            class="input w-full"
+            :min="period?.start_date"
+            :max="period?.end_date"
+          />
+        </div>
+
+        <div>
+          <label class="mb-1 block font-medium text-slate-700">На сколько слотов сместить</label>
+          <div class="flex items-center gap-3">
+            <input
+              type="number"
+              v-model.number="bulkShiftForm.n"
+              class="input w-24"
+              min="1"
+              max="30"
+            />
+            <span class="text-slate-500">слот(ов)</span>
+          </div>
+          <p class="mt-1 text-xs text-slate-400">
+            1 слот = одно учебное занятие по сетке учебных часов
+          </p>
+        </div>
+
+        <div v-if="error" class="rounded bg-red-50 px-3 py-2 text-red-700">{{ error }}</div>
+      </div>
+      <template #footer>
+        <button class="btn-secondary" @click="bulkShiftOpen = false">Отмена</button>
+        <button
+          class="btn-primary"
+          :disabled="(bulkShiftForm.scope !== 'all' && !bulkShiftForm.date) || bulkShiftForm.n < 1"
+          @click="applyBulkShift"
+        >
+          Сдвинуть
+        </button>
+      </template>
+    </AppModal>
+
+    <!-- T1: Модал перемещения выделенных занятий -->
+    <AppModal v-if="moveOpen" title="Переместить выделенные занятия" @close="moveOpen = false">
+      <div class="space-y-4 text-sm">
+        <p class="text-slate-600">
+          Выбрано <strong>{{ selected.length }}</strong> занятий. Они будут размещены подряд
+          начиная с указанного слота, сохраняя взаимный порядок. Занятия на освободившихся
+          местах сдвигаются на vacated позиции.
+        </p>
+
+        <div>
+          <label class="mb-1 block font-medium text-slate-700">Целевая дата</label>
+          <input
+            type="date"
+            v-model="moveTarget.date"
+            class="input w-full"
+            :min="period?.start_date"
+            :max="period?.end_date"
+          />
+        </div>
+
+        <div>
+          <label class="mb-1 block font-medium text-slate-700">Начальное время слота</label>
+          <select v-model="moveTarget.start_time" class="input w-full">
+            <option value="">Выберите время…</option>
+            <option
+              v-for="it in items.filter(x => x.date === moveTarget.date)"
+              :key="it.id"
+              :value="it.start_time"
+            >
+              {{ it.start_time }} — {{ it.end_time }} · {{ itemTitle(it) }}
+            </option>
+          </select>
+          <p class="mt-1 text-xs text-slate-400">
+            Показаны только слоты этого дня, уже существующие в расписании
+          </p>
+        </div>
+
+        <div v-if="error" class="rounded bg-red-50 px-3 py-2 text-red-700">{{ error }}</div>
+      </div>
+      <template #footer>
+        <button class="btn-secondary" @click="moveOpen = false">Отмена</button>
+        <button
+          class="btn-primary"
+          :disabled="!moveTarget.date || !moveTarget.start_time"
+          @click="applyMoveSelected"
+        >
+          Переместить
+        </button>
       </template>
     </AppModal>
   </div>
