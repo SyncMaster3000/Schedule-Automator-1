@@ -183,6 +183,10 @@ function toggleSelect(id) {
 const allSelected = computed(
   () => items.value.length > 0 && selected.value.length === items.value.length
 );
+// Уникальные непустые номера групп из текущего списка занятий — для datalist
+const usedGroupLabels = computed(() => [
+  ...new Set(items.value.map((it) => it.group_label).filter(Boolean)),
+]);
 function toggleSelectAll() {
   selected.value = allSelected.value ? [] : items.value.map((it) => it.id);
 }
@@ -1539,12 +1543,17 @@ onUnmounted(() => {
           </p>
         </div>
         <div v-if="period && period.group_mode">
-          <label class="label">Группа (A/B)</label>
-          <select v-model="editing.group_label" class="input">
-            <option :value="''">— Общее (обе группы) —</option>
-            <option value="A">Группа A</option>
-            <option value="B">Группа B</option>
-          </select>
+          <label class="label">Номер группы</label>
+          <input
+            v-model="editing.group_label"
+            type="text"
+            class="input"
+            placeholder="напр. 1, 2, А, Б …"
+            list="editor-group-datalist"
+          />
+          <datalist id="editor-group-datalist">
+            <option v-for="lbl in usedGroupLabels" :key="lbl" :value="lbl" />
+          </datalist>
         </div>
         <div>
           <label class="label">Аудитория</label>
@@ -1698,13 +1707,19 @@ onUnmounted(() => {
 
       <label class="mb-2 mt-4 flex items-center gap-2 text-sm font-medium text-slate-700">
         <input type="checkbox" v-model="bulk.applyGroupLabel" />
-        Назначить группу (A/B)
+        Назначить номер группы
       </label>
-      <select v-model="bulk.group_label" class="input" :disabled="!bulk.applyGroupLabel">
-        <option value="">— Общее (обе группы) —</option>
-        <option value="A">Группа A</option>
-        <option value="B">Группа B</option>
-      </select>
+      <input
+        v-model="bulk.group_label"
+        type="text"
+        class="input"
+        :disabled="!bulk.applyGroupLabel"
+        placeholder="напр. 1, 2, А, Б …"
+        list="bulk-group-datalist"
+      />
+      <datalist id="bulk-group-datalist">
+        <option v-for="lbl in usedGroupLabels" :key="lbl" :value="lbl" />
+      </datalist>
 
       <template #footer>
         <button class="btn-secondary" @click="bulkOpen = false">Отмена</button>
