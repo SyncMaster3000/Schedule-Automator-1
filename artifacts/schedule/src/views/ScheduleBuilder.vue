@@ -1,6 +1,6 @@
 <script setup>
 // Конструктор расписания: drag-and-drop занятий + контроль накладок в реальном времени
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, onUnmounted } from "vue";
 import { useRouter } from "vue-router";
 import { VueDraggableNext } from "vue-draggable-next";
 import { eachDayOfInterval, parseISO, format, getDay } from "date-fns";
@@ -82,6 +82,11 @@ const bulkShiftForm = ref({ scope: "all", date: "", n: 1 });
 const moveOpen = ref(false);
 const moveTarget = ref({ date: "", start_time: "" });
 
+// --- Undo / Redo (T10) ---
+const MAX_UNDO = 20;
+const undoStack = ref([]); // { desc, items[] }
+const redoStack = ref([]);
+
 // Заголовок занятия: «Тема X.Y Название». Номер показываем и для разделов
 // (римские цифры), если он есть; произвольные занятия — без префикса.
 function itemTitle(it) {
@@ -114,6 +119,7 @@ function isEmptyItem(it) {
 
 // Удалить пустое окошко напрямую из списка (без открытия редактора).
 async function deleteEmpty(it) {
+  pushUndo("удаление свободного окошка");
   error.value = "";
   try {
     await api.schedule.deleteItem(it.id);
@@ -182,6 +188,7 @@ function bulkToggleTeacher(id) {
   else arr.push(id);
 }
 async function applyBulk() {
+  pushUndo("массовое назначение");
   error.value = "";
   try {
     const fields = {};
@@ -279,6 +286,7 @@ const unallocatedTopics = computed(() => {
 
 // --- Заполнение полной сетки таймслотов ---
 async function fillGrid() {
+  pushUndo("заполнение сетки");
   error.value = "";
   try {
     const res = await api.schedule.fillGrid(periodId.value);
@@ -381,6 +389,7 @@ async function removeNote(id) {
 // Вписать нераспределённую тему в пустой слот (замена из нераспределённых).
 async function assignTopic(it, topicId) {
   if (!topicId) return;
+  pushUndo("вписать тему в слот");
   error.value = "";
   try {
     await api.schedule.assignTopic({
@@ -397,6 +406,7 @@ async function assignTopic(it, topicId) {
 
 // Вернуть занятие в очередь нераспределённых (освободить слот).
 async function restoreToQueue(it) {
+  pushUndo("возврат в очередь нераспределённых");
   error.value = "";
   try {
     await api.schedule.restoreToQueue({ itemId: it.id, author: author.value || null });
@@ -452,6 +462,7 @@ async function clearChangeMark(it) {
 
 // Быстро заполнить свободный слот самоподготовкой
 async function addSelfStudySlot(it) {
+  pushUndo("добавить самоподготовку");
   error.value = "";
   try {
     await api.schedule.saveItem({
@@ -552,6 +563,7 @@ async function recheck() {
 }
 
 async function saveItem() {
+  pushUndo("редактирование занятия");
   try {
     await api.schedule.saveItem({ ...editing.value, crossPeriod: crossPeriod.value });
     editing.value = null;
@@ -568,6 +580,7 @@ async function deleteItem() {
     return;
   }
   if (!confirm("Удалить занятие?")) return;
+  pushUndo("удаление занятия");
   await api.schedule.deleteItem(editing.value.id);
   editing.value = null;
   await load();
@@ -597,6 +610,7 @@ async function onDragEnd(evt) {
     return;
   }
   error.value = "";
+  pushUndo(dragMode.value === "swap" ? "перестановка занятий" : "сдвиг ряда");
   let failMsg = "";
   try {
     if (dragMode.value === "swap") {
@@ -738,6 +752,7 @@ function openBulkShift() {
 }
 
 async function applyBulkShift() {
+  pushUndo("массовый сдвиг вниз");
   try {
     error.value = "";
     const f = bulkShiftForm.value;
@@ -767,6 +782,7 @@ function openMoveSelected() {
 }
 
 async function applyMoveSelected() {
+  pushUndo("перемещение выделенных занятий");
   try {
     error.value = "";
     const res = await api.schedule.moveSelected({
@@ -782,6 +798,73 @@ async function applyMoveSelected() {
   } catch (e) {
     error.value = e.message;
   }
+}
+
+// --- Undo/Redo engine (T10) ---
+// Сохраняет снимок текущего состояния items в стек undo.
+// Вызывается в начале каждой операции записи (до await), пока items ещё не изменены.
+function pushUndo(desc) {
+  undoStack.value.push({ desc, items: items.value.map((it) => ({ ...it })) });
+  if (undoStack.value.length > MAX_UNDO) undoStack.value.shift();
+  redoStack.value = [];
+}
+
+// Применяет сохранённый снимок: удаляет появившиеся после снимка занятия,
+// обновляет/воссоздаёт занятия из снимка, перечитывает данные из БД.
+async function applySnapshot(snap) {
+  const snapIds = new Set(snap.items.map((it) => it.id));
+  const curIds = new Set(items.value.map((it) => it.id));
+  // Удалить занятия, созданные ПОСЛЕ снимка
+  for (const it of items.value) {
+    if (!snapIds.has(it.id)) {
+      try { await api.schedule.deleteItem(it.id); } catch { /* игнорируем */ }
+    }
+  }
+  // Восстановить занятия из снимка (UPDATE если ещё есть, INSERT если удалены)
+  for (const it of snap.items) {
+    try {
+      await api.schedule.saveItem({
+        ...it,
+        id: curIds.has(it.id) ? it.id : null, // воссоздать, если был удалён
+        crossPeriod: crossPeriod.value,
+      });
+    } catch { /* игнорируем конкретные ошибки строки */ }
+  }
+  await load();
+}
+
+async function undo() {
+  if (!undoStack.value.length) return;
+  error.value = "";
+  const redoEntry = { desc: "redo", items: items.value.map((it) => ({ ...it })) };
+  const snap = undoStack.value.pop();
+  try {
+    await applySnapshot(snap);
+    info.value = `Отменено: ${snap.desc}`;
+    redoStack.value.push(redoEntry);
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
+async function redo() {
+  if (!redoStack.value.length) return;
+  error.value = "";
+  const undoEntry = { desc: "повтор", items: items.value.map((it) => ({ ...it })) };
+  const snap = redoStack.value.pop();
+  try {
+    await applySnapshot(snap);
+    info.value = `Повторено: ${snap.desc}`;
+    undoStack.value.push(undoEntry);
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
+function handleUndoKey(e) {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+  if (e.key === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
+  if (e.key === "y" || (e.key === "z" && e.shiftKey)) { e.preventDefault(); redo(); }
 }
 
 // Применить выбранную сетку учебных часов к одному дню: занятия этого дня
@@ -817,6 +900,7 @@ async function applyDayGrid(date, gridId) {
 }
 
 async function applyOrder() {
+  pushUndo("применить порядок");
   error.value = "";
   try {
     const cells = gridCells.value;
@@ -886,7 +970,13 @@ async function doApprove() {
   }
 }
 
-onMounted(load);
+onMounted(() => {
+  load();
+  window.addEventListener("keydown", handleUndoKey);
+});
+onUnmounted(() => {
+  window.removeEventListener("keydown", handleUndoKey);
+});
 </script>
 
 <template>
@@ -913,6 +1003,18 @@ onMounted(load);
         <button class="btn-secondary" @click="openHistory">История</button>
         <button class="btn-secondary" @click="applyOrder">Применить порядок</button>
         <button class="btn-secondary" @click="openBulkShift">Сдвинуть вниз…</button>
+        <button
+          class="btn-secondary"
+          :disabled="!undoStack.length"
+          :title="undoStack.length ? `Отменить: ${undoStack[undoStack.length - 1].desc} (Ctrl+Z)` : 'Нечего отменять'"
+          @click="undo"
+        >↩ Отмена</button>
+        <button
+          class="btn-secondary"
+          :disabled="!redoStack.length"
+          title="Повторить (Ctrl+Shift+Z)"
+          @click="redo"
+        >↪ Повтор</button>
         <button class="btn-secondary" @click="exportDocx">Экспорт</button>
         <button class="btn-primary" :disabled="hasConflicts" @click="approve">
           Утвердить

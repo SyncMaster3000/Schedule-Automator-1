@@ -39,6 +39,13 @@ description: Durable quirks for the ported Electron schedule app — build/verif
 - Снимает is_modified/modified_at/change_desc с занятия. Пишущий → не добавлять в READONLY.
 - is_modified отображается как янтарная точка в строке и кнопка «Снять отметку» в редакторе.
 
+## Undo/Redo (T10)
+- Фронтенд-стек снимков (max 20). `pushUndo(desc)` вызывается в начале каждой write-функции до первого await.
+- `applySnapshot(snap)`: сначала удаляет занятия, созданные после снимка; потом restoreItem (saveItem с id=null если был удалён, id=оригинальный если жив).
+- Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y — обработчик навешивается в onMounted, снимается в onUnmounted (window.removeEventListener).
+- Кнопки ↩/↪ в toolbar, disabled при пустом стеке. Redo-стек сбрасывается при любой новой операции.
+- **Не охватывает:** clearChangeMark, togglePin, saveSettings, addNote, approve (не state-изменения расписания).
+
 ## Закрепление, смещение, перемещение выделенных (T11/T5/T1)
 - `is_pinned` колонка на `schedule_items` (DEFAULT 0). Канал `schedule:setPin {itemId, pinned}` — write.
 - `schedule:bulkShift {periodId, scope, date?, n}` — смещает не-закреплённые занятия вниз на n слотов, освобождённые верхние слоты заполняет пустыми/self_study. Если n > firstCellIdx — бросает ошибку.
