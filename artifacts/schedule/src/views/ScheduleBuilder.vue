@@ -534,6 +534,10 @@ function onTopicChange() {
   recheck();
 }
 
+function conflictTitle(it) {
+  return (it.conflicts || []).map((c) => c.message).join("\n");
+}
+
 // Форматирование даты изменения для тултипа
 function changeTitle(it) {
   if (!it.is_modified) return conflictTitle(it);
