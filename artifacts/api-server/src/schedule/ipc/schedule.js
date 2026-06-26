@@ -322,6 +322,18 @@ export default {
     return { id: itemId, is_pinned: pinned ? 1 : 0 };
   },
 
+  // Массовое закрепление / открепление списка занятий.
+  "schedule:bulkSetPin": ({ itemIds, pinned }) => {
+    if (!itemIds || !itemIds.length) return { updated: 0 };
+    const db = getDb();
+    const stmt = db.prepare("UPDATE schedule_items SET is_pinned = ? WHERE id = ?");
+    const tx = db.transaction(() => {
+      for (const id of itemIds) stmt.run(pinned ? 1 : 0, id);
+    });
+    tx();
+    return { updated: itemIds.length, is_pinned: pinned ? 1 : 0 };
+  },
+
   // Массовое смещение занятий вниз на n слотов сетки.
   // scope: 'all' | 'week' | 'day'. Для 'week'/'day' нужна опорная дата (date).
   // Закреплённые занятия не смещаются. Если слотов не хватает — бросает ошибку.
@@ -462,10 +474,10 @@ export default {
       .all(periodId);
 
     const idSet = new Set(itemIds);
-    // Выделенные в их текущем порядке
-    const selected = allItems.filter((it) => idSet.has(it.id));
-    // Остальные
-    const rest = allItems.filter((it) => !idSet.has(it.id));
+    // Из выделенных перемещаем только незакреплённые; закреплённые остаются на месте
+    const selected = allItems.filter((it) => idSet.has(it.id) && !it.is_pinned);
+    // Остальные (включая закреплённые из выделения)
+    const rest = allItems.filter((it) => !idSet.has(it.id) || it.is_pinned);
 
     // Найти целевой индекс в rest (первый элемент rest, чья ячейка >= target)
     const targetKey = `${targetDate} ${targetStartTime}`;

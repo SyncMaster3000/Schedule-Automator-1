@@ -171,6 +171,7 @@ export const api = {
     bulkUpdate: (data) => call("schedule:bulkUpdate", data),
     clearChangeMark: (id) => call("schedule:clearChangeMark", id),
     setPin: (data) => call("schedule:setPin", data),
+    bulkSetPin: (data) => call("schedule:bulkSetPin", data),
     bulkShift: (data) => call("schedule:bulkShift", data),
     moveSelected: (data) => call("schedule:moveSelected", data),
     listTemp: (periodId) => call("schedule:listTemp", { periodId }),

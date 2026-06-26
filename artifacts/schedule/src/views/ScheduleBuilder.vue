@@ -650,6 +650,12 @@ async function swapItems(evt) {
   const moved = order[oldIndex];
   const target = order[newIndex];
   if (!moved || !target || moved === target) return;
+  // Закреплённые занятия нельзя перетаскивать в режиме «поменять местами»
+  if (moved.is_pinned || target.is_pinned) {
+    throw new Error(
+      "Нельзя переставить закреплённое занятие. Открепите его (📌) и попробуйте снова."
+    );
+  }
   await api.schedule.saveItem({
     ...moved,
     date: slots[newIndex].date,
@@ -743,6 +749,24 @@ async function togglePin(it) {
   try {
     await api.schedule.setPin({ itemId: it.id, pinned });
     it.is_pinned = pinned ? 1 : 0;
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
+// Массовое закрепление / открепление выбранных занятий
+async function bulkPin(pinned) {
+  if (!selected.value.length) return;
+  error.value = "";
+  try {
+    await api.schedule.bulkSetPin({ itemIds: [...selected.value], pinned });
+    // Обновить локально без полного reload
+    for (const it of items.value) {
+      if (selected.value.includes(it.id)) it.is_pinned = pinned ? 1 : 0;
+    }
+    info.value = pinned
+      ? `Закреплено занятий: ${selected.value.length}`
+      : `Откреплено занятий: ${selected.value.length}`;
   } catch (e) {
     error.value = e.message;
   }
@@ -1181,6 +1205,18 @@ onUnmounted(() => {
       >
         Переместить выделенные…
       </button>
+      <button
+        v-if="selected.length"
+        class="btn-secondary"
+        title="Закрепить выбранные занятия — они не будут смещаться при авто-операциях"
+        @click="bulkPin(true)"
+      >📌 Закрепить</button>
+      <button
+        v-if="selected.length"
+        class="btn-secondary"
+        title="Открепить выбранные занятия"
+        @click="bulkPin(false)"
+      >📌 Открепить</button>
       <button v-if="selected.length" class="btn-ghost text-slate-500" @click="selected = []">
         Сбросить
       </button>
@@ -1301,6 +1337,7 @@ onUnmounted(() => {
               Самостоятельная подготовка
             </div>
             <div v-else class="truncate text-xs text-slate-500">
+              <template v-if="it.group_label">Гр. {{ it.group_label }} · </template>
               <template v-if="it.lesson_type">{{ it.lesson_type }} · </template>
               {{ teacherNames(it.teacher_ids) || "преп. не назначен" }} ·
               ауд. {{ roomNumber(it.room_id) }}
@@ -1530,19 +1567,11 @@ onUnmounted(() => {
         placeholder="напр. Круглый стол"
       />
 
-      <label
-        v-if="period && period.group_mode"
-        class="mb-2 mt-4 flex items-center gap-2 text-sm font-medium text-slate-700"
-      >
+      <label class="mb-2 mt-4 flex items-center gap-2 text-sm font-medium text-slate-700">
         <input type="checkbox" v-model="bulk.applyGroupLabel" />
         Назначить группу (A/B)
       </label>
-      <select
-        v-if="period && period.group_mode"
-        v-model="bulk.group_label"
-        class="input"
-        :disabled="!bulk.applyGroupLabel"
-      >
+      <select v-model="bulk.group_label" class="input" :disabled="!bulk.applyGroupLabel">
         <option value="">— Общее (обе группы) —</option>
         <option value="A">Группа A</option>
         <option value="B">Группа B</option>
