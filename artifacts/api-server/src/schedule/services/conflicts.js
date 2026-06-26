@@ -6,24 +6,38 @@
 //  - По умолчанию проверка в пределах одного периода. crossPeriod=true — по всей программе.
 import { getDb } from "../db/index.js";
 
-// Два интервала пересекаются, если start1 < end2 AND start2 < end1
+// Два интервала пересекаются, если start1 < end2 AND start2 < end1.
+// crossPeriod=false — проверка в пределах одного периода (по умолчанию).
+// crossPeriod=true — сквозная проверка по ВСЕМ расписаниям (всем программам),
+// чтобы один преподаватель/аудитория не оказались заняты в разных расписаниях.
 function buildConflictQuery(crossPeriod) {
   return `
     SELECT l.*, si.date, si.start_time, si.end_time, si.lesson_type,
            si.custom_title, t.fio AS teacher_fio, r.number AS room_number,
-           tp.title AS topic_title, tp.utp_number
+           tp.title AS topic_title, tp.utp_number,
+           p.title AS program_title, pe.name AS period_name
     FROM locks l
     JOIN schedule_items si ON si.id = l.schedule_item_id
     LEFT JOIN teachers t ON (l.resource_type = 'teacher' AND t.id = l.resource_id)
     LEFT JOIN rooms r ON (l.resource_type = 'room' AND r.id = l.resource_id)
     LEFT JOIN program_topics tp ON tp.id = l.topic_id
+    LEFT JOIN programs p ON p.id = l.program_id
+    LEFT JOIN periods pe ON pe.id = l.period_id
     WHERE l.resource_id = @resourceId
       AND l.resource_type = @resourceType
       AND l.start_dt < @endDt
       AND l.end_dt > @startDt
       AND l.schedule_item_id != @excludeItemId
-      ${crossPeriod ? "AND l.program_id = @programId" : "AND l.period_id = @periodId"}
+      ${crossPeriod ? "" : "AND l.period_id = @periodId"}
   `;
+}
+
+// Источник накладки: «расписание "Название" · Блок» — для подсказки пользователю.
+function sourceLabel(f) {
+  const parts = [];
+  if (f.program_title) parts.push(`расписание «${f.program_title}»`);
+  if (f.period_name) parts.push(f.period_name);
+  return parts.length ? ` (${parts.join(" · ")})` : "";
 }
 
 function checkResource({
@@ -49,11 +63,19 @@ function checkResource({
   return rows;
 }
 
+// Множество id приглашённых преподавателей — они не участвуют в накладках.
+function guestTeacherIds() {
+  const rows = getDb().prepare("SELECT id FROM teachers WHERE is_guest = 1").all();
+  return new Set(rows.map((r) => r.id));
+}
+
 function checkScheduleItem(item, crossPeriod = false) {
   const conflicts = [];
   const teacherIds = Array.isArray(item.teacher_ids) ? item.teacher_ids : [];
+  const guests = guestTeacherIds();
 
   for (const tid of teacherIds) {
+    if (guests.has(tid)) continue; // приглашённый — вне проверки накладок
     const found = checkResource({
       resourceId: tid,
       resourceType: "teacher",
@@ -69,7 +91,9 @@ function checkScheduleItem(item, crossPeriod = false) {
         type: "teacher",
         resourceId: tid,
         resourceName: f.teacher_fio,
-        message: `Преподаватель ${f.teacher_fio} уже занят(а) ${f.date} с ${f.start_time} до ${f.end_time}`,
+        sourceProgram: f.program_title || null,
+        sourcePeriod: f.period_name || null,
+        message: `Преподаватель ${f.teacher_fio} уже занят(а) ${f.date} с ${f.start_time} до ${f.end_time}${sourceLabel(f)}`,
         conflict: f,
       });
     }
@@ -91,7 +115,9 @@ function checkScheduleItem(item, crossPeriod = false) {
         type: "room",
         resourceId: item.room_id,
         resourceName: f.room_number,
-        message: `Аудитория ${f.room_number} уже занята ${f.date} с ${f.start_time} до ${f.end_time}`,
+        sourceProgram: f.program_title || null,
+        sourcePeriod: f.period_name || null,
+        message: `Аудитория ${f.room_number} уже занята ${f.date} с ${f.start_time} до ${f.end_time}${sourceLabel(f)}`,
         conflict: f,
       });
     }
@@ -111,7 +137,9 @@ function rebuildLocksForItem(item) {
   );
 
   const teacherIds = JSON.parse(item.teacher_ids || "[]");
+  const guests = guestTeacherIds();
   for (const tid of teacherIds) {
+    if (guests.has(tid)) continue; // приглашённые не блокируют ресурс
     insert.run(
       item.id,
       item.period_id,

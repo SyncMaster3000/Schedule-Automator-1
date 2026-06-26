@@ -11,6 +11,7 @@ import groups from "./ipc/groups.js";
 import references from "./ipc/references.js";
 import schedule from "./ipc/schedule.js";
 import versions from "./ipc/versions.js";
+import notes from "./ipc/notes.js";
 import { importUtp } from "./services/docxImport.js";
 import { exportSchedule } from "./services/docxExport.js";
 
@@ -22,6 +23,7 @@ const handlers = {
   ...references,
   ...schedule,
   ...versions,
+  ...notes,
 };
 
 // Каналы только для чтения — после них не нужно сохранять БД на диск.
@@ -36,11 +38,14 @@ const READONLY = new Set([
   "ref:rooms:list",
   "ref:slots:list",
   "ref:grids:list",
+  "lessonTypes:list",
   "schedule:listByPeriod",
   "conflicts:check",
   "versions:list",
   "versions:get",
   "versions:search",
+  "audit:list",
+  "notes:list",
 ]);
 
 let ready = null;

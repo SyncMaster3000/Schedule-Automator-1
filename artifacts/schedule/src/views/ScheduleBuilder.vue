@@ -21,9 +21,40 @@ const topics = ref([]);
 const groups = ref([]);
 const teachers = ref([]);
 const rooms = ref([]);
+const lessonTypes = ref([]);
 const crossPeriod = ref(false);
 const error = ref("");
 const info = ref("");
+
+// Имя автора изменений (для журнала). Сохраняем между сессиями в localStorage.
+const author = ref(localStorage.getItem("schedule_author") || "");
+function rememberAuthor() {
+  localStorage.setItem("schedule_author", author.value || "");
+}
+
+// --- Настройки периода (учебная неделя, режим пустых слотов, группы) ---
+const settingsOpen = ref(false);
+const settings = ref({
+  work_week: "mon-fri",
+  empty_slot_mode: "empty",
+  group_mode: 0,
+  separate_lectures: 0,
+});
+
+// --- Журнал изменений и заметки ---
+const historyOpen = ref(false);
+const auditLog = ref([]);
+const notes = ref([]);
+const newNote = ref("");
+
+// --- Утверждение с выбором раздела архива ---
+const approveOpen = ref(false);
+const approveSection = ref("Повышение квалификации");
+const ARCHIVE_SECTIONS = [
+  "Повышение квалификации",
+  "Переподготовка",
+  "Краткосрочные курсы",
+];
 
 // Сетки учебных часов (для выбора другой сетки на отдельный день)
 const grids = ref([]);
@@ -46,19 +77,26 @@ const bulkTeacherFilter = ref("");
 // Заголовок занятия: «Тема X.Y Название». Номер показываем и для разделов
 // (римские цифры), если он есть; произвольные занятия — без префикса.
 function itemTitle(it) {
+  if (isSelfStudy(it)) return "Самоподготовка";
   if (it.custom_title) return it.custom_title;
   if (it.utp_number) return `Тема ${it.utp_number} ${it.topic_title || ""}`.trim();
   return it.topic_title || "Без темы";
 }
 
-// Пустое «окошко» в расписании: полностью незаполненный слот (без темы,
-// названия, вида занятия, преподавателей, аудитории, групп и примечания).
-// Создаётся при смещении ряда, чтобы оставить место для вписания занятия.
+// «Самоподготовка» — слот без темы, помеченный режимом пустых слотов периода.
+function isSelfStudy(it) {
+  return !it.topic_id && it.lesson_type === "self_study";
+}
+
+// Пустое «окошко» в расписании: незаполненный слот (без темы, преподавателей,
+// аудитории, групп). Помечается lesson_type 'empty' (заполнение сетки) либо
+// вовсе без вида (смещение ряда). «Самоподготовка» сюда не относится.
 function isEmptyItem(it) {
+  if (isSelfStudy(it)) return false;
   return (
     !it.topic_id &&
     !it.custom_title &&
-    !it.lesson_type &&
+    (!it.lesson_type || it.lesson_type === "empty") &&
     !it.room_id &&
     !(it.teacher_ids && it.teacher_ids.length) &&
     !(it.group_ids && it.group_ids.length) &&
@@ -116,7 +154,16 @@ function toggleSelectAll() {
 }
 
 function openBulk() {
-  bulk.value = { teacher_ids: [], room_id: null, applyTeachers: true, applyRoom: false };
+  bulk.value = {
+    teacher_ids: [],
+    room_id: null,
+    lesson_type: "",
+    group_label: "",
+    applyTeachers: true,
+    applyRoom: false,
+    applyLessonType: false,
+    applyGroupLabel: false,
+  };
   bulkTeacherFilter.value = "";
   bulkOpen.value = true;
 }
@@ -129,16 +176,21 @@ function bulkToggleTeacher(id) {
 async function applyBulk() {
   error.value = "";
   try {
-    const chosen = items.value.filter((it) => selected.value.includes(it.id));
-    for (const it of chosen) {
-      const payload = { ...it, crossPeriod: crossPeriod.value };
-      if (bulk.value.applyTeachers) payload.teacher_ids = [...bulk.value.teacher_ids];
-      if (bulk.value.applyRoom) payload.room_id = bulk.value.room_id;
-      await api.schedule.saveItem(payload);
-    }
+    const fields = {};
+    if (bulk.value.applyTeachers) fields.teacher_ids = [...bulk.value.teacher_ids];
+    if (bulk.value.applyRoom) fields.room_id = bulk.value.room_id;
+    if (bulk.value.applyLessonType) fields.lesson_type = bulk.value.lesson_type;
+    if (bulk.value.applyGroupLabel) fields.group_label = bulk.value.group_label;
+    const res = await api.schedule.bulkUpdate({
+      ids: [...selected.value],
+      fields,
+      crossPeriod: crossPeriod.value,
+      author: author.value || null,
+    });
     bulkOpen.value = false;
+    const count = res && res.updated != null ? res.updated : selected.value.length;
     selected.value = [];
-    info.value = `Изменено занятий: ${chosen.length}`;
+    info.value = `Изменено занятий: ${count}`;
     await load();
   } catch (e) {
     error.value = e.message;
@@ -172,14 +224,151 @@ async function load() {
     const data = await api.schedule.listByPeriod(periodId.value, crossPeriod.value);
     period.value = data.period;
     items.value = data.items.map(normalize);
-    [topics.value, groups.value, teachers.value, rooms.value, grids.value] =
-      await Promise.all([
-        api.topics.list(programId.value),
-        api.groups.list(periodId.value),
-        api.references.teachers(),
-        api.references.rooms(),
-        api.references.grids(),
-      ]);
+    settings.value = {
+      work_week: data.period.work_week || "mon-fri",
+      empty_slot_mode: data.period.empty_slot_mode || "empty",
+      group_mode: data.period.group_mode || 0,
+      separate_lectures: data.period.separate_lectures || 0,
+    };
+    [
+      topics.value,
+      groups.value,
+      teachers.value,
+      rooms.value,
+      grids.value,
+      lessonTypes.value,
+    ] = await Promise.all([
+      api.topics.list(programId.value),
+      api.groups.list(periodId.value),
+      api.references.teachers(),
+      api.references.rooms(),
+      api.references.grids(),
+      api.references.lessonTypes(),
+    ]);
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
+// Темы, ещё не распределённые в расписание (для замены из нераспределённых).
+const unallocatedTopics = computed(() => {
+  const used = new Set(
+    items.value.map((it) => it.topic_id).filter((id) => id != null)
+  );
+  return topics.value.filter(
+    (t) => !t.excluded && !t.is_section && !used.has(t.id)
+  );
+});
+
+// --- Заполнение полной сетки таймслотов ---
+async function fillGrid() {
+  error.value = "";
+  try {
+    const res = await api.schedule.fillGrid(periodId.value);
+    info.value = res.created
+      ? `Сетка заполнена: добавлено пустых слотов ${res.created}`
+      : "Все слоты сетки уже заняты";
+    await load();
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
+// --- Настройки периода ---
+function openSettings() {
+  settings.value = {
+    work_week: period.value.work_week || "mon-fri",
+    empty_slot_mode: period.value.empty_slot_mode || "empty",
+    group_mode: period.value.group_mode || 0,
+    separate_lectures: period.value.separate_lectures || 0,
+  };
+  settingsOpen.value = true;
+}
+async function saveSettings() {
+  error.value = "";
+  try {
+    await api.periods.updateSettings({
+      id: periodId.value,
+      work_week: settings.value.work_week,
+      empty_slot_mode: settings.value.empty_slot_mode,
+      group_mode: settings.value.group_mode ? 1 : 0,
+      separate_lectures: settings.value.separate_lectures ? 1 : 0,
+    });
+    settingsOpen.value = false;
+    info.value = "Настройки периода сохранены";
+    await load();
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
+// --- Журнал изменений / заметки ---
+async function openHistory() {
+  error.value = "";
+  try {
+    [auditLog.value, notes.value] = await Promise.all([
+      api.audit.list(programId.value),
+      api.notes.list({ programId: programId.value }),
+    ]);
+    historyOpen.value = true;
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+function auditText(a) {
+  const map = {
+    topic_assigned: "Назначена тема",
+    restored_to_queue: "Возврат в очередь",
+    bulk_update: "Массовое изменение",
+    note_added: "Добавлена заметка",
+    version_created: "Создана версия",
+    topics_imported: "Импорт УТП",
+    topics_appended: "Добавлены темы из УТП",
+    created_from_template: "Создано из шаблона",
+  };
+  let base = map[a.action] || a.action;
+  try {
+    const d = a.details_json ? JSON.parse(a.details_json) : null;
+    if (d && d.title) base += `: ${d.title}`;
+    else if (d && d.label) base += `: ${d.label}`;
+    else if (d && d.count != null) base += ` (${d.count})`;
+  } catch {
+    /* details не JSON */
+  }
+  return base;
+}
+async function addNote() {
+  if (!newNote.value.trim()) return;
+  error.value = "";
+  try {
+    await api.notes.add({
+      programId: programId.value,
+      periodId: periodId.value,
+      text: newNote.value.trim(),
+      author: author.value || null,
+    });
+    newNote.value = "";
+    [auditLog.value, notes.value] = await Promise.all([
+      api.audit.list(programId.value),
+      api.notes.list({ programId: programId.value }),
+    ]);
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+async function removeNote(id) {
+  await api.notes.remove(id);
+  notes.value = await api.notes.list({ programId: programId.value });
+}
+
+// Вернуть занятие в очередь нераспределённых (освободить слот).
+async function restoreToQueue(it) {
+  error.value = "";
+  try {
+    await api.schedule.restoreToQueue({ itemId: it.id, author: author.value || null });
+    info.value = "Занятие возвращено в очередь нераспределённых";
+    if (editing.value && editing.value.id === it.id) editing.value = null;
+    await load();
   } catch (e) {
     error.value = e.message;
   }
@@ -232,6 +421,7 @@ function newItem() {
     teacher_ids: [],
     room_id: null,
     group_ids: [],
+    group_label: "",
     note: "",
   };
   editConflicts.value = [];
@@ -493,14 +683,26 @@ async function exportDocx() {
   }
 }
 
-async function approve() {
+function approve() {
   if (hasConflicts.value) return;
-  await api.versions.create({
-    programId: programId.value,
-    version_label: `Утверждено ${new Date().toLocaleString("ru-RU")}`,
-    status: "approved",
-  });
-  info.value = "Расписание утверждено и сохранено в архив";
+  approveSection.value = ARCHIVE_SECTIONS[0];
+  approveOpen.value = true;
+}
+async function doApprove() {
+  error.value = "";
+  try {
+    await api.versions.create({
+      programId: programId.value,
+      version_label: `Утверждено ${new Date().toLocaleString("ru-RU")}`,
+      status: "approved",
+      archive_section: approveSection.value,
+      author: author.value || null,
+    });
+    approveOpen.value = false;
+    info.value = `Расписание утверждено и сохранено в архив (${approveSection.value})`;
+  } catch (e) {
+    error.value = e.message;
+  }
 }
 
 onMounted(load);
@@ -517,11 +719,17 @@ onMounted(load);
         <h1 class="text-2xl font-bold text-slate-800">{{ period.name }}</h1>
         <p class="text-sm text-slate-500">{{ period.start_date }} — {{ period.end_date }}</p>
       </div>
-      <div class="flex items-center gap-2">
-        <label class="flex items-center gap-1 text-sm text-slate-600">
+      <div class="flex flex-wrap items-center justify-end gap-2">
+        <label
+          class="flex items-center gap-1 text-sm text-slate-600"
+          title="Проверять занятость преподавателей и аудиторий по всем расписаниям"
+        >
           <input type="checkbox" v-model="crossPeriod" @change="load" />
-          Сквозная проверка
+          Сквозная проверка по всем расписаниям
         </label>
+        <button class="btn-secondary" @click="openSettings">Настройки периода</button>
+        <button class="btn-secondary" @click="fillGrid">Заполнить сетку</button>
+        <button class="btn-secondary" @click="openHistory">История</button>
         <button class="btn-secondary" @click="applyOrder">Применить порядок</button>
         <button class="btn-secondary" @click="exportDocx">Экспорт</button>
         <button class="btn-primary" :disabled="hasConflicts" @click="approve">
@@ -692,13 +900,25 @@ onMounted(load);
         </div>
         <div>
           <label class="label">Вид занятия</label>
-          <select v-model="editing.lesson_type" class="input">
-            <option :value="''">— Без вида (орг. мероприятие) —</option>
-            <option>Лекция</option>
-            <option>Практическое занятие</option>
-            <option>Семинар</option>
-            <option>Зачёт</option>
-            <option>Экзамен</option>
+          <input
+            v-model="editing.lesson_type"
+            class="input"
+            list="lesson-types"
+            placeholder="напр. Круглый стол или свой вид"
+          />
+          <datalist id="lesson-types">
+            <option v-for="lt in lessonTypes" :key="lt" :value="lt" />
+          </datalist>
+          <p class="mt-1 text-xs text-slate-400">
+            Оставьте пустым для орг. мероприятия. Можно ввести свой вид.
+          </p>
+        </div>
+        <div v-if="period && period.group_mode">
+          <label class="label">Группа (A/B)</label>
+          <select v-model="editing.group_label" class="input">
+            <option :value="''">— Общее (обе группы) —</option>
+            <option value="A">Группа A</option>
+            <option value="B">Группа B</option>
           </select>
         </div>
         <div>
@@ -766,6 +986,14 @@ onMounted(load);
 
       <template #footer>
         <button v-if="editing.id" class="btn-danger mr-auto" @click="deleteItem">Удалить</button>
+        <button
+          v-if="editing.id && editing.topic_id"
+          class="btn-ghost text-slate-500"
+          title="Очистить занятие и вернуть тему в список нераспределённых"
+          @click="restoreToQueue(editing)"
+        >
+          Вернуть в очередь
+        </button>
         <button class="btn-secondary" @click="editing = null">Отмена</button>
         <button class="btn-primary" @click="saveItem">Сохранить</button>
       </template>
@@ -823,15 +1051,167 @@ onMounted(load);
         <option v-for="r in rooms" :key="r.id" :value="r.id">{{ r.number }}</option>
       </select>
 
+      <label class="mb-2 mt-4 flex items-center gap-2 text-sm font-medium text-slate-700">
+        <input type="checkbox" v-model="bulk.applyLessonType" />
+        Назначить вид занятия
+      </label>
+      <input
+        v-model="bulk.lesson_type"
+        class="input"
+        list="lesson-types"
+        :disabled="!bulk.applyLessonType"
+        placeholder="напр. Круглый стол"
+      />
+
+      <label
+        v-if="period && period.group_mode"
+        class="mb-2 mt-4 flex items-center gap-2 text-sm font-medium text-slate-700"
+      >
+        <input type="checkbox" v-model="bulk.applyGroupLabel" />
+        Назначить группу (A/B)
+      </label>
+      <select
+        v-if="period && period.group_mode"
+        v-model="bulk.group_label"
+        class="input"
+        :disabled="!bulk.applyGroupLabel"
+      >
+        <option value="">— Общее (обе группы) —</option>
+        <option value="A">Группа A</option>
+        <option value="B">Группа B</option>
+      </select>
+
       <template #footer>
         <button class="btn-secondary" @click="bulkOpen = false">Отмена</button>
         <button
           class="btn-primary"
-          :disabled="!bulk.applyTeachers && !bulk.applyRoom"
+          :disabled="!bulk.applyTeachers && !bulk.applyRoom && !bulk.applyLessonType && !bulk.applyGroupLabel"
           @click="applyBulk"
         >
           Применить
         </button>
+      </template>
+    </AppModal>
+
+    <!-- Настройки периода -->
+    <AppModal v-if="settingsOpen" title="Настройки периода" @close="settingsOpen = false">
+      <div class="space-y-4">
+        <div>
+          <label class="label">Учебная неделя</label>
+          <select v-model="settings.work_week" class="input">
+            <option value="mon-fri">Понедельник – Пятница</option>
+            <option value="mon-sat">Понедельник – Суббота</option>
+          </select>
+          <p class="mt-1 text-xs text-slate-400">
+            Влияет на дни в сетке (заполнение и автозаполнение).
+          </p>
+        </div>
+        <div>
+          <label class="label">Пустые слоты сетки</label>
+          <select v-model="settings.empty_slot_mode" class="input">
+            <option value="empty">Оставлять пустыми</option>
+            <option value="self_study">Помечать «Самоподготовка»</option>
+          </select>
+        </div>
+        <label class="flex items-center gap-2 text-sm text-slate-700">
+          <input type="checkbox" v-model="settings.group_mode" />
+          Групповое расписание (две группы A/B в одной сетке)
+        </label>
+        <label
+          v-if="settings.group_mode"
+          class="flex items-center gap-2 text-sm text-slate-700"
+        >
+          <input type="checkbox" v-model="settings.separate_lectures" />
+          Лекции раздельно по группам (иначе общие)
+        </label>
+      </div>
+      <template #footer>
+        <button class="btn-secondary" @click="settingsOpen = false">Отмена</button>
+        <button class="btn-primary" @click="saveSettings">Сохранить</button>
+      </template>
+    </AppModal>
+
+    <!-- История изменений и заметки -->
+    <AppModal v-if="historyOpen" title="История и заметки" wide @close="historyOpen = false">
+      <div class="mb-4">
+        <label class="label">Автор изменений</label>
+        <input
+          v-model="author"
+          class="input"
+          placeholder="Ваше имя (для журнала)"
+          @change="rememberAuthor"
+        />
+      </div>
+
+      <div class="mb-4">
+        <label class="label">Новая заметка</label>
+        <div class="flex gap-2">
+          <input
+            v-model="newNote"
+            class="input flex-1"
+            placeholder="Комментарий к расписанию…"
+            @keyup.enter="addNote"
+          />
+          <button class="btn-primary" @click="addNote">Добавить</button>
+        </div>
+      </div>
+
+      <div v-if="notes.length" class="mb-4">
+        <div class="mb-1 text-sm font-semibold text-slate-700">Заметки</div>
+        <div
+          v-for="n in notes"
+          :key="n.id"
+          class="flex items-start gap-2 border-b border-slate-100 py-2 text-sm"
+        >
+          <div class="flex-1">
+            <div class="text-slate-700">{{ n.text }}</div>
+            <div class="text-xs text-slate-400">
+              {{ n.author || "—" }} · {{ new Date(n.created_at).toLocaleString("ru-RU") }}
+            </div>
+          </div>
+          <button class="btn-ghost text-slate-400" @click="removeNote(n.id)">✕</button>
+        </div>
+      </div>
+
+      <div class="mb-1 text-sm font-semibold text-slate-700">Журнал изменений</div>
+      <p v-if="!auditLog.length" class="text-sm text-slate-400">Записей пока нет</p>
+      <div
+        v-for="a in auditLog"
+        :key="a.id"
+        class="border-b border-slate-100 py-2 text-sm"
+      >
+        <div class="text-slate-700">{{ auditText(a) }}</div>
+        <div class="text-xs text-slate-400">
+          {{ a.author || "—" }} · {{ new Date(a.created_at).toLocaleString("ru-RU") }}
+        </div>
+      </div>
+      <template #footer>
+        <button class="btn-secondary" @click="historyOpen = false">Закрыть</button>
+      </template>
+    </AppModal>
+
+    <!-- Утверждение: выбор раздела архива -->
+    <AppModal v-if="approveOpen" title="Утверждение расписания" @close="approveOpen = false">
+      <div class="space-y-4">
+        <div>
+          <label class="label">Раздел архива</label>
+          <select v-model="approveSection" class="input">
+            <option v-for="s in ARCHIVE_SECTIONS" :key="s" :value="s">{{ s }}</option>
+          </select>
+        </div>
+        <div>
+          <label class="label">Автор</label>
+          <input
+            v-model="author"
+            class="input"
+            placeholder="Ваше имя"
+            @change="rememberAuthor"
+          />
+        </div>
+      </div>
+      <template #footer>
+        <button class="btn-secondary" @click="approveOpen = false">Отмена</button>
+        <button class="btn-primary" @click="doApprove">Утвердить</button>
       </template>
     </AppModal>
   </div>

@@ -43,12 +43,21 @@ function listPeriods(programId) {
     .all(programId);
 }
 
-// Сформировать список ячеек (дата × слот) в строгом порядке
-function buildCells(startDate, endDate, timeGrid) {
+// Учебная неделя: какие дни недели включать. 'mon-fri' — Пн–Пт, 'mon-sat' — Пн–Сб.
+// getDay(): 0=вс, 6=сб.
+function isWorkDay(d, workWeek) {
+  const wd = d.getDay();
+  if (wd === 0) return false; // воскресенье всегда выходной
+  if (wd === 6 && workWeek !== "mon-sat") return false; // суббота — только для Пн–Сб
+  return true;
+}
+
+// Сформировать список ячеек (дата × слот) в строгом порядке с учётом учебной недели
+function buildCells(startDate, endDate, timeGrid, workWeek = "mon-fri") {
   const days = eachDayOfInterval({
     start: parseISO(startDate),
     end: parseISO(endDate),
-  });
+  }).filter((d) => isWorkDay(d, workWeek));
   const slots = (timeGrid || []).filter((s) => !s.is_break);
   const cells = [];
   for (const d of days) {
@@ -75,8 +84,9 @@ const handlers = {
       const info = db
         .prepare(
           `INSERT INTO periods
-            (program_id, name, start_date, end_date, time_grid_json, status, sort_order)
-           VALUES (?, ?, ?, ?, ?, 'active', ?)`
+            (program_id, name, start_date, end_date, time_grid_json, status, sort_order,
+             work_week, empty_slot_mode, group_mode, separate_lectures)
+           VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)`
         )
         .run(
           programId,
@@ -84,7 +94,11 @@ const handlers = {
           data.start_date,
           data.end_date,
           JSON.stringify(data.time_grid || []),
-          order
+          order,
+          data.work_week || "mon-fri",
+          data.empty_slot_mode || "empty",
+          data.group_mode ? 1 : 0,
+          data.separate_lectures ? 1 : 0
         );
       const periodId = info.lastInsertRowid;
 
@@ -115,19 +129,44 @@ const handlers = {
   },
 
   "periods:update": (data) => {
-    getDb()
-      .prepare(
-        `UPDATE periods SET name = ?, start_date = ?, end_date = ?,
-           time_grid_json = ?, status = ? WHERE id = ?`
-      )
-      .run(
-        data.name,
-        data.start_date,
-        data.end_date,
-        JSON.stringify(data.time_grid || []),
-        data.status || "active",
-        data.id
-      );
+    const db = getDb();
+    const cur = db.prepare("SELECT * FROM periods WHERE id = ?").get(data.id);
+    if (!cur) throw new Error("Период не найден");
+    db.prepare(
+      `UPDATE periods SET name = ?, start_date = ?, end_date = ?,
+         time_grid_json = ?, status = ?, work_week = ?, empty_slot_mode = ?,
+         group_mode = ?, separate_lectures = ? WHERE id = ?`
+    ).run(
+      data.name,
+      data.start_date,
+      data.end_date,
+      data.time_grid != null ? JSON.stringify(data.time_grid) : cur.time_grid_json,
+      data.status || "active",
+      data.work_week || cur.work_week || "mon-fri",
+      data.empty_slot_mode || cur.empty_slot_mode || "empty",
+      data.group_mode != null ? (data.group_mode ? 1 : 0) : cur.group_mode,
+      data.separate_lectures != null ? (data.separate_lectures ? 1 : 0) : cur.separate_lectures,
+      data.id
+    );
+    return { id: data.id };
+  },
+
+  // Изменить только настройки периода (учебная неделя, режим пустых слотов, группы)
+  // без обязательного указания дат — для панели настроек в конструкторе.
+  "periods:updateSettings": (data) => {
+    const db = getDb();
+    const cur = db.prepare("SELECT * FROM periods WHERE id = ?").get(data.id);
+    if (!cur) throw new Error("Период не найден");
+    db.prepare(
+      `UPDATE periods SET work_week = ?, empty_slot_mode = ?,
+         group_mode = ?, separate_lectures = ? WHERE id = ?`
+    ).run(
+      data.work_week || cur.work_week || "mon-fri",
+      data.empty_slot_mode || cur.empty_slot_mode || "empty",
+      data.group_mode != null ? (data.group_mode ? 1 : 0) : cur.group_mode,
+      data.separate_lectures != null ? (data.separate_lectures ? 1 : 0) : cur.separate_lectures,
+      data.id
+    );
     return { id: data.id };
   },
 
@@ -145,7 +184,12 @@ const handlers = {
     if (!period) throw new Error("Период не найден");
 
     const timeGrid = JSON.parse(period.time_grid_json || "[]");
-    const cells = buildCells(period.start_date, period.end_date, timeGrid);
+    const cells = buildCells(
+      period.start_date,
+      period.end_date,
+      timeGrid,
+      period.work_week || "mon-fri"
+    );
 
     const topics = db
       .prepare(
@@ -210,3 +254,4 @@ const handlers = {
 };
 
 export default handlers;
+export { buildCells };

@@ -124,6 +124,7 @@ export const api = {
   topics: {
     list: (programId) => call("topics:list", programId),
     save: (data) => call("topics:save", data),
+    append: (data) => call("topics:append", data),
     update: (data) => call("topics:update", data),
     setExcluded: (data) => call("topics:setExcluded", data),
     remove: (id) => call("topics:delete", id),
@@ -133,6 +134,7 @@ export const api = {
     list: (programId) => call("periods:list", programId),
     create: (data) => call("periods:create", data),
     update: (data) => call("periods:update", data),
+    updateSettings: (data) => call("periods:updateSettings", data),
     remove: (id) => call("periods:delete", id),
     autofill: (data) => call("periods:autofill", data),
   },
@@ -143,6 +145,7 @@ export const api = {
     remove: (id) => call("groups:delete", id),
   },
   references: {
+    lessonTypes: () => call("lessonTypes:list"),
     teachers: () => call("ref:teachers:list"),
     addTeacher: (d) => call("ref:teachers:add", d),
     updateTeacher: (d) => call("ref:teachers:update", d),
@@ -162,9 +165,21 @@ export const api = {
       call("schedule:listByPeriod", { periodId, crossPeriod }),
     saveItem: (data) => call("schedule:saveItem", data),
     deleteItem: (id) => call("schedule:deleteItem", id),
+    fillGrid: (periodId) => call("schedule:fillGrid", { periodId }),
+    assignTopic: (data) => call("schedule:assignTopic", data),
+    restoreToQueue: (data) => call("schedule:restoreToQueue", data),
+    bulkUpdate: (data) => call("schedule:bulkUpdate", data),
   },
   conflicts: {
     check: (data) => call("conflicts:check", data),
+  },
+  audit: {
+    list: (programId) => call("audit:list", programId),
+  },
+  notes: {
+    list: (payload) => call("notes:list", payload),
+    add: (data) => call("notes:add", data),
+    remove: (id) => call("notes:delete", id),
   },
   importUtp,
   exportDocx,

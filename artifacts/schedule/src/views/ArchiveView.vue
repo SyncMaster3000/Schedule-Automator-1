@@ -17,11 +17,12 @@ const tmplForm = ref({ newTitle: "", newStartDate: "" });
 
 const statusLabel = { draft: "Черновик", approved: "Утверждено", archived: "Архив" };
 
-// Папки (вкладки) по типу обучения. Тип определяется по названию расписания.
+// Папки (вкладки) по разделу архива. Раздел задаётся при утверждении расписания;
+// для старых версий без раздела определяется по названию расписания.
 const FOLDERS = [
-  { key: "qualification", label: "Повышения квалификации" },
-  { key: "retraining", label: "Переподготовка" },
-  { key: "courses", label: "Обучающие курсы" },
+  { key: "qualification", label: "Повышение квалификации", section: "Повышение квалификации" },
+  { key: "retraining", label: "Переподготовка", section: "Переподготовка" },
+  { key: "courses", label: "Краткосрочные курсы", section: "Краткосрочные курсы" },
 ];
 const activeFolder = ref(FOLDERS[0].key);
 
@@ -31,6 +32,9 @@ const MONTHS = [
 ];
 
 function folderOf(v) {
+  const sec = v.archive_section || "";
+  const bySection = FOLDERS.find((f) => f.section === sec);
+  if (bySection) return bySection.key;
   const t = (v.program_title || "").toLowerCase();
   if (t.includes("переподготов")) return "retraining";
   if (t.includes("повышен")) return "qualification";

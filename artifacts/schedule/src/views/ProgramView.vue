@@ -21,6 +21,7 @@ const versions = ref([]);
 
 // --- Импорт УТП ---
 const importPreview = ref(null); // { topics, meta }
+const importMode = ref("replace"); // "replace" — заменить, "append" — добавить из ещё одного УТП
 
 // --- Период ---
 const showPeriod = ref(false);
@@ -53,11 +54,12 @@ async function loadAll() {
   }
 }
 
-async function runImport() {
+async function runImport(mode = "replace") {
   error.value = "";
   try {
     const res = await api.importUtp();
     if (res.canceled) return;
+    importMode.value = mode;
     importPreview.value = res;
   } catch (e) {
     error.value = e.message;
@@ -66,12 +68,20 @@ async function runImport() {
 
 async function confirmImport() {
   try {
-    await api.topics.save({
-      programId: programId.value,
-      topics: importPreview.value.topics,
-    });
+    if (importMode.value === "append") {
+      await api.topics.append({
+        programId: programId.value,
+        topics: importPreview.value.topics,
+      });
+      info.value = "Темы добавлены из УТП";
+    } else {
+      await api.topics.save({
+        programId: programId.value,
+        topics: importPreview.value.topics,
+      });
+      info.value = "Темы УТП импортированы";
+    }
     importPreview.value = null;
-    info.value = "Темы УТП импортированы";
     await loadAll();
   } catch (e) {
     error.value = e.message;
@@ -251,13 +261,16 @@ onMounted(async () => {
 
     <!-- Темы -->
     <div v-if="tab === 'topics'">
-      <div class="mb-4 flex justify-between">
+      <div class="mb-4 flex items-center justify-between gap-2">
         <p class="text-sm text-slate-500">Очередь тем (FIFO). Распределяются в порядке следования.</p>
-        <button class="btn-primary" @click="runImport">Импорт УТП (.docx)</button>
+        <div v-if="topics.length" class="flex gap-2">
+          <button class="btn-secondary" @click="runImport('append')">+ Добавить из УТП</button>
+          <button class="btn-primary" @click="runImport('replace')">Импорт УТП (заменить)</button>
+        </div>
       </div>
       <div v-if="!topics.length" class="card flex flex-col items-center gap-4 p-12 text-center">
         <div class="text-slate-400">Темы ещё не загружены. Импортируйте учебно-тематический план из файла Word (.docx).</div>
-        <button class="btn-primary" @click="runImport">Импорт УТП (.docx)</button>
+        <button class="btn-primary" @click="runImport('replace')">Импорт УТП (.docx)</button>
       </div>
       <div v-else>
       <p class="mb-3 text-xs text-slate-400">
@@ -366,11 +379,14 @@ onMounted(async () => {
     <!-- Предпросмотр импорта -->
     <AppModal
       v-if="importPreview"
-      title="Предпросмотр импорта УТП"
+      :title="importMode === 'append' ? 'Добавление тем из УТП' : 'Предпросмотр импорта УТП'"
       wide
       @close="importPreview = null"
     >
       <p class="mb-3 text-sm text-slate-500">
+        <span v-if="importMode === 'append'" class="font-medium text-slate-600">
+          Темы будут добавлены к существующим (сборка из нескольких УТП).
+        </span>
         Найдено строк: {{ importPreview.topics.length }}. Снимите галочку «Вкл.» у строк,
         которые не нужно планировать (например, разделы-суммы). Часы: Лек/Практ/Круглый стол.
       </p>

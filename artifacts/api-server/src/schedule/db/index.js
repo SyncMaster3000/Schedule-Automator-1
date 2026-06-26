@@ -152,6 +152,17 @@ CREATE TABLE IF NOT EXISTS schedule_audit (
   details_json TEXT,
   created_at TEXT NOT NULL
 );
+
+-- Заметки/комментарии к расписанию (с датой и автором).
+CREATE TABLE IF NOT EXISTS schedule_notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  program_id INTEGER NOT NULL,
+  period_id INTEGER,
+  text TEXT NOT NULL,
+  author TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (program_id) REFERENCES programs(id) ON DELETE CASCADE
+);
 `;
 
 let SQL = null; // фабрика sql.js
@@ -289,6 +300,21 @@ function runMigrations() {
   addColumnIfMissing("program_topics", "is_section", "is_section INTEGER NOT NULL DEFAULT 0");
   // Вид занятия по умолчанию для темы (напр. «Зачёт»/«Экзамен» из формы аттестации)
   addColumnIfMissing("program_topics", "default_lesson_type", "default_lesson_type TEXT");
+  // Приглашённый преподаватель/эксперт: не участвует в проверке накладок.
+  addColumnIfMissing("teachers", "is_guest", "is_guest INTEGER NOT NULL DEFAULT 0");
+  // Учебная неделя периода: 'mon-fri' (Пн–Пт) | 'mon-sat' (Пн–Сб).
+  addColumnIfMissing("periods", "work_week", "work_week TEXT NOT NULL DEFAULT 'mon-fri'");
+  // Как показывать пустые слоты: 'empty' (пустой блок) | 'self_study' (Самоподготовка).
+  addColumnIfMissing("periods", "empty_slot_mode", "empty_slot_mode TEXT NOT NULL DEFAULT 'empty'");
+  // Групповое расписание на две группы и раздельные лекции.
+  addColumnIfMissing("periods", "group_mode", "group_mode INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing("periods", "separate_lectures", "separate_lectures INTEGER NOT NULL DEFAULT 0");
+  // Раздел архива при утверждении: qualification | retraining | courses.
+  addColumnIfMissing("schedule_versions", "archive_section", "archive_section TEXT");
+  // Автор записи в журнале изменений.
+  addColumnIfMissing("schedule_audit", "author", "author TEXT");
+  // Номер учебной группы для нелекционных занятий в групповом режиме (А/Б).
+  addColumnIfMissing("schedule_items", "group_label", "group_label TEXT");
 }
 
 // Однократная асинхронная инициализация (sql.js грузится асинхронно).
@@ -309,18 +335,19 @@ function persist() {
   fs.writeFileSync(dbPath, data);
 }
 
-// Запись действия в журнал аудита
-function audit(programId, periodId, action, details) {
+// Запись действия в журнал аудита (с необязательным автором)
+function audit(programId, periodId, action, details, author = null) {
   getDb()
     .prepare(
-      `INSERT INTO schedule_audit (program_id, period_id, action, details_json, created_at)
-       VALUES (?, ?, ?, ?, ?)`
+      `INSERT INTO schedule_audit (program_id, period_id, action, details_json, author, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
     )
     .run(
       programId || null,
       periodId || null,
       action,
       details ? JSON.stringify(details) : null,
+      author || null,
       new Date().toISOString()
     );
 }

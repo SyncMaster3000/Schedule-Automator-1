@@ -2,21 +2,49 @@
 import { getDb } from "../db/index.js";
 
 export default {
+  // Список видов занятий: базовый набор + уже использованные произвольные значения
+  // (для поля с автодополнением «Круглый стол» и собственные виды).
+  "lessonTypes:list": () => {
+    const base = [
+      "Лекция",
+      "Практическое занятие",
+      "Семинар",
+      "Круглый стол",
+      "Зачёт",
+      "Экзамен",
+    ];
+    const used = getDb()
+      .prepare(
+        "SELECT DISTINCT lesson_type FROM schedule_items WHERE lesson_type IS NOT NULL AND lesson_type != ''"
+      )
+      .all()
+      .map((r) => r.lesson_type)
+      .filter((v) => v && v !== "empty" && v !== "self_study");
+    const seen = new Set();
+    const result = [];
+    for (const v of [...base, ...used]) {
+      if (seen.has(v)) continue;
+      seen.add(v);
+      result.push(v);
+    }
+    return result;
+  },
+
   // --- Преподаватели ---
   "ref:teachers:list": () =>
     getDb().prepare("SELECT * FROM teachers ORDER BY department, fio").all(),
 
   "ref:teachers:add": (data) => {
     const info = getDb()
-      .prepare("INSERT INTO teachers (fio, department) VALUES (?, ?)")
-      .run(data.fio, data.department || null);
+      .prepare("INSERT INTO teachers (fio, department, is_guest) VALUES (?, ?, ?)")
+      .run(data.fio, data.department || null, data.is_guest ? 1 : 0);
     return { id: info.lastInsertRowid };
   },
 
   "ref:teachers:update": (data) => {
     getDb()
-      .prepare("UPDATE teachers SET fio = ?, department = ? WHERE id = ?")
-      .run(data.fio, data.department || null, data.id);
+      .prepare("UPDATE teachers SET fio = ?, department = ?, is_guest = ? WHERE id = ?")
+      .run(data.fio, data.department || null, data.is_guest ? 1 : 0, data.id);
     return { id: data.id };
   },
 

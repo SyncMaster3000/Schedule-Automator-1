@@ -45,12 +45,57 @@ export default {
     return { count: topics.length };
   },
 
+  // Добавить темы из ещё одного УТП к существующему расписанию (без удаления),
+  // продолжая нумерацию sort_order. Используется для сборки одного расписания
+  // из нескольких УТП.
+  "topics:append": (data) => {
+    const db = getDb();
+    const { programId, topics } = data;
+    const baseOrder =
+      db
+        .prepare("SELECT MAX(sort_order) AS m FROM program_topics WHERE program_id = ?")
+        .get(programId).m || 0;
+    const baseNum = db
+      .prepare("SELECT COUNT(*) AS c FROM program_topics WHERE program_id = ?")
+      .get(programId).c;
+    const tx = db.transaction(() => {
+      const insert = db.prepare(
+        `INSERT INTO program_topics
+          (program_id, utp_number, title, total_hours, lecture_hours, practice_hours,
+           roundtable_hours, default_dept, note, status, scheduled_hours,
+           excluded, is_section, default_lesson_type, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?)`
+      );
+      topics.forEach((t, idx) => {
+        insert.run(
+          programId,
+          t.utp_number != null ? t.utp_number : String(baseNum + idx + 1),
+          t.title,
+          t.total_hours || 0,
+          t.lecture_hours || 0,
+          t.practice_hours || 0,
+          t.roundtable_hours || 0,
+          t.default_dept || null,
+          t.note || null,
+          t.excluded ? 1 : 0,
+          t.is_section ? 1 : 0,
+          t.default_lesson_type || null,
+          baseOrder + (t.sort_order != null ? t.sort_order : idx + 1)
+        );
+      });
+    });
+    tx();
+    audit(programId, null, "topics_appended", { count: topics.length });
+    return { count: topics.length };
+  },
+
   "topics:update": (data) => {
     const db = getDb();
     db.prepare(
       `UPDATE program_topics SET
         utp_number = ?, title = ?, total_hours = ?, lecture_hours = ?,
-        practice_hours = ?, roundtable_hours = ?, default_dept = ?, note = ?, excluded = ?
+        practice_hours = ?, roundtable_hours = ?, default_dept = ?, note = ?,
+        excluded = ?, is_section = ?, default_lesson_type = ?
        WHERE id = ?`
     ).run(
       data.utp_number,
@@ -62,6 +107,8 @@ export default {
       data.default_dept || null,
       data.note || null,
       data.excluded ? 1 : 0,
+      data.is_section ? 1 : 0,
+      data.default_lesson_type || null,
       data.id
     );
     return { id: data.id };

@@ -12,7 +12,7 @@ const teachers = ref([]);
 const rooms = ref([]);
 const grids = ref([]);
 
-const newTeacher = ref({ fio: "", department: "" });
+const newTeacher = ref({ fio: "", department: "", is_guest: 0 });
 const newRoom = ref({ number: "", type: "", capacity: null });
 
 // Редактирование существующих записей
@@ -52,7 +52,7 @@ async function addTeacher() {
   }
   try {
     await api.references.addTeacher({ ...newTeacher.value });
-    newTeacher.value = { fio: "", department: "" };
+    newTeacher.value = { fio: "", department: "", is_guest: 0 };
     teachers.value = await api.references.teachers();
     flash("Преподаватель добавлен");
   } catch (e) {
@@ -205,16 +205,25 @@ onMounted(loadAll);
 
     <!-- Преподаватели -->
     <div v-if="tab === 'teachers'" class="card p-5">
-      <div class="mb-4 flex gap-2">
+      <div class="mb-2 flex gap-2">
         <input v-model="newTeacher.fio" class="input flex-1" placeholder="ФИО преподавателя" @keyup.enter="addTeacher" />
         <input v-model="newTeacher.department" class="input flex-1" placeholder="Кафедра / отдел" @keyup.enter="addTeacher" />
         <button class="btn-primary" @click="addTeacher">Добавить</button>
       </div>
+      <label class="mb-4 flex items-center gap-2 text-sm text-slate-600">
+        <input
+          type="checkbox"
+          :checked="!!newTeacher.is_guest"
+          @change="newTeacher.is_guest = $event.target.checked ? 1 : 0"
+        />
+        Приглашённый (не учитывать в проверке накладок)
+      </label>
       <table class="w-full">
         <thead>
           <tr class="text-left text-xs uppercase text-slate-400">
             <th class="table-cell">ФИО</th>
             <th class="table-cell">Кафедра</th>
+            <th class="table-cell">Статус</th>
             <th class="table-cell w-32"></th>
           </tr>
         </thead>
@@ -222,13 +231,20 @@ onMounted(loadAll);
           <tr v-for="t in teachers" :key="t.id">
             <td class="table-cell">{{ t.fio }}</td>
             <td class="table-cell text-slate-500">{{ t.department || "—" }}</td>
+            <td class="table-cell">
+              <span
+                v-if="t.is_guest"
+                class="badge bg-amber-50 text-amber-700"
+              >Приглашённый</span>
+              <span v-else class="text-slate-400">штатный</span>
+            </td>
             <td class="table-cell text-right">
               <button class="btn-ghost" @click="editTeacher = { ...t }">Изменить</button>
               <button class="btn-ghost text-red-500" @click="removeTeacher(t.id)">✕</button>
             </td>
           </tr>
           <tr v-if="!teachers.length">
-            <td class="table-cell text-slate-400" colspan="3">Список пуст. Добавьте преподавателя выше.</td>
+            <td class="table-cell text-slate-400" colspan="4">Список пуст. Добавьте преподавателя выше.</td>
           </tr>
         </tbody>
       </table>
@@ -317,6 +333,14 @@ onMounted(loadAll);
           <label class="label">Кафедра / отдел</label>
           <input v-model="editTeacher.department" class="input" />
         </div>
+        <label class="flex items-center gap-2 text-sm text-slate-600">
+          <input
+            type="checkbox"
+            :checked="!!editTeacher.is_guest"
+            @change="editTeacher.is_guest = $event.target.checked ? 1 : 0"
+          />
+          Приглашённый (не учитывать в проверке накладок)
+        </label>
       </div>
       <template #footer>
         <button class="btn-secondary" @click="editTeacher = null">Отмена</button>

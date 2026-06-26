@@ -31,24 +31,27 @@ export default {
   "versions:list": (programId) =>
     getDb()
       .prepare(
-        "SELECT id, program_id, version_label, status, note, created_at FROM schedule_versions WHERE program_id = ? ORDER BY datetime(created_at) DESC"
+        "SELECT id, program_id, version_label, status, note, archive_section, created_at FROM schedule_versions WHERE program_id = ? ORDER BY datetime(created_at) DESC"
       )
       .all(programId),
 
-  // Поиск по всем версиям (дата/статус/название программы)
+  // Поиск по всем версиям (дата/статус/название программы/раздел архива)
   "versions:search": (query) => {
     const db = getDb();
-    const q = `%${(query || "").trim()}%`;
+    const params = typeof query === "object" && query !== null ? query : { text: query };
+    const q = `%${(params.text || "").trim()}%`;
+    const section = params.archive_section || null;
     return db
       .prepare(
-        `SELECT v.id, v.program_id, v.version_label, v.status, v.note, v.created_at,
-                p.title AS program_title
+        `SELECT v.id, v.program_id, v.version_label, v.status, v.note,
+                v.archive_section, v.created_at, p.title AS program_title
          FROM schedule_versions v
          JOIN programs p ON p.id = v.program_id
-         WHERE p.title LIKE ? OR v.version_label LIKE ? OR v.status LIKE ? OR v.created_at LIKE ?
+         WHERE (p.title LIKE ? OR v.version_label LIKE ? OR v.status LIKE ? OR v.created_at LIKE ?)
+           AND (? IS NULL OR v.archive_section = ?)
          ORDER BY datetime(v.created_at) DESC`
       )
-      .all(q, q, q, q);
+      .all(q, q, q, q, section, section);
   },
 
   "versions:create": (data) => {
@@ -57,8 +60,8 @@ export default {
     const info = db
       .prepare(
         `INSERT INTO schedule_versions
-          (program_id, version_label, status, snapshot_json, note, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`
+          (program_id, version_label, status, snapshot_json, note, archive_section, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         data.programId,
@@ -66,12 +69,16 @@ export default {
         data.status || "draft",
         JSON.stringify(snapshot),
         data.note || null,
+        data.archive_section || null,
         new Date().toISOString()
       );
-    audit(data.programId, null, "version_created", {
-      label: data.version_label,
-      status: data.status,
-    });
+    audit(
+      data.programId,
+      null,
+      "version_created",
+      { label: data.version_label, status: data.status, archive_section: data.archive_section || null },
+      data.author || null
+    );
     return { id: info.lastInsertRowid };
   },
 
@@ -122,8 +129,9 @@ export default {
       const insTopic = db.prepare(
         `INSERT INTO program_topics
           (program_id, utp_number, title, total_hours, lecture_hours, practice_hours,
-           default_dept, note, status, scheduled_hours, sort_order)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?)`
+           roundtable_hours, default_dept, note, status, scheduled_hours,
+           excluded, is_section, default_lesson_type, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?)`
       );
       for (const t of snap.topics) {
         const r = insTopic.run(
@@ -133,8 +141,12 @@ export default {
           t.total_hours,
           t.lecture_hours,
           t.practice_hours,
+          t.roundtable_hours || 0,
           t.default_dept,
           t.note,
+          t.excluded ? 1 : 0,
+          t.is_section ? 1 : 0,
+          t.default_lesson_type || null,
           t.sort_order
         );
         topicMap[t.id] = r.lastInsertRowid;
@@ -143,8 +155,9 @@ export default {
       const periodMap = {};
       const insPeriod = db.prepare(
         `INSERT INTO periods
-          (program_id, name, start_date, end_date, time_grid_json, status, sort_order)
-         VALUES (?, ?, ?, ?, ?, 'active', ?)`
+          (program_id, name, start_date, end_date, time_grid_json, status, sort_order,
+           work_week, empty_slot_mode, group_mode, separate_lectures)
+         VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)`
       );
       for (const p of snap.periods) {
         const r = insPeriod.run(
@@ -153,7 +166,11 @@ export default {
           shiftDate(p.start_date),
           shiftDate(p.end_date),
           p.time_grid_json,
-          p.sort_order
+          p.sort_order,
+          p.work_week || "mon-fri",
+          p.empty_slot_mode || "empty",
+          p.group_mode ? 1 : 0,
+          p.separate_lectures ? 1 : 0
         );
         periodMap[p.id] = r.lastInsertRowid;
       }

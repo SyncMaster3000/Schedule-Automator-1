@@ -87,7 +87,7 @@ onMounted(load);
   <div class="mx-auto max-w-5xl px-8 py-8">
     <div class="mb-6 flex items-center justify-between">
       <div>
-        <h1 class="text-2xl font-bold text-slate-800">Учебные программы</h1>
+        <h1 class="text-2xl font-bold text-slate-800">Создание расписания</h1>
         <p class="text-sm text-slate-500">
           Создание и ведение расписаний на основании учебно-тематических планов
         </p>
@@ -102,7 +102,7 @@ onMounted(load);
     <div v-if="loading" class="text-slate-400">Загрузка…</div>
 
     <div v-else-if="!programs.length" class="card p-10 text-center text-slate-400">
-      Пока нет программ. Создайте первую, чтобы начать.
+      Пока нет расписаний. Создайте первое, чтобы начать.
     </div>
 
     <div v-else class="grid gap-4 sm:grid-cols-2">
