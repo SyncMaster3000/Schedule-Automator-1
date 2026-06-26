@@ -6,7 +6,7 @@ import { RouterLink, RouterView } from "vue-router";
 <template>
   <div class="flex h-full">
     <!-- Боковая панель -->
-    <aside class="flex w-60 shrink-0 flex-col border-r border-slate-200 bg-white/80 backdrop-blur-sm">
+    <aside class="flex w-60 shrink-0 flex-col border-r border-blue-100 bg-blue-50/90 backdrop-blur-sm">
       <div class="flex items-center gap-2 px-5 py-5">
         <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-600 text-white">
           <svg
@@ -55,9 +55,9 @@ import { RouterLink, RouterView } from "vue-router";
 
 <style scoped>
 .nav-link {
-  @apply block rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100;
+  @apply block rounded-lg px-3 py-2 text-sm font-medium text-slate-700 hover:bg-blue-100/70;
 }
 .nav-active {
-  @apply bg-brand-50 text-brand-700;
+  @apply bg-blue-100 text-blue-800 font-semibold;
 }
 </style>

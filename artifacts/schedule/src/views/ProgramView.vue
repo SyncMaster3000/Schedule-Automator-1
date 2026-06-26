@@ -345,8 +345,7 @@ onMounted(async () => {
       <div class="mb-4 flex items-center justify-between gap-2">
         <p class="text-sm text-slate-500">Очередь тем (FIFO). Распределяются в порядке следования.</p>
         <div v-if="topics.length" class="flex gap-2">
-          <button class="btn-secondary" @click="runImport('append')">+ Добавить из УТП</button>
-          <button class="btn-primary" @click="runImport('replace')">Импорт УТП (заменить)</button>
+          <button class="btn-secondary" @click="runImport('append')">+ Добавить из УТП (.docx)</button>
         </div>
       </div>
       <div v-if="!topics.length" class="card flex flex-col items-center gap-4 p-12 text-center">

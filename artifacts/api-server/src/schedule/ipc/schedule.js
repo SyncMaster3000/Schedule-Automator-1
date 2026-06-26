@@ -344,70 +344,83 @@ export default {
     if (!n || n < 1) throw new Error("Число слотов должно быть не менее 1");
 
     const timeGrid = JSON.parse(period.time_grid_json || "[]");
-    const cells = buildCells(
+    const allCells = buildCells(
       period.start_date,
       period.end_date,
       timeGrid,
       period.work_week || "mon-fri"
     );
 
-    // Все занятия периода, отсортированные по дате+времени
+    // Все занятия периода
     const allItems = db
       .prepare(
         "SELECT * FROM schedule_items WHERE period_id = ? ORDER BY date, start_time, sort_order"
       )
       .all(periodId);
 
-    // Фильтр: какие занятия попадают в scope
+    // Фильтр: попадает ли занятие в выбранный scope
     function inScope(it) {
       if (scope === "day") return it.date === date;
       if (scope === "week") {
-        // Неделя определяется по Пн–Вс относительно опорной даты
         const d = new Date(it.date + "T00:00:00");
         const ref = new Date(date + "T00:00:00");
-        const dMon = new Date(ref); dMon.setDate(ref.getDate() - ((ref.getDay() + 6) % 7));
-        const dSun = new Date(dMon); dSun.setDate(dMon.getDate() + 6);
+        const dMon = new Date(ref);
+        dMon.setDate(ref.getDate() - ((ref.getDay() + 6) % 7));
+        const dSun = new Date(dMon);
+        dSun.setDate(dMon.getDate() + 6);
         return d >= dMon && d <= dSun;
       }
       return true; // 'all'
     }
 
-    const toShift = allItems.filter((it) => inScope(it) && !it.is_pinned);
-    if (!toShift.length) return { shifted: 0 };
+    const isEmptySlot = (it) =>
+      it.lesson_type === "empty" || it.lesson_type === "self_study" || !it.topic_id;
 
-    // Индекс первого занятия в сетке ячеек
-    const firstCellKey = `${toShift[0].date} ${toShift[0].start_time}`;
-    const firstCellIdx = cells.findIndex(
-      (c) => `${c.date} ${c.start}` === firstCellKey
+    // Для сдвига: только реальные (не пустые) незакреплённые занятия в scope
+    const realToShift = allItems.filter(
+      (it) => inScope(it) && !it.is_pinned && !isEmptySlot(it)
     );
-    if (firstCellIdx < 0) throw new Error("Первое занятие выходит за пределы сетки");
+    if (!realToShift.length) return { shifted: 0 };
 
-    // Проверить, есть ли n свободных слотов перед первым занятием
-    if (firstCellIdx < n)
-      throw new Error(
-        `Недостаточно слотов перед первым занятием для смещения на ${n}. ` +
-        `Доступно ${firstCellIdx} свободных слотов.`
-      );
-
-    // Проверить, что хватает ячеек в хвосте
-    const lastCellKey = `${toShift[toShift.length - 1].date} ${toShift[toShift.length - 1].start_time}`;
-    const lastCellIdx = cells.findIndex(
-      (c) => `${c.date} ${c.start}` === lastCellKey
+    // Ячейки полного периода, индексированные по ключу «date start»
+    const cellIdx = new Map(
+      allCells.map((c, i) => [`${c.date} ${c.start}`, i])
     );
-    if (lastCellIdx + n >= cells.length)
+
+    // Индекс первого и последнего реального занятия в сетке
+    const firstKey = `${realToShift[0].date} ${realToShift[0].start_time}`;
+    const lastKey = `${realToShift[realToShift.length - 1].date} ${realToShift[realToShift.length - 1].start_time}`;
+    const firstIdx = cellIdx.get(firstKey) ?? -1;
+    const lastIdx = cellIdx.get(lastKey) ?? -1;
+    if (firstIdx < 0) throw new Error("Первое занятие выходит за пределы сетки");
+
+    // Единственная нужная проверка для «сдвига вниз»:
+    // последнее реальное занятие должно умещаться после сдвига
+    if (lastIdx + n >= allCells.length)
       throw new Error(
-        "Смещение выходит за конец периода — нет свободных слотов в конце."
+        `Смещение выходит за конец периода. Последнее реальное занятие ` +
+        `находится в слоте ${lastIdx + 1} из ${allCells.length}, ` +
+        `а со сдвигом ${n} потребуется слот ${lastIdx + n + 1}.`
       );
 
     const selfStudy = period.empty_slot_mode === "self_study";
 
     const tx = db.transaction(() => {
-      // Сместить каждое занятие в сетке вниз на n ячеек
-      for (const it of toShift) {
-        const curKey = `${it.date} ${it.start_time}`;
-        const curIdx = cells.findIndex((c) => `${c.date} ${c.start}` === curKey);
-        if (curIdx < 0) continue;
-        const newCell = cells[curIdx + n];
+      // Удалить все пустые/самоподготовка занятия в scope —
+      // они будут пересозданы в нужных слотах после сдвига
+      const emptyInScope = allItems.filter((it) => inScope(it) && isEmptySlot(it));
+      if (emptyInScope.length) {
+        const ph = emptyInScope.map(() => "?").join(",");
+        db.prepare(`DELETE FROM schedule_items WHERE id IN (${ph})`).run(
+          ...emptyInScope.map((it) => it.id)
+        );
+      }
+
+      // Сместить реальные занятия на n ячеек вниз
+      for (const it of realToShift) {
+        const curIdx = cellIdx.get(`${it.date} ${it.start_time}`);
+        if (curIdx == null) continue;
+        const newCell = allCells[curIdx + n];
         if (!newCell) continue;
         db.prepare(
           `UPDATE schedule_items SET date = ?, start_time = ?, end_time = ?,
@@ -419,18 +432,24 @@ export default {
           it.id
         );
       }
-      // Заполнить освободившиеся верхние слоты пустыми/самоподготовка занятиями
-      const takenAfter = new Set(
-        db.prepare("SELECT date, start_time FROM schedule_items WHERE period_id = ?")
-          .all(periodId).map((e) => `${e.date} ${e.start_time}`)
+
+      // Определить, какие ячейки в scope теперь заняты реальными занятиями
+      const realAfterKeys = new Set(
+        realToShift.map((it) => {
+          const ci = cellIdx.get(`${it.date} ${it.start_time}`);
+          const nc = allCells[ci + n];
+          return nc ? `${nc.date} ${nc.start}` : null;
+        }).filter(Boolean)
       );
+
+      // Пересоздать пустые ячейки для всех scope-слотов, не занятых реальными
       let order =
         (db.prepare("SELECT MAX(sort_order) AS m FROM schedule_items WHERE period_id = ?")
           .get(periodId).m || 0) + 1;
-      for (let i = firstCellIdx; i < firstCellIdx + n && i < cells.length; i++) {
-        const c = cells[i];
+      for (const c of allCells) {
         const key = `${c.date} ${c.start}`;
-        if (takenAfter.has(key)) continue;
+        if (!inScope({ date: c.date })) continue;
+        if (realAfterKeys.has(key)) continue; // занято реальным занятием
         db.prepare(
           `INSERT INTO schedule_items
             (period_id, program_id, topic_id, date, start_time, end_time, start_dt, end_dt,
@@ -446,7 +465,7 @@ export default {
       }
     });
     tx();
-    return { shifted: toShift.length };
+    return { shifted: realToShift.length };
   },
 
   // Переместить выделенные занятия к указанному слоту, сохраняя взаимный порядок.
