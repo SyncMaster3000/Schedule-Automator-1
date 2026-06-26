@@ -529,6 +529,161 @@ export default {
       )
       .all(programId),
 
+  // ─── T4: Временные изменения расписания ───────────────────────────────────
+
+  // Список временных изменений для периода (с данными об исходном занятии).
+  "schedule:listTemp": ({ periodId }) => {
+    const items = getDb()
+      .prepare(
+        `SELECT t.*,
+                si.date AS source_date, si.start_time AS source_start_time,
+                si.end_time AS source_end_time,
+                COALESCE(tp.title, si.custom_title, si.lesson_type) AS source_label
+           FROM schedule_temp_items t
+           LEFT JOIN schedule_items si ON si.id = t.source_item_id
+           LEFT JOIN program_topics tp ON tp.id = si.topic_id
+          WHERE t.period_id = ?
+          ORDER BY t.valid_from, t.id`
+      )
+      .all(periodId);
+    return { items };
+  },
+
+  // Добавить временное изменение.
+  "schedule:addTemp": (data) => {
+    const db = getDb();
+    const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+    db.prepare(
+      `INSERT INTO schedule_temp_items
+         (period_id, source_item_id, valid_from, valid_until, reason, is_cancelled,
+          date, start_time, end_time, topic_id, custom_title, lesson_type,
+          teacher_ids, room_id, group_ids, group_label, note, created_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    ).run(
+      data.period_id,
+      data.source_item_id ?? null,
+      data.valid_from,
+      data.valid_until,
+      data.reason ?? null,
+      data.is_cancelled ? 1 : 0,
+      data.date ?? null,
+      data.start_time ?? null,
+      data.end_time ?? null,
+      data.topic_id ?? null,
+      data.custom_title ?? null,
+      data.lesson_type ?? null,
+      JSON.stringify(data.teacher_ids || []),
+      data.room_id ?? null,
+      JSON.stringify(data.group_ids || []),
+      data.group_label ?? null,
+      data.note ?? null,
+      now
+    );
+    const db2 = getDb();
+    const id = db2.prepare("SELECT last_insert_rowid() AS id").get().id;
+    return { id };
+  },
+
+  // Обновить временное изменение.
+  "schedule:saveTemp": (data) => {
+    getDb()
+      .prepare(
+        `UPDATE schedule_temp_items
+            SET valid_from = ?, valid_until = ?, reason = ?, is_cancelled = ?,
+                date = ?, start_time = ?, end_time = ?, topic_id = ?,
+                custom_title = ?, lesson_type = ?, teacher_ids = ?,
+                room_id = ?, group_ids = ?, group_label = ?, note = ?
+          WHERE id = ?`
+      )
+      .run(
+        data.valid_from,
+        data.valid_until,
+        data.reason ?? null,
+        data.is_cancelled ? 1 : 0,
+        data.date ?? null,
+        data.start_time ?? null,
+        data.end_time ?? null,
+        data.topic_id ?? null,
+        data.custom_title ?? null,
+        data.lesson_type ?? null,
+        JSON.stringify(data.teacher_ids || []),
+        data.room_id ?? null,
+        JSON.stringify(data.group_ids || []),
+        data.group_label ?? null,
+        data.note ?? null,
+        data.id
+      );
+    return { id: data.id };
+  },
+
+  // Удалить временное изменение.
+  "schedule:deleteTemp": (id) => {
+    getDb().prepare("DELETE FROM schedule_temp_items WHERE id = ?").run(id);
+    return { id };
+  },
+
+  // Предпросмотр расписания на конкретную дату с учётом временных изменений.
+  // Возвращает список занятий, где временные переопределения заменяют исходные,
+  // отменённые занятия исключаются, новые временные — добавляются.
+  "schedule:previewOnDate": ({ periodId, date }) => {
+    const db = getDb();
+
+    const baseItems = db
+      .prepare(
+        `SELECT si.*, COALESCE(tp.title, si.custom_title, si.lesson_type) AS display_title
+           FROM schedule_items si
+           LEFT JOIN program_topics tp ON tp.id = si.topic_id
+          WHERE si.period_id = ?
+          ORDER BY si.date, si.start_time, si.sort_order`
+      )
+      .all(periodId);
+
+    const tempItems = db
+      .prepare(
+        `SELECT * FROM schedule_temp_items
+          WHERE period_id = ? AND valid_from <= ? AND valid_until >= ?`
+      )
+      .all(periodId, date, date);
+
+    const overrideBySource = new Map();
+    const newTemps = [];
+    for (const t of tempItems) {
+      if (t.source_item_id) overrideBySource.set(t.source_item_id, t);
+      else newTemps.push(t);
+    }
+
+    const result = [];
+    for (const it of baseItems) {
+      const ov = overrideBySource.get(it.id);
+      if (ov) {
+        if (ov.is_cancelled) continue; // занятие временно отменено
+        result.push({
+          ...it,
+          date: ov.date ?? it.date,
+          start_time: ov.start_time ?? it.start_time,
+          end_time: ov.end_time ?? it.end_time,
+          topic_id: ov.topic_id ?? it.topic_id,
+          custom_title: ov.custom_title ?? it.custom_title,
+          lesson_type: ov.lesson_type ?? it.lesson_type,
+          teacher_ids: ov.teacher_ids ?? it.teacher_ids,
+          room_id: ov.room_id ?? it.room_id,
+          note: ov.note ?? it.note,
+          _is_temp: true,
+          _temp_reason: ov.reason,
+        });
+      } else {
+        result.push(it);
+      }
+    }
+    for (const t of newTemps) {
+      result.push({ ...t, _is_temp: true, _is_new_temp: true });
+    }
+    result.sort((a, b) =>
+      (a.date + a.start_time).localeCompare(b.date + b.start_time)
+    );
+    return { items: result };
+  },
+
   // Проверка накладок для произвольного назначения (до сохранения)
   "conflicts:check": (data) => {
     const startDt = `${data.date}T${data.start_time}:00`;

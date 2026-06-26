@@ -163,6 +163,31 @@ CREATE TABLE IF NOT EXISTS schedule_notes (
   created_at TEXT NOT NULL,
   FOREIGN KEY (program_id) REFERENCES programs(id) ON DELETE CASCADE
 );
+
+-- Временные изменения расписания: переопределяют (или отменяют) конкретное занятие
+-- в указанный период дат, не затрагивая утверждённую основную версию.
+CREATE TABLE IF NOT EXISTS schedule_temp_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  period_id INTEGER NOT NULL,
+  source_item_id INTEGER,          -- исходное занятие (NULL = новое временное занятие)
+  valid_from TEXT NOT NULL,        -- YYYY-MM-DD начало действия
+  valid_until TEXT NOT NULL,       -- YYYY-MM-DD конец действия (включительно)
+  reason TEXT,                     -- причина временного изменения
+  is_cancelled INTEGER NOT NULL DEFAULT 0, -- 1 = занятие временно отменяется
+  date TEXT,
+  start_time TEXT,
+  end_time TEXT,
+  topic_id INTEGER,
+  custom_title TEXT,
+  lesson_type TEXT,
+  teacher_ids TEXT NOT NULL DEFAULT '[]',
+  room_id INTEGER,
+  group_ids TEXT NOT NULL DEFAULT '[]',
+  group_label TEXT,
+  note TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (period_id) REFERENCES periods(id) ON DELETE CASCADE
+);
 `;
 
 let SQL = null; // фабрика sql.js

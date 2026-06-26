@@ -87,6 +87,15 @@ const MAX_UNDO = 20;
 const undoStack = ref([]); // { desc, items[] }
 const redoStack = ref([]);
 
+// --- Временные изменения (T4) ---
+const tempOpen = ref(false);
+const tempItems = ref([]);       // все temp-записи для периода
+const tempTab = ref("list");     // 'list' | 'preview'
+const tempPreviewDate = ref("");
+const tempPreviewItems = ref([]);
+const editingTemp = ref(null);   // форма редактирования temp-записи
+const tempTeacherFilter = ref("");
+
 // Заголовок занятия: «Тема X.Y Название». Номер показываем и для разделов
 // (римские цифры), если он есть; произвольные занятия — без префикса.
 function itemTitle(it) {
@@ -867,6 +876,121 @@ function handleUndoKey(e) {
   if (e.key === "y" || (e.key === "z" && e.shiftKey)) { e.preventDefault(); redo(); }
 }
 
+// --- T4: Временные изменения ───────────────────────────────────────────────
+
+// Идентификаторы базовых занятий, у которых есть хотя бы одно temp-переопределение
+const tempSourceIds = computed(() => new Set(tempItems.value.map((t) => t.source_item_id).filter(Boolean)));
+
+async function openTemp() {
+  error.value = "";
+  try {
+    const res = await api.schedule.listTemp(periodId.value);
+    tempItems.value = res.items;
+    editingTemp.value = null;
+    tempTab.value = "list";
+    tempOpen.value = true;
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
+function openAddTemp(baseItem) {
+  // Открыть форму добавления temp-записи; если передан базовый элемент — предзаполнить
+  const today = new Date().toISOString().slice(0, 10);
+  editingTemp.value = {
+    id: null, // null = новая запись
+    period_id: periodId.value,
+    source_item_id: baseItem?.id ?? null,
+    valid_from: today,
+    valid_until: today,
+    reason: "",
+    is_cancelled: false,
+    date: baseItem?.date ?? "",
+    start_time: baseItem?.start_time ?? "",
+    end_time: baseItem?.end_time ?? "",
+    topic_id: baseItem?.topic_id ?? null,
+    custom_title: baseItem?.custom_title ?? "",
+    lesson_type: baseItem?.lesson_type ?? "",
+    teacher_ids: baseItem ? JSON.parse(baseItem.teacher_ids || "[]") : [],
+    room_id: baseItem?.room_id ?? null,
+    note: baseItem?.note ?? "",
+  };
+  tempTeacherFilter.value = "";
+}
+
+function openEditTemp(t) {
+  editingTemp.value = {
+    ...t,
+    teacher_ids: JSON.parse(t.teacher_ids || "[]"),
+    is_cancelled: !!t.is_cancelled,
+  };
+  tempTeacherFilter.value = "";
+}
+
+async function saveEditingTemp() {
+  error.value = "";
+  try {
+    const d = editingTemp.value;
+    if (!d.valid_from || !d.valid_until) throw new Error("Укажите период действия изменения");
+    if (d.valid_from > d.valid_until) throw new Error("Дата начала не может быть позже даты окончания");
+    if (d.id) {
+      await api.schedule.saveTemp(d);
+    } else {
+      await api.schedule.addTemp(d);
+    }
+    const res = await api.schedule.listTemp(periodId.value);
+    tempItems.value = res.items;
+    editingTemp.value = null;
+    info.value = d.id ? "Временное изменение обновлено" : "Временное изменение добавлено";
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
+async function deleteTempItem(id) {
+  if (!confirm("Удалить временное изменение?")) return;
+  error.value = "";
+  try {
+    await api.schedule.deleteTemp(id);
+    tempItems.value = tempItems.value.filter((t) => t.id !== id);
+    if (editingTemp.value?.id === id) editingTemp.value = null;
+    info.value = "Временное изменение удалено";
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
+async function runPreviewOnDate() {
+  error.value = "";
+  if (!tempPreviewDate.value) return;
+  try {
+    const res = await api.schedule.previewOnDate({
+      periodId: periodId.value,
+      date: tempPreviewDate.value,
+    });
+    tempPreviewItems.value = res.items.map((it) => ({
+      ...it,
+      teacher_ids: JSON.parse(it.teacher_ids || "[]"),
+    }));
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
+function toggleTempTeacher(id) {
+  if (!editingTemp.value) return;
+  const arr = editingTemp.value.teacher_ids;
+  const i = arr.indexOf(id);
+  if (i >= 0) arr.splice(i, 1); else arr.push(id);
+}
+
+function previewItemTitle(it) {
+  if (it.display_title) return it.display_title;
+  if (it.custom_title) return it.custom_title;
+  if (it.lesson_type) return it.lesson_type;
+  return "—";
+}
+
 // Применить выбранную сетку учебных часов к одному дню: занятия этого дня
 // перенумеровываются по слотам выбранной сетки (по порядку, перерывы пропускаются).
 async function applyDayGrid(date, gridId) {
@@ -1001,6 +1125,7 @@ onUnmounted(() => {
         <button class="btn-secondary" @click="openSettings">Настройки периода</button>
         <button class="btn-secondary" @click="fillGrid">Заполнить сетку</button>
         <button class="btn-secondary" @click="openHistory">История</button>
+        <button class="btn-secondary" @click="openTemp">Временные изм.</button>
         <button class="btn-secondary" @click="applyOrder">Применить порядок</button>
         <button class="btn-secondary" @click="openBulkShift">Сдвинуть вниз…</button>
         <button
@@ -1181,6 +1306,11 @@ onUnmounted(() => {
               ауд. {{ roomNumber(it.room_id) }}
             </div>
           </div>
+          <span
+            v-if="tempSourceIds.has(it.id)"
+            class="badge bg-amber-50 text-amber-700"
+            title="Для этого занятия есть временное изменение"
+          >⏱ врем.</span>
           <span
             v-if="it.is_pinned"
             class="badge bg-blue-50 text-blue-600"
@@ -1549,6 +1679,238 @@ onUnmounted(() => {
       <template #footer>
         <button class="btn-secondary" @click="approveOpen = false">Отмена</button>
         <button class="btn-primary" @click="doApprove">Утвердить</button>
+      </template>
+    </AppModal>
+
+    <!-- T4: Панель временных изменений расписания -->
+    <AppModal
+      v-if="tempOpen"
+      title="Временные изменения расписания"
+      @close="tempOpen = false"
+    >
+      <div class="space-y-4 text-sm">
+        <!-- Вкладки -->
+        <div class="flex gap-2 border-b border-slate-200 pb-2">
+          <button
+            class="px-3 py-1 rounded-t text-sm font-medium transition"
+            :class="tempTab === 'list' ? 'bg-blue-600 text-white' : 'text-slate-500 hover:text-slate-700'"
+            @click="tempTab = 'list'; editingTemp = null"
+          >Список изменений ({{ tempItems.length }})</button>
+          <button
+            class="px-3 py-1 rounded-t text-sm font-medium transition"
+            :class="tempTab === 'preview' ? 'bg-blue-600 text-white' : 'text-slate-500 hover:text-slate-700'"
+            @click="tempTab = 'preview'; editingTemp = null; tempPreviewItems = []"
+          >Предпросмотр на дату</button>
+        </div>
+
+        <!-- Вкладка: список временных изменений -->
+        <div v-if="tempTab === 'list'" class="space-y-3">
+          <div v-if="!tempItems.length && !editingTemp" class="py-4 text-center text-slate-400">
+            Нет временных изменений. Нажмите «Добавить», чтобы создать первое.
+          </div>
+
+          <!-- Существующие записи -->
+          <div
+            v-for="t in tempItems"
+            :key="t.id"
+            class="rounded-lg border px-3 py-2"
+            :class="t.is_cancelled ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50'"
+          >
+            <div class="flex items-start justify-between gap-2">
+              <div class="min-w-0 flex-1">
+                <div class="font-medium text-slate-800">
+                  <span v-if="t.is_cancelled" class="text-red-600">🚫 Отмена: </span>
+                  <span v-else class="text-amber-700">⏱ Замена: </span>
+                  <span v-if="t.source_date">
+                    {{ t.source_date }} {{ t.source_start_time }}–{{ t.source_end_time }}
+                    · {{ t.source_label || 'без темы' }}
+                  </span>
+                  <span v-else class="italic text-slate-500">Новое временное занятие</span>
+                </div>
+                <div class="mt-0.5 text-xs text-slate-500">
+                  Период действия: {{ t.valid_from }} — {{ t.valid_until }}
+                  <span v-if="t.reason"> · {{ t.reason }}</span>
+                </div>
+                <div v-if="!t.is_cancelled && t.custom_title" class="text-xs text-slate-600">
+                  → {{ t.custom_title }}
+                  <span v-if="t.lesson_type"> ({{ t.lesson_type }})</span>
+                </div>
+              </div>
+              <div class="flex shrink-0 gap-1">
+                <button class="btn-secondary py-0.5 px-2 text-xs" @click="openEditTemp(t)">Изм.</button>
+                <button class="btn-ghost py-0.5 px-2 text-xs text-red-500" @click="deleteTempItem(t.id)">Удалить</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Форма добавления/редактирования temp-записи -->
+          <div v-if="editingTemp" class="rounded-lg border border-blue-200 bg-blue-50 p-3 space-y-3">
+            <div class="font-medium text-blue-800">
+              {{ editingTemp.id ? 'Редактировать временное изменение' : 'Новое временное изменение' }}
+            </div>
+
+            <div>
+              <label class="mb-1 block text-xs font-medium text-slate-700">Занятие (источник)</label>
+              <select v-model="editingTemp.source_item_id" class="input w-full text-xs">
+                <option :value="null">— Новое занятие (без источника) —</option>
+                <option v-for="it in items.filter(x => !isEmptyItem(x))" :key="it.id" :value="it.id">
+                  {{ it.date }} {{ it.start_time }} · {{ itemTitle(it) }}
+                </option>
+              </select>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="mb-1 block text-xs font-medium text-slate-700">Действует с</label>
+                <input type="date" v-model="editingTemp.valid_from" class="input w-full"
+                  :min="period?.start_date" :max="period?.end_date" />
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-slate-700">Действует по</label>
+                <input type="date" v-model="editingTemp.valid_until" class="input w-full"
+                  :min="editingTemp.valid_from" :max="period?.end_date" />
+              </div>
+            </div>
+
+            <div>
+              <label class="mb-1 block text-xs font-medium text-slate-700">Причина</label>
+              <input v-model="editingTemp.reason" class="input w-full" placeholder="напр. болезнь преподавателя" />
+            </div>
+
+            <label class="flex items-center gap-2 text-slate-700">
+              <input type="checkbox" v-model="editingTemp.is_cancelled" />
+              Занятие временно отменяется (без замены)
+            </label>
+
+            <template v-if="!editingTemp.is_cancelled">
+              <div class="grid grid-cols-3 gap-2">
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-slate-700">Дата</label>
+                  <input type="date" v-model="editingTemp.date" class="input w-full"
+                    :min="period?.start_date" :max="period?.end_date" />
+                </div>
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-slate-700">Начало</label>
+                  <input v-model="editingTemp.start_time" class="input w-full" placeholder="09:00" />
+                </div>
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-slate-700">Конец</label>
+                  <input v-model="editingTemp.end_time" class="input w-full" placeholder="10:30" />
+                </div>
+              </div>
+
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-slate-700">Вид занятия</label>
+                  <select v-model="editingTemp.lesson_type" class="input w-full">
+                    <option value="">— не изменяется —</option>
+                    <option v-for="lt in lessonTypes" :key="lt.value" :value="lt.value">{{ lt.label }}</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-slate-700">Аудитория</label>
+                  <select v-model="editingTemp.room_id" class="input w-full">
+                    <option :value="null">— не изменяется —</option>
+                    <option v-for="r in rooms" :key="r.id" :value="r.id">{{ r.number }}</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label class="mb-1 block text-xs font-medium text-slate-700">Название / тема</label>
+                <input v-model="editingTemp.custom_title" class="input w-full"
+                  placeholder="оставьте пустым, чтобы не изменять" />
+              </div>
+
+              <div>
+                <label class="mb-1 block text-xs font-medium text-slate-700">Преподаватели</label>
+                <input v-model="tempTeacherFilter" class="input mb-1 w-full text-xs"
+                  placeholder="Поиск по фамилии…" />
+                <div class="max-h-24 overflow-y-auto rounded border border-slate-200 bg-white">
+                  <label
+                    v-for="t in filterTeachers(tempTeacherFilter)"
+                    :key="t.id"
+                    class="flex items-center gap-2 px-2 py-1 hover:bg-slate-50"
+                  >
+                    <input type="checkbox"
+                      :checked="editingTemp.teacher_ids.includes(t.id)"
+                      @change="toggleTempTeacher(t.id)" />
+                    {{ t.fio }}
+                  </label>
+                </div>
+              </div>
+
+              <div>
+                <label class="mb-1 block text-xs font-medium text-slate-700">Заметка</label>
+                <textarea v-model="editingTemp.note" class="input w-full" rows="2"
+                  placeholder="оставьте пустым, чтобы не изменять" />
+              </div>
+            </template>
+
+            <div v-if="error" class="rounded bg-red-50 px-3 py-2 text-red-700">{{ error }}</div>
+
+            <div class="flex gap-2">
+              <button class="btn-primary" @click="saveEditingTemp">Сохранить</button>
+              <button class="btn-secondary" @click="editingTemp = null">Отмена</button>
+            </div>
+          </div>
+
+          <div v-if="error && !editingTemp" class="rounded bg-red-50 px-3 py-2 text-red-700">{{ error }}</div>
+        </div>
+
+        <!-- Вкладка: предпросмотр на дату -->
+        <div v-if="tempTab === 'preview'" class="space-y-3">
+          <div class="flex items-end gap-3">
+            <div class="flex-1">
+              <label class="mb-1 block text-xs font-medium text-slate-700">Дата предпросмотра</label>
+              <input type="date" v-model="tempPreviewDate" class="input w-full"
+                :min="period?.start_date" :max="period?.end_date" />
+            </div>
+            <button class="btn-primary" :disabled="!tempPreviewDate" @click="runPreviewOnDate">
+              Загрузить
+            </button>
+          </div>
+
+          <div v-if="tempPreviewItems.length" class="space-y-1">
+            <p class="text-xs text-slate-500">
+              Расписание на {{ tempPreviewDate }} с учётом временных изменений:
+            </p>
+            <div
+              v-for="it in tempPreviewItems"
+              :key="it.id"
+              class="flex items-center gap-2 rounded px-3 py-2 text-xs"
+              :class="it._is_temp ? 'bg-amber-50 border border-amber-200' : 'bg-slate-50 border border-slate-200'"
+            >
+              <span class="w-20 shrink-0 text-slate-500">
+                {{ it.start_time }}–{{ it.end_time }}
+              </span>
+              <span class="min-w-0 flex-1 truncate font-medium">
+                {{ previewItemTitle(it) }}
+              </span>
+              <span v-if="it._is_temp" class="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-amber-700">
+                ⏱ врем.
+                <span v-if="it._temp_reason"> · {{ it._temp_reason }}</span>
+              </span>
+            </div>
+          </div>
+
+          <div v-else-if="tempPreviewDate" class="py-3 text-center text-xs text-slate-400">
+            Нажмите «Загрузить» для предпросмотра
+          </div>
+
+          <div v-if="error" class="rounded bg-red-50 px-3 py-2 text-red-700">{{ error }}</div>
+        </div>
+      </div>
+
+      <template #footer>
+        <button
+          v-if="tempTab === 'list' && !editingTemp"
+          class="btn-primary"
+          @click="openAddTemp(null)"
+        >
+          + Добавить изменение
+        </button>
+        <button class="btn-secondary" @click="tempOpen = false">Закрыть</button>
       </template>
     </AppModal>
 

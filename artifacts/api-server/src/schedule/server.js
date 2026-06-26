@@ -46,6 +46,8 @@ const READONLY = new Set([
   "versions:search",
   "audit:list",
   "notes:list",
+  "schedule:listTemp",
+  "schedule:previewOnDate",
 ]);
 
 let ready = null;

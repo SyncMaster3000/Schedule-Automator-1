@@ -173,6 +173,11 @@ export const api = {
     setPin: (data) => call("schedule:setPin", data),
     bulkShift: (data) => call("schedule:bulkShift", data),
     moveSelected: (data) => call("schedule:moveSelected", data),
+    listTemp: (periodId) => call("schedule:listTemp", { periodId }),
+    addTemp: (data) => call("schedule:addTemp", data),
+    saveTemp: (data) => call("schedule:saveTemp", data),
+    deleteTemp: (id) => call("schedule:deleteTemp", id),
+    previewOnDate: (data) => call("schedule:previewOnDate", data),
   },
   conflicts: {
     check: (data) => call("conflicts:check", data),

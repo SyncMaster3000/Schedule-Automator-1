@@ -39,6 +39,14 @@ description: Durable quirks for the ported Electron schedule app — build/verif
 - Снимает is_modified/modified_at/change_desc с занятия. Пишущий → не добавлять в READONLY.
 - is_modified отображается как янтарная точка в строке и кнопка «Снять отметку» в редакторе.
 
+## Временные изменения (T4)
+- Таблица `schedule_temp_items` в SCHEMA (CREATE TABLE IF NOT EXISTS — не migration, добавлена в константу).
+- 5 каналов: listTemp (READONLY), addTemp, saveTemp, deleteTemp, previewOnDate (READONLY).
+- `source_item_id` — ссылка на base-занятие; NULL = новое временное; `is_cancelled=1` = занятие временно отменяется.
+- `previewOnDate` объединяет base items + temp overrides для конкретной даты (отменённые исключаются).
+- Бейдж «⏱ врем.» на занятиях в основном списке (через computed `tempSourceIds`); `tempItems` загружается только при открытии модала.
+- Модал с двумя вкладками: «Список изменений» (CRUD) + «Предпросмотр на дату».
+
 ## Undo/Redo (T10)
 - Фронтенд-стек снимков (max 20). `pushUndo(desc)` вызывается в начале каждой write-функции до первого await.
 - `applySnapshot(snap)`: сначала удаляет занятия, созданные после снимка; потом restoreItem (saveItem с id=null если был удалён, id=оригинальный если жив).
