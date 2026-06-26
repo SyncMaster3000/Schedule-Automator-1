@@ -6,6 +6,7 @@ import { VueDraggableNext } from "vue-draggable-next";
 import { eachDayOfInterval, parseISO, format, getDay } from "date-fns";
 import api from "../api";
 import AppModal from "../components/AppModal.vue";
+import LessonCard from "../components/LessonCard.vue";
 
 const props = defineProps({
   id: { type: [String, Number], required: true },
@@ -226,6 +227,37 @@ const totalConflicts = computed(() =>
 );
 const hasConflicts = computed(() => totalConflicts.value > 0);
 
+// Групповой режим: занятия одного слота (дата + время) собираются в один ряд.
+// Общие занятия (без метки группы) показываются на всю ширину, а занятия
+// групп A и B — двумя колонками рядом. Каждое занятие попадает ровно в один
+// список, поэтому дубликаты практических не возникают.
+const groupedRows = computed(() => {
+  const rows = [];
+  const byKey = new Map();
+  for (const it of items.value) {
+    const key = `${it.date}|${it.start_time}|${it.end_time}`;
+    let row = byKey.get(key);
+    if (!row) {
+      row = {
+        key,
+        date: it.date,
+        start_time: it.start_time,
+        end_time: it.end_time,
+        common: [],
+        a: [],
+        b: [],
+      };
+      byKey.set(key, row);
+      rows.push(row);
+    }
+    const label = (it.group_label || "").toUpperCase();
+    if (label === "A") row.a.push(it);
+    else if (label === "B") row.b.push(it);
+    else row.common.push(it);
+  }
+  return rows;
+});
+
 // Рабочий ли день с учётом учебной недели периода (Пн–Пт / Пн–Сб).
 function isWorkDay(d) {
   const dow = getDay(d); // 0 = вс, 6 = сб
@@ -433,19 +465,6 @@ function normalize(it) {
     teacher_ids: JSON.parse(it.teacher_ids || "[]"),
     group_ids: JSON.parse(it.group_ids || "[]"),
   };
-}
-
-function teacherNames(ids) {
-  return ids
-    .map((id) => teachers.value.find((t) => t.id === id)?.fio)
-    .filter(Boolean)
-    .join(", ");
-}
-function roomNumber(id) {
-  return rooms.value.find((r) => r.id === id)?.number || "—";
-}
-function conflictTitle(it) {
-  return (it.conflicts || []).map((c) => c.message).join("\n");
 }
 
 function openEditor(it) {
@@ -1231,6 +1250,102 @@ onUnmounted(() => {
 
     <div v-if="!items.length" class="card p-10 text-center text-slate-400">
       Нет занятий. Добавьте занятие или вернитесь к периоду для автозаполнения.
+    </div>
+
+    <!-- Групповой режим: занятия одного слота в одном ряду (две колонки A/B) -->
+    <div v-else-if="period && period.group_mode" class="space-y-2">
+      <div v-for="(row, ridx) in groupedRows" :key="row.key">
+        <!-- Заголовок дня -->
+        <div
+          v-if="ridx === 0 || groupedRows[ridx - 1].date !== row.date"
+          class="mb-1 mt-3 flex items-center gap-2 px-1 text-sm font-semibold text-blue-700"
+        >
+          <span class="h-px flex-1 bg-blue-100"></span>
+          {{ formatDayHeader(row.date) }}
+          <select
+            v-if="grids.length"
+            :value="dayGrid[row.date] ?? ''"
+            class="input h-7 w-auto py-0 text-xs font-normal text-slate-600"
+            title="Применить сетку учебных часов к этому дню"
+            @change="applyDayGrid(row.date, Number($event.target.value))"
+          >
+            <option value="" disabled>Сетка дня…</option>
+            <option v-for="g in grids" :key="g.id" :value="g.id">{{ g.name }}</option>
+          </select>
+          <span class="h-px flex-1 bg-blue-100"></span>
+        </div>
+        <!-- Ряд одного таймслота -->
+        <div class="flex items-start gap-3">
+          <div class="w-20 shrink-0 pt-3 text-sm text-slate-400">
+            {{ row.start_time }}–{{ row.end_time }}
+          </div>
+          <div class="min-w-0 flex-1 space-y-2">
+            <!-- Общие занятия — на всю ширину -->
+            <LessonCard
+              v-for="it in row.common"
+              :key="it.id"
+              :item="it"
+              :selected="isSelected(it.id)"
+              :unallocated-topics="unallocatedTopics"
+              :teachers="teachers"
+              :rooms="rooms"
+              :show-drag="false"
+              :show-time="false"
+              @edit="openEditor"
+              @delete-empty="deleteEmpty"
+              @assign-topic="assignTopic"
+              @toggle-select="toggleSelect"
+            />
+            <!-- Группы A / B — двумя колонками -->
+            <div v-if="row.a.length || row.b.length" class="grid grid-cols-2 gap-3">
+              <div class="space-y-2">
+                <div class="px-1 text-xs font-semibold text-blue-700">Группа A</div>
+                <LessonCard
+                  v-for="it in row.a"
+                  :key="it.id"
+                  :item="it"
+                  :selected="isSelected(it.id)"
+                  :unallocated-topics="unallocatedTopics"
+                  :teachers="teachers"
+                  :rooms="rooms"
+                  :show-drag="false"
+                  :show-time="false"
+                  :show-group-badge="false"
+                  @edit="openEditor"
+                  @delete-empty="deleteEmpty"
+                  @assign-topic="assignTopic"
+                  @toggle-select="toggleSelect"
+                />
+                <div v-if="!row.a.length" class="px-1 text-xs italic text-slate-300">
+                  нет занятия
+                </div>
+              </div>
+              <div class="space-y-2">
+                <div class="px-1 text-xs font-semibold text-blue-700">Группа B</div>
+                <LessonCard
+                  v-for="it in row.b"
+                  :key="it.id"
+                  :item="it"
+                  :selected="isSelected(it.id)"
+                  :unallocated-topics="unallocatedTopics"
+                  :teachers="teachers"
+                  :rooms="rooms"
+                  :show-drag="false"
+                  :show-time="false"
+                  :show-group-badge="false"
+                  @edit="openEditor"
+                  @delete-empty="deleteEmpty"
+                  @assign-topic="assignTopic"
+                  @toggle-select="toggleSelect"
+                />
+                <div v-if="!row.b.length" class="px-1 text-xs italic text-slate-300">
+                  нет занятия
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Список занятий с drag-and-drop -->

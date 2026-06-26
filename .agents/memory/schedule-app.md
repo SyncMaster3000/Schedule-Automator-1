@@ -7,6 +7,7 @@ description: Durable quirks for the ported Electron schedule app — build/verif
 
 ## Build / verify
 - No `vue-tsc` typecheck wired up. Validate SFC changes by building: `PORT=4999 BASE_PATH=/ pnpm --filter @workspace/schedule run build`.
+- The schedule frontend uses `createWebHashHistory` — to screenshot/verify a deep route you MUST use a hash URL, e.g. path `/#/programs/<id>/periods/<periodId>/schedule`. A plain `/programs/.../schedule` path falls back to HomeView. The footer label "Офлайн-режим" is static, NOT a real connectivity indicator.
 
 ## Data model notes
 - `program_topics` carries `excluded`, `roundtable_hours`, `is_section` flags/columns.
