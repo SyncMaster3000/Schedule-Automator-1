@@ -127,6 +127,16 @@ function isEmptyItem(it) {
   );
 }
 
+function teacherNames(ids) {
+  return (ids || [])
+    .map((id) => teachers.value.find((t) => t.id === id)?.fio)
+    .filter(Boolean)
+    .join(", ");
+}
+function roomNumber(id) {
+  return rooms.value.find((r) => r.id === id)?.number || "—";
+}
+
 // Удалить пустое окошко напрямую из списка (без открытия редактора).
 async function deleteEmpty(it) {
   pushUndo("удаление свободного окошка");
