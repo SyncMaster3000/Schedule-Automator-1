@@ -21,6 +21,11 @@ description: Durable quirks for the ported Electron schedule app — build/verif
 - **Why:** docs like ДТП have «II» as a real 6h topic; the previous "any non-section next row → exclude" rule wrongly dropped it.
 - **How to apply:** sections are NOT a separate display class — `itemTitle`/export `topicLabel` show `Тема <num> …` for sections too (no `is_section` bypass). Don't reintroduce a section-only label branch.
 
+## Work-week filtering must be in lockstep (frontend + backend)
+- `period.work_week` (`mon-fri` | `mon-sat`) gates which weekdays get slots. Both `buildCells` (backend) AND the frontend `gridCells` computed must filter days by it — otherwise drag-shift/applyOrder/newItem place lessons on Saturday even when the period is Пн–Пт.
+- **Why:** backend honored work_week but the frontend grid originally enumerated every calendar day, so the two diverged.
+- **How to apply:** any new code that enumerates period days must reuse the work-week predicate (Sun always off; Sat off when mon-fri).
+
 ## Empty "окошко" / shift-drag model
 - The schedule is a dense item list mapped onto `gridCells` (date×non-break slot). A blank placeholder lesson (topic_id/custom_title/lesson_type/room/teachers/groups/note ALL empty) represents a free window.
 - `isEmptyItem` (frontend) and export's `isBlankRow` must check the FULL blank set, not just `!topic_id && !custom_title` — an untitled lesson with a lesson_type/teacher is a real lesson and must NOT be hidden in the UI or dropped from export.

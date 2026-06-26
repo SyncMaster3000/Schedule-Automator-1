@@ -3,7 +3,7 @@
 import { ref, computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { VueDraggableNext } from "vue-draggable-next";
-import { eachDayOfInterval, parseISO, format } from "date-fns";
+import { eachDayOfInterval, parseISO, format, getDay } from "date-fns";
 import api from "../api";
 import AppModal from "../components/AppModal.vue";
 
@@ -202,6 +202,15 @@ const totalConflicts = computed(() =>
 );
 const hasConflicts = computed(() => totalConflicts.value > 0);
 
+// Рабочий ли день с учётом учебной недели периода (Пн–Пт / Пн–Сб).
+function isWorkDay(d) {
+  const dow = getDay(d); // 0 = вс, 6 = сб
+  if (dow === 0) return false;
+  const ww = period.value?.work_week || "mon-fri";
+  if (ww === "mon-fri" && dow === 6) return false;
+  return true;
+}
+
 // Сетка ячеек периода (дата × слот) — для пересчёта по порядку
 const gridCells = computed(() => {
   if (!period.value) return [];
@@ -209,7 +218,7 @@ const gridCells = computed(() => {
   const days = eachDayOfInterval({
     start: parseISO(period.value.start_date),
     end: parseISO(period.value.end_date),
-  });
+  }).filter(isWorkDay);
   const cells = [];
   for (const d of days) {
     const date = format(d, "yyyy-MM-dd");
@@ -359,6 +368,23 @@ async function addNote() {
 async function removeNote(id) {
   await api.notes.remove(id);
   notes.value = await api.notes.list({ programId: programId.value });
+}
+
+// Вписать нераспределённую тему в пустой слот (замена из нераспределённых).
+async function assignTopic(it, topicId) {
+  if (!topicId) return;
+  error.value = "";
+  try {
+    await api.schedule.assignTopic({
+      itemId: it.id,
+      topic_id: topicId,
+      author: author.value || null,
+    });
+    info.value = "Тема вписана в слот";
+    await load();
+  } catch (e) {
+    error.value = e.message;
+  }
 }
 
 // Вернуть занятие в очередь нераспределённых (освободить слот).
@@ -821,9 +847,21 @@ onMounted(load);
           <div class="min-w-0 flex-1">
             <div class="truncate font-medium italic text-slate-400">Свободное окошко</div>
             <div class="truncate text-xs text-slate-400">
-              Нажмите «Вписать занятие», чтобы заполнить слот
+              Впишите занятие или подставьте нераспределённую тему
             </div>
           </div>
+          <select
+            class="input h-9 w-56 py-0 text-sm"
+            :disabled="!unallocatedTopics.length"
+            @change="assignTopic(it, Number($event.target.value)); $event.target.value = ''"
+          >
+            <option value="">
+              {{ unallocatedTopics.length ? "Из нераспределённых…" : "Нет нераспределённых" }}
+            </option>
+            <option v-for="t in unallocatedTopics" :key="t.id" :value="t.id">
+              {{ t.utp_number }}. {{ t.title }}
+            </option>
+          </select>
           <button class="btn-secondary" @click="openEditor(it)">Вписать занятие</button>
           <button class="btn-ghost text-slate-400" @click="deleteEmpty(it)">Удалить</button>
         </div>
@@ -848,10 +886,17 @@ onMounted(load);
             <div class="text-slate-400">{{ it.start_time }}–{{ it.end_time }}</div>
           </div>
           <div class="min-w-0 flex-1">
-            <div class="truncate font-medium text-slate-800">
+            <div class="truncate font-medium" :class="isSelfStudy(it) ? 'italic text-slate-500' : 'text-slate-800'">
               {{ itemTitle(it) }}
+              <span
+                v-if="it.group_label"
+                class="badge ml-1 bg-blue-50 text-blue-700"
+              >Группа {{ it.group_label }}</span>
             </div>
-            <div class="truncate text-xs text-slate-500">
+            <div v-if="isSelfStudy(it)" class="truncate text-xs text-slate-400">
+              Самостоятельная подготовка
+            </div>
+            <div v-else class="truncate text-xs text-slate-500">
               <template v-if="it.lesson_type">{{ it.lesson_type }} · </template>
               {{ teacherNames(it.teacher_ids) || "преп. не назначен" }} ·
               ауд. {{ roomNumber(it.room_id) }}
