@@ -86,10 +86,11 @@ function conflictTitle(it) {
     v-else
     class="card flex items-center gap-3 px-4 py-3 transition"
     :class="{
-      'conflict-row border-red-200': item.conflicts && item.conflicts.length,
+      'border-red-400 bg-red-50': item.is_outside_period,
+      'conflict-row border-red-200': !item.is_outside_period && item.conflicts && item.conflicts.length,
       'ring-2 ring-blue-300': selected,
     }"
-    :title="conflictTitle(item)"
+    :title="item.is_outside_period ? 'Занятие вне рабочего расписания — попало в нерабочий день при сдвиге. Перенесите вручную или удалите.' : conflictTitle(item)"
   >
     <input
       v-if="showSelect"
@@ -123,7 +124,13 @@ function conflictTitle(it) {
       </div>
     </div>
     <span
-      v-if="item.conflicts && item.conflicts.length"
+      v-if="item.is_outside_period"
+      class="badge shrink-0 bg-red-100 text-red-700"
+    >
+      вне расписания
+    </span>
+    <span
+      v-else-if="item.conflicts && item.conflicts.length"
       class="badge bg-red-100 text-red-700"
     >
       накладка

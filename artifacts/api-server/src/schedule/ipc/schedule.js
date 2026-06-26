@@ -1,7 +1,7 @@
 // Конструктор расписания — занятия + проверка накладок в реальном времени
 import { getDb, audit } from "../db/index.js";
 import { checkScheduleItem, rebuildLocksForItem } from "../services/conflicts.js";
-import { buildCells } from "./periods.js";
+import { buildCells, buildExtendedCells } from "./periods.js";
 
 // Список занятий периода с расчётом конфликтов для каждого
 function listByPeriod(periodId, crossPeriod = false) {
@@ -73,7 +73,7 @@ export default {
         `UPDATE schedule_items SET
           topic_id = ?, date = ?, start_time = ?, end_time = ?, start_dt = ?, end_dt = ?,
           lesson_type = ?, custom_title = ?, teacher_ids = ?, room_id = ?, group_ids = ?,
-          group_label = ?, note = ?,
+          group_label = ?, note = ?, is_outside_period = 0,
           is_modified = CASE WHEN ? > 0 THEN 1 ELSE is_modified END,
           modified_at = CASE WHEN ? > 0 THEN ? ELSE modified_at END,
           change_desc = CASE WHEN ? > 0 THEN ? ELSE change_desc END
@@ -344,12 +344,30 @@ export default {
     if (!n || n < 1) throw new Error("Число слотов должно быть не менее 1");
 
     const timeGrid = JSON.parse(period.time_grid_json || "[]");
+
+    // Рабочие ячейки периода (только рабочие дни согласно учебной неделе)
     const allCells = buildCells(
       period.start_date,
       period.end_date,
       timeGrid,
       period.work_week || "mon-fri"
     );
+    // Множество ключей «рабочих» ячеек — нужно для определения флага is_outside_period
+    const validCellKeys = new Set(allCells.map((c) => `${c.date} ${c.start}`));
+
+    // Расширенные ячейки: все календарные дни (включая Сб/Вс) с запасом за конец периода.
+    // Занятия, попавшие в ячейки вне validCellKeys, помечаются is_outside_period = 1.
+    const slotsPerDay = Math.max(timeGrid.filter((s) => !s.is_break).length, 1);
+    const extraDays = Math.ceil(n / slotsPerDay) + 7;
+    const endD = new Date(period.end_date + "T00:00:00");
+    endD.setDate(endD.getDate() + extraDays);
+    const extEnd = [
+      endD.getFullYear(),
+      String(endD.getMonth() + 1).padStart(2, "0"),
+      String(endD.getDate()).padStart(2, "0"),
+    ].join("-");
+    const extCells = buildExtendedCells(period.start_date, extEnd, timeGrid);
+    const extCellIdx = new Map(extCells.map((c, i) => [`${c.date} ${c.start}`, i]));
 
     // Все занятия периода
     const allItems = db
@@ -376,38 +394,16 @@ export default {
     const isEmptySlot = (it) =>
       it.lesson_type === "empty" || it.lesson_type === "self_study" || !it.topic_id;
 
-    // Для сдвига: только реальные (не пустые) незакреплённые занятия в scope
+    // Сдвигаем только реальные, незакреплённые, не «вне периода» занятия из scope
     const realToShift = allItems.filter(
-      (it) => inScope(it) && !it.is_pinned && !isEmptySlot(it)
+      (it) => inScope(it) && !it.is_pinned && !isEmptySlot(it) && !it.is_outside_period
     );
     if (!realToShift.length) return { shifted: 0 };
-
-    // Ячейки полного периода, индексированные по ключу «date start»
-    const cellIdx = new Map(
-      allCells.map((c, i) => [`${c.date} ${c.start}`, i])
-    );
-
-    // Индекс первого и последнего реального занятия в сетке
-    const firstKey = `${realToShift[0].date} ${realToShift[0].start_time}`;
-    const lastKey = `${realToShift[realToShift.length - 1].date} ${realToShift[realToShift.length - 1].start_time}`;
-    const firstIdx = cellIdx.get(firstKey) ?? -1;
-    const lastIdx = cellIdx.get(lastKey) ?? -1;
-    if (firstIdx < 0) throw new Error("Первое занятие выходит за пределы сетки");
-
-    // Единственная нужная проверка для «сдвига вниз»:
-    // последнее реальное занятие должно умещаться после сдвига
-    if (lastIdx + n >= allCells.length)
-      throw new Error(
-        `Смещение выходит за конец периода. Последнее реальное занятие ` +
-        `находится в слоте ${lastIdx + 1} из ${allCells.length}, ` +
-        `а со сдвигом ${n} потребуется слот ${lastIdx + n + 1}.`
-      );
 
     const selfStudy = period.empty_slot_mode === "self_study";
 
     const tx = db.transaction(() => {
-      // Удалить все пустые/самоподготовка занятия в scope —
-      // они будут пересозданы в нужных слотах после сдвига
+      // Удалить пустые/самоподготовка занятия в scope — пересоздадутся после сдвига
       const emptyInScope = allItems.filter((it) => inScope(it) && isEmptySlot(it));
       if (emptyInScope.length) {
         const ph = emptyInScope.map(() => "?").join(",");
@@ -416,40 +412,34 @@ export default {
         );
       }
 
-      // Сместить реальные занятия на n ячеек вниз
+      // Сместить реальные занятия в расширенной сетке (включая Сб/Вс за пределами периода)
+      const realAfterKeys = new Set();
       for (const it of realToShift) {
-        const curIdx = cellIdx.get(`${it.date} ${it.start_time}`);
-        if (curIdx == null) continue;
-        const newCell = allCells[curIdx + n];
-        if (!newCell) continue;
+        const extIdx = extCellIdx.get(`${it.date} ${it.start_time}`);
+        if (extIdx == null) continue;
+        const newCell = extCells[extIdx + n];
+        if (!newCell) continue; // даже расширенная сетка не покрывает — пропустить
+        const outside = validCellKeys.has(`${newCell.date} ${newCell.start}`) ? 0 : 1;
         db.prepare(
           `UPDATE schedule_items SET date = ?, start_time = ?, end_time = ?,
-            start_dt = ?, end_dt = ? WHERE id = ?`
+            start_dt = ?, end_dt = ?, is_outside_period = ? WHERE id = ?`
         ).run(
           newCell.date, newCell.start, newCell.end,
           `${newCell.date}T${newCell.start}:00`,
           `${newCell.date}T${newCell.end}:00`,
+          outside,
           it.id
         );
+        realAfterKeys.add(`${newCell.date} ${newCell.start}`);
       }
 
-      // Определить, какие ячейки в scope теперь заняты реальными занятиями
-      const realAfterKeys = new Set(
-        realToShift.map((it) => {
-          const ci = cellIdx.get(`${it.date} ${it.start_time}`);
-          const nc = allCells[ci + n];
-          return nc ? `${nc.date} ${nc.start}` : null;
-        }).filter(Boolean)
-      );
-
-      // Пересоздать пустые ячейки для всех scope-слотов, не занятых реальными
+      // Пересоздать пустые ячейки для рабочих слотов scope, не занятых реальными
       let order =
         (db.prepare("SELECT MAX(sort_order) AS m FROM schedule_items WHERE period_id = ?")
           .get(periodId).m || 0) + 1;
       for (const c of allCells) {
-        const key = `${c.date} ${c.start}`;
         if (!inScope({ date: c.date })) continue;
-        if (realAfterKeys.has(key)) continue; // занято реальным занятием
+        if (realAfterKeys.has(`${c.date} ${c.start}`)) continue;
         db.prepare(
           `INSERT INTO schedule_items
             (period_id, program_id, topic_id, date, start_time, end_time, start_dt, end_dt,

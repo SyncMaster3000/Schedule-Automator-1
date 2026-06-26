@@ -114,6 +114,7 @@ CREATE TABLE IF NOT EXISTS schedule_items (
   group_ids TEXT NOT NULL DEFAULT '[]',
   note TEXT,
   sort_order INTEGER NOT NULL DEFAULT 0,
+  is_outside_period INTEGER NOT NULL DEFAULT 0,
   FOREIGN KEY (period_id) REFERENCES periods(id) ON DELETE CASCADE,
   FOREIGN KEY (program_id) REFERENCES programs(id) ON DELETE CASCADE
 );
@@ -342,6 +343,9 @@ function runMigrations() {
   addColumnIfMissing("schedule_items", "group_label", "group_label TEXT");
   // Закрепление: 1 — занятие закреплено (не перемещается при авто-операциях).
   addColumnIfMissing("schedule_items", "is_pinned", "is_pinned INTEGER NOT NULL DEFAULT 0");
+  // Флаг «вне периода»: 1 — занятие сдвинуто за рабочие дни (суббота/воскресенье
+  // или за конец периода) при операции «Сдвинуть вниз». Подсвечивается красным.
+  addColumnIfMissing("schedule_items", "is_outside_period", "is_outside_period INTEGER NOT NULL DEFAULT 0");
   // Визуальная метка изменения: 1 — занятие изменено после создания, 0 — просмотрено.
   addColumnIfMissing("schedule_items", "is_modified", "is_modified INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing("schedule_items", "modified_at", "modified_at TEXT");

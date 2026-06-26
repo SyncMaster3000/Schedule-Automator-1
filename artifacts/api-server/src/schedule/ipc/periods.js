@@ -255,3 +255,21 @@ const handlers = {
 
 export default handlers;
 export { buildCells };
+
+// Сформировать список ячеек для ВСЕХ календарных дней (включая выходные и дни за
+// пределами периода). Используется для «переполняющего» сдвига занятий за конец периода.
+export function buildExtendedCells(startDate, endDate, timeGrid) {
+  const days = eachDayOfInterval({
+    start: parseISO(startDate),
+    end: parseISO(endDate),
+  });
+  const slots = (timeGrid || []).filter((s) => !s.is_break);
+  const cells = [];
+  for (const d of days) {
+    const date = format(d, "yyyy-MM-dd");
+    for (const s of slots) {
+      cells.push({ date, start: s.start, end: s.end });
+    }
+  }
+  return cells;
+}
