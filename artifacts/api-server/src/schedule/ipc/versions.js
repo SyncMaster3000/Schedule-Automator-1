@@ -88,6 +88,25 @@ export default {
     return { ...v, snapshot: JSON.parse(v.snapshot_json) };
   },
 
+  // Переименовать версию / обновить заметку
+  "versions:rename": ({ id, version_label, note }) => {
+    const db = getDb();
+    const v = db.prepare("SELECT * FROM schedule_versions WHERE id = ?").get(id);
+    if (!v) throw new Error("Версия не найдена");
+    db.prepare("UPDATE schedule_versions SET version_label = ?, note = ? WHERE id = ?").run(
+      version_label ?? v.version_label,
+      note !== undefined ? note : v.note,
+      id
+    );
+    return { id };
+  },
+
+  // Удалить версию из архива
+  "versions:delete": (id) => {
+    getDb().prepare("DELETE FROM schedule_versions WHERE id = ?").run(id);
+    return { id };
+  },
+
   // Создать новую программу из версии-шаблона со сдвигом дат
   "versions:fromTemplate": (data) => {
     const db = getDb();

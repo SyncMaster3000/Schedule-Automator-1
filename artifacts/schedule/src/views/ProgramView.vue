@@ -25,8 +25,14 @@ const importMode = ref("replace"); // "replace" — заменить, "append" �
 
 // --- Период ---
 const showPeriod = ref(false);
+const editingPeriodId = ref(null); // null = новый, число = редактирование
 const periodForm = ref(blankPeriod());
 const grids = ref([]); // именованные сетки учебных часов
+
+// Модал «Использовать версию как шаблон»
+const fromTemplateOpen = ref(false);
+const fromTemplateVersion = ref(null);
+const fromTemplateForm = ref({ newTitle: "", newStartDate: "" });
 
 function blankPeriod() {
   return {
@@ -107,9 +113,24 @@ async function toggleExcluded(t) {
 }
 
 function openPeriod() {
+  editingPeriodId.value = null;
   periodForm.value = blankPeriod();
-  // По умолчанию — первая доступная сетка учебных часов
   if (grids.value.length) selectGrid(grids.value[0].id);
+  showPeriod.value = true;
+}
+
+function openEditPeriod(p) {
+  editingPeriodId.value = p.id;
+  const timeGrid = JSON.parse(p.time_grid_json || "[]");
+  periodForm.value = {
+    name: p.name || "",
+    start_date: p.start_date || "",
+    end_date: p.end_date || "",
+    groups: "",          // groups хранятся отдельно; оставляем пустым при редактировании
+    autofill: false,
+    grid_id: null,
+    time_grid: timeGrid,
+  };
   showPeriod.value = true;
 }
 
@@ -120,28 +141,92 @@ function selectGrid(id) {
   periodForm.value.time_grid = grid ? JSON.parse(JSON.stringify(grid.slots)) : [];
 }
 
-async function createPeriod() {
+async function savePeriod() {
   if (!periodForm.value.start_date || !periodForm.value.end_date) {
     error.value = "Укажите даты периода";
     return;
   }
+  error.value = "";
   try {
-    const groups = periodForm.value.groups
-      .split(",")
-      .map((g) => g.trim())
-      .filter(Boolean);
-    await api.periods.create({
-      programId: programId.value,
-      name: periodForm.value.name,
-      start_date: periodForm.value.start_date,
-      end_date: periodForm.value.end_date,
-      time_grid: periodForm.value.time_grid,
-      groups,
-      autofill: periodForm.value.autofill,
-    });
-    showPeriod.value = false;
-    info.value = "Период создан";
+    if (editingPeriodId.value) {
+      // Редактирование существующего периода
+      await api.periods.update({
+        id: editingPeriodId.value,
+        name: periodForm.value.name,
+        start_date: periodForm.value.start_date,
+        end_date: periodForm.value.end_date,
+        time_grid: periodForm.value.time_grid.length ? periodForm.value.time_grid : undefined,
+      });
+      showPeriod.value = false;
+      info.value = "Период обновлен";
+    } else {
+      // Создание нового периода
+      const groups = periodForm.value.groups
+        .split(",")
+        .map((g) => g.trim())
+        .filter(Boolean);
+      await api.periods.create({
+        programId: programId.value,
+        name: periodForm.value.name,
+        start_date: periodForm.value.start_date,
+        end_date: periodForm.value.end_date,
+        time_grid: periodForm.value.time_grid,
+        groups,
+        autofill: periodForm.value.autofill,
+      });
+      showPeriod.value = false;
+      info.value = "Период создан";
+    }
     await loadAll();
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
+async function renameVersion(v) {
+  const label = prompt("Новое название версии:", v.version_label);
+  if (!label || label === v.version_label) return;
+  error.value = "";
+  try {
+    await api.versions.rename({ id: v.id, version_label: label });
+    v.version_label = label;
+    info.value = "Версия переименована";
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
+async function deleteVersion(id) {
+  if (!confirm("Удалить эту версию? Действие необратимо.")) return;
+  error.value = "";
+  try {
+    await api.versions.delete(id);
+    info.value = "Версия удалена";
+    await loadAll();
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
+function openFromTemplate(v) {
+  fromTemplateVersion.value = v;
+  fromTemplateForm.value = {
+    newTitle: `${program.value?.title || "Расписание"} (из версии)`,
+    newStartDate: "",
+  };
+  fromTemplateOpen.value = true;
+}
+
+async function applyFromTemplate() {
+  error.value = "";
+  try {
+    const res = await api.versions.fromTemplate({
+      versionId: fromTemplateVersion.value.id,
+      newTitle: fromTemplateForm.value.newTitle,
+      newStartDate: fromTemplateForm.value.newStartDate || null,
+    });
+    fromTemplateOpen.value = false;
+    info.value = `Новое расписание создано. Перейдите к нему на главной странице.`;
   } catch (e) {
     error.value = e.message;
   }
@@ -339,7 +424,10 @@ onMounted(async () => {
         <div v-for="p in periods" :key="p.id" class="card p-5">
           <div class="flex items-start justify-between">
             <h3 class="font-semibold text-slate-800">{{ p.name }}</h3>
-            <button class="btn-ghost text-red-500" @click="removePeriod(p.id)">✕</button>
+            <div class="flex gap-1">
+              <button class="btn-ghost text-slate-400" title="Редактировать период" @click="openEditPeriod(p)">✏️</button>
+              <button class="btn-ghost text-red-500" @click="removePeriod(p.id)">✕</button>
+            </div>
           </div>
           <div class="mt-1 text-sm text-slate-500">{{ p.start_date }} — {{ p.end_date }}</div>
           <div class="mt-4 flex gap-2">
@@ -357,16 +445,39 @@ onMounted(async () => {
 
     <!-- Версии -->
     <div v-if="tab === 'versions'">
+      <div class="mb-4 flex justify-between">
+        <p class="text-sm text-slate-500">Снимки расписания. Можно переименовать, удалить или развернуть в новое расписание.</p>
+        <button class="btn-secondary" @click="saveVersion">+ Сохранить текущую версию</button>
+      </div>
       <div v-if="!versions.length" class="card p-10 text-center text-slate-400">
-        Версий пока нет. Нажмите «Сохранить версию» вверху.
+        Версий пока нет. Нажмите «Сохранить текущую версию».
       </div>
       <div v-else class="card divide-y divide-slate-100">
         <div v-for="v in versions" :key="v.id" class="flex items-center justify-between px-5 py-4">
-          <div>
+          <div class="min-w-0 flex-1">
             <div class="font-medium text-slate-800">{{ v.version_label }}</div>
             <div class="text-xs text-slate-400">
-              {{ new Date(v.created_at).toLocaleString("ru-RU") }} · {{ v.status }}
+              {{ new Date(v.created_at).toLocaleString("ru-RU") }}
+              <span v-if="v.status" class="ml-1">· {{ v.status }}</span>
+              <span v-if="v.note" class="ml-1 italic">· {{ v.note }}</span>
             </div>
+          </div>
+          <div class="ml-4 flex shrink-0 gap-2">
+            <button
+              class="btn-secondary py-1 px-2 text-xs"
+              title="Создать новое расписание на основе этой версии"
+              @click="openFromTemplate(v)"
+            >Использовать как шаблон</button>
+            <button
+              class="btn-secondary py-1 px-2 text-xs"
+              title="Переименовать"
+              @click="renameVersion(v)"
+            >✏️ Переименовать</button>
+            <button
+              class="btn-ghost py-1 px-2 text-xs text-red-500"
+              title="Удалить версию"
+              @click="deleteVersion(v.id)"
+            >Удалить</button>
           </div>
         </div>
       </div>
@@ -421,8 +532,40 @@ onMounted(async () => {
       </template>
     </AppModal>
 
-    <!-- Создание периода -->
-    <AppModal v-if="showPeriod" title="Новый период" @close="showPeriod = false">
+    <!-- Модал: развернуть версию как шаблон -->
+    <AppModal v-if="fromTemplateOpen" title="Создать расписание из версии" @close="fromTemplateOpen = false">
+      <div class="space-y-3 text-sm">
+        <p class="text-slate-500">
+          Будет создано новое расписание с теми же темами, периодами и занятиями, что в версии
+          <strong>«{{ fromTemplateVersion?.version_label }}»</strong>.
+        </p>
+        <div>
+          <label class="label">Название нового расписания</label>
+          <input v-model="fromTemplateForm.newTitle" class="input" placeholder="Название расписания" />
+        </div>
+        <div>
+          <label class="label">Новая дата начала первого периода (необязательно)</label>
+          <input v-model="fromTemplateForm.newStartDate" type="date" class="input" />
+          <p class="mt-1 text-xs text-slate-400">
+            Если указать — все даты занятий сдвинутся пропорционально.
+          </p>
+        </div>
+        <div v-if="error" class="rounded bg-red-50 px-3 py-2 text-red-700">{{ error }}</div>
+      </div>
+      <template #footer>
+        <button class="btn-secondary" @click="fromTemplateOpen = false">Отмена</button>
+        <button class="btn-primary" :disabled="!fromTemplateForm.newTitle" @click="applyFromTemplate">
+          Создать расписание
+        </button>
+      </template>
+    </AppModal>
+
+    <!-- Создание / редактирование периода -->
+    <AppModal
+      v-if="showPeriod"
+      :title="editingPeriodId ? 'Редактировать период' : 'Новый период'"
+      @close="showPeriod = false"
+    >
       <div class="space-y-3">
         <div>
           <label class="label">Название</label>
@@ -438,32 +581,39 @@ onMounted(async () => {
             <input v-model="periodForm.end_date" type="date" class="input" />
           </div>
         </div>
-        <div>
-          <label class="label">Группы (через запятую)</label>
-          <input v-model="periodForm.groups" class="input" placeholder="Группа А, Группа Б" />
-        </div>
-        <div>
-          <label class="label">Сетка учебных часов</label>
-          <select
-            :value="periodForm.grid_id"
-            class="input"
-            @change="selectGrid(Number($event.target.value))"
-          >
-            <option v-if="!grids.length" :value="null">Нет сеток — создайте в справочнике</option>
-            <option v-for="g in grids" :key="g.id" :value="g.id">{{ g.name }}</option>
-          </select>
-        </div>
-        <label class="flex items-center gap-2 text-sm text-slate-600">
-          <input v-model="periodForm.autofill" type="checkbox" />
-          Автоматически заполнить темами из очереди
-        </label>
-        <p class="text-xs text-slate-400">
-          В сетке слотов: {{ periodForm.time_grid.length }}.
+        <!-- Только при создании нового периода -->
+        <template v-if="!editingPeriodId">
+          <div>
+            <label class="label">Группы (через запятую)</label>
+            <input v-model="periodForm.groups" class="input" placeholder="Группа А, Группа Б" />
+          </div>
+          <div>
+            <label class="label">Сетка учебных часов</label>
+            <select
+              :value="periodForm.grid_id"
+              class="input"
+              @change="selectGrid(Number($event.target.value))"
+            >
+              <option v-if="!grids.length" :value="null">Нет сеток — создайте в справочнике</option>
+              <option v-for="g in grids" :key="g.id" :value="g.id">{{ g.name }}</option>
+            </select>
+          </div>
+          <label class="flex items-center gap-2 text-sm text-slate-600">
+            <input v-model="periodForm.autofill" type="checkbox" />
+            Автоматически заполнить темами из очереди
+          </label>
+        </template>
+        <!-- При редактировании показываем кол-во слотов для информации -->
+        <p v-if="periodForm.time_grid.length" class="text-xs text-slate-400">
+          Слотов в сетке: {{ periodForm.time_grid.length }}.
         </p>
+        <div v-if="error" class="rounded bg-red-50 px-3 py-2 text-sm text-red-700">{{ error }}</div>
       </div>
       <template #footer>
         <button class="btn-secondary" @click="showPeriod = false">Отмена</button>
-        <button class="btn-primary" @click="createPeriod">Создать</button>
+        <button class="btn-primary" @click="savePeriod">
+          {{ editingPeriodId ? 'Сохранить' : 'Создать' }}
+        </button>
       </template>
     </AppModal>
   </div>

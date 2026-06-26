@@ -199,6 +199,8 @@ export const api = {
     get: (id) => call("versions:get", id),
     fromTemplate: (data) => call("versions:fromTemplate", data),
     search: (query) => call("versions:search", query),
+    rename: (data) => call("versions:rename", data),
+    delete: (id) => call("versions:delete", id),
   },
 };
 
