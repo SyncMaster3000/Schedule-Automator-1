@@ -155,7 +155,7 @@ async function removePeriod(id) {
 
 async function approve() {
   if (queue.value.remaining > 0) {
-    if (!confirm("Остались нераспределённые темы. Всё равно утвердить?")) return;
+    if (!confirm("Остались нераспределенные темы. Все равно утвердить?")) return;
   }
   await api.programs.update({ ...program.value, status: "approved" });
   info.value = "Программа утверждена";
@@ -187,7 +187,7 @@ async function exportDocx(periodId = null) {
 
 const statusLabel = {
   pending: "В очереди",
-  partial: "Частично",
+  partial: "Нераспределенные",
   scheduled: "Распределено",
   completed: "Завершено",
 };
@@ -232,10 +232,6 @@ onMounted(async () => {
         <div class="text-xl font-semibold text-green-600">{{ queue.scheduled }}</div>
       </div>
       <div>
-        <div class="text-xs uppercase text-slate-400">Частично</div>
-        <div class="text-xl font-semibold text-amber-600">{{ queue.partial }}</div>
-      </div>
-      <div>
         <div class="text-xs uppercase text-slate-400">Осталось</div>
         <div class="text-xl font-semibold text-slate-700">{{ queue.remaining }}</div>
       </div>
@@ -269,7 +265,7 @@ onMounted(async () => {
         </div>
       </div>
       <div v-if="!topics.length" class="card flex flex-col items-center gap-4 p-12 text-center">
-        <div class="text-slate-400">Темы ещё не загружены. Импортируйте учебно-тематический план из файла Word (.docx).</div>
+        <div class="text-slate-400">Темы еще не загружены. Импортируйте учебно-тематический план из файла Word (.docx).</div>
         <button class="btn-primary" @click="runImport('replace')">Импорт УТП (.docx)</button>
       </div>
       <div v-else>
@@ -335,7 +331,7 @@ onMounted(async () => {
     <!-- Периоды -->
     <div v-if="tab === 'periods'">
       <div class="mb-4 flex justify-between">
-        <p class="text-sm text-slate-500">Блоки дат. Автозаполнение берёт темы из очереди по порядку.</p>
+        <p class="text-sm text-slate-500">Блоки дат. Автозаполнение берет темы из очереди по порядку.</p>
         <button class="btn-primary" @click="openPeriod">+ Новый период</button>
       </div>
       <div v-if="!periods.length" class="card p-10 text-center text-slate-400">Нет периодов.</div>

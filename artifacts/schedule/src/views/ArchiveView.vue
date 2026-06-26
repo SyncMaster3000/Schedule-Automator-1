@@ -22,7 +22,7 @@ const statusLabel = { draft: "Черновик", approved: "Утверждено
 const FOLDERS = [
   { key: "qualification", label: "Повышение квалификации", section: "Повышение квалификации" },
   { key: "retraining", label: "Переподготовка", section: "Переподготовка" },
-  { key: "courses", label: "Краткосрочные курсы", section: "Краткосрочные курсы" },
+  { key: "courses", label: "Обучающие курсы", section: "Обучающие курсы" },
 ];
 const activeFolder = ref(FOLDERS[0].key);
 
@@ -38,6 +38,7 @@ function folderOf(v) {
   const t = (v.program_title || "").toLowerCase();
   if (t.includes("переподготов")) return "retraining";
   if (t.includes("повышен")) return "qualification";
+  if (t.includes("краткосрочн")) return "courses";
   return "courses";
 }
 
@@ -100,7 +101,7 @@ async function createFromTemplate() {
       newStartDate: tmplForm.value.newStartDate || null,
     });
     const missing = res.missing?.length
-      ? `\nВнимание: ${res.missing.length} ссылок на удалённые ресурсы сброшены.`
+      ? `\nВнимание: ${res.missing.length} ссылок на удаленные ресурсы сброшены.`
       : "";
     alert("Расписание создано из шаблона." + missing);
     tmpl.value = null;
@@ -122,7 +123,7 @@ onMounted(search);
   <div class="mx-auto max-w-5xl px-8 py-8">
     <h1 class="mb-1 text-2xl font-bold text-slate-800">Архив расписаний</h1>
     <p class="mb-6 text-sm text-slate-500">
-      Сохранённые версии расписаний. Любое можно использовать как шаблон для нового расписания.
+      Сохраненные версии расписаний. Любое можно использовать как шаблон для нового расписания.
     </p>
 
     <div class="mb-4 flex gap-2">

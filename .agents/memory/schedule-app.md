@@ -31,6 +31,14 @@ description: Durable quirks for the ported Electron schedule app — build/verif
 - `isEmptyItem` (frontend) and export's `isBlankRow` must check the FULL blank set, not just `!topic_id && !custom_title` — an untitled lesson with a lesson_type/teacher is a real lesson and must NOT be hidden in the UI or dropped from export.
 - Shift mode (`shiftItems`) splices a `null` at the dragged item's `oldIndex` into the reordered list, re-lays all onto `gridCells`, and inserts one blank placeholder → leaves a gap + shifts the tail down. Overflow THROWS (caught in `onDragEnd`, which always reloads then re-sets `error` after, since `load()` clears `error`).
 
+## ё→е: везде в видимом UI используем «е» вместо «ё»
+- Во всём UI заменено «ё» → «е» (ТЗ требование). Комментарии в коде не затрагиваются.
+- **How to apply:** при добавлении нового UI-текста на русском всегда писать «е», не «ё».
+
+## schedule:clearChangeMark — новый канал (write, не READONLY)
+- Снимает is_modified/modified_at/change_desc с занятия. Пишущий → не добавлять в READONLY.
+- is_modified отображается как янтарная точка в строке и кнопка «Снять отметку» в редакторе.
+
 ## Assessment-import uniqueness limitation (known, accepted)
 - УТП import creates a зачёт/экзамен topic with `utp_number: ""` and `default_lesson_type` set. There is a UNIQUE index on `program_topics(program_id, utp_number)`. Regular topics never emit `""` (they fall back to `String(order)`), so a single assessment row is safe — but a document with TWO assessment rows would collide and fail the whole import.
 - **Why:** empty utp_number is deliberate (assessment shows no number in the УТП column).

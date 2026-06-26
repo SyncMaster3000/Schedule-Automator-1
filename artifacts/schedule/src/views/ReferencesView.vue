@@ -78,7 +78,7 @@ async function removeTeacher(id) {
   try {
     await api.references.removeTeacher(id);
     teachers.value = await api.references.teachers();
-    flash("Преподаватель удалён");
+    flash("Преподаватель удален");
   } catch (e) {
     error.value = e.message;
   }
@@ -216,7 +216,7 @@ onMounted(loadAll);
           :checked="!!newTeacher.is_guest"
           @change="newTeacher.is_guest = $event.target.checked ? 1 : 0"
         />
-        Приглашённый (не учитывать в проверке накладок)
+        Приглашенный (не учитывать в проверке накладок)
       </label>
       <table class="w-full">
         <thead>
@@ -235,7 +235,7 @@ onMounted(loadAll);
               <span
                 v-if="t.is_guest"
                 class="badge bg-amber-50 text-amber-700"
-              >Приглашённый</span>
+              >Приглашенный</span>
               <span v-else class="text-slate-400">штатный</span>
             </td>
             <td class="table-cell text-right">
@@ -339,7 +339,7 @@ onMounted(loadAll);
             :checked="!!editTeacher.is_guest"
             @change="editTeacher.is_guest = $event.target.checked ? 1 : 0"
           />
-          Приглашённый (не учитывать в проверке накладок)
+          Приглашенный (не учитывать в проверке накладок)
         </label>
       </div>
       <template #footer>
@@ -379,7 +379,7 @@ onMounted(loadAll);
       <div class="space-y-3">
         <div>
           <label class="label">Название сетки *</label>
-          <input v-model="editGrid.name" class="input" placeholder="Напр.: Сокращённый день" />
+          <input v-model="editGrid.name" class="input" placeholder="Напр.: Сокращенный день" />
         </div>
         <p class="text-sm text-slate-500">
           Отметьте перерывы — они не заполняются занятиями автоматически.

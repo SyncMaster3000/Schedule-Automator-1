@@ -53,7 +53,7 @@ const approveSection = ref("Повышение квалификации");
 const ARCHIVE_SECTIONS = [
   "Повышение квалификации",
   "Переподготовка",
-  "Краткосрочные курсы",
+  "Обучающие курсы",
 ];
 
 // Сетки учебных часов (для выбора другой сетки на отдельный день)
@@ -392,7 +392,7 @@ async function restoreToQueue(it) {
   error.value = "";
   try {
     await api.schedule.restoreToQueue({ itemId: it.id, author: author.value || null });
-    info.value = "Занятие возвращено в очередь нераспределённых";
+    info.value = "Занятие возвращено в очередь нераспределенных";
     if (editing.value && editing.value.id === it.id) editing.value = null;
     await load();
   } catch (e) {
@@ -425,6 +425,74 @@ function openEditor(it) {
   teacherFilter.value = "";
   editing.value = JSON.parse(JSON.stringify(it));
   editConflicts.value = it.conflicts || [];
+}
+
+// Снять метку изменения с занятия
+async function clearChangeMark(it) {
+  error.value = "";
+  try {
+    await api.schedule.clearChangeMark(it.id);
+    info.value = "Отметка об изменении снята";
+    if (editing.value && editing.value.id === it.id) {
+      editing.value = { ...editing.value, is_modified: 0, modified_at: null, change_desc: null };
+    }
+    await load();
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
+// Быстро заполнить свободный слот самоподготовкой
+async function addSelfStudySlot(it) {
+  error.value = "";
+  try {
+    await api.schedule.saveItem({
+      ...it,
+      teacher_ids: JSON.parse(it.teacher_ids || "[]"),
+      group_ids: JSON.parse(it.group_ids || "[]"),
+      topic_id: null,
+      lesson_type: "self_study",
+      custom_title: "Самостоятельная подготовка",
+    });
+    await load();
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
+// Открыть редактор с преднастройкой для организационного мероприятия
+function addOrgEvent(it) {
+  teacherFilter.value = "";
+  editing.value = {
+    ...JSON.parse(JSON.stringify(it)),
+    topic_id: null,
+    custom_title: "Организационное мероприятие",
+    lesson_type: "",
+    teacher_ids: [],
+    room_id: null,
+    group_ids: [],
+    group_label: "",
+    note: "",
+  };
+  editConflicts.value = [];
+}
+
+// Автозаполнение вида занятия из УТП при смене темы в редакторе (T9)
+function onTopicChange() {
+  if (!editing.value) return;
+  const t = topics.value.find((tp) => tp.id === editing.value.topic_id);
+  if (t && t.default_lesson_type) {
+    editing.value.lesson_type = t.default_lesson_type;
+  }
+  recheck();
+}
+
+// Форматирование даты изменения для тултипа
+function changeTitle(it) {
+  if (!it.is_modified) return conflictTitle(it);
+  const when = it.modified_at ? new Date(it.modified_at).toLocaleString("ru") : "";
+  const parts = [it.change_desc, when].filter(Boolean).join(" — ");
+  return [parts, conflictTitle(it)].filter(Boolean).join("\n");
 }
 
 function newItem() {
@@ -626,7 +694,7 @@ async function shiftItems(evt) {
       crossPeriod: crossPeriod.value,
     });
   }
-  info.value = "Ряд смещён вниз; оставлено свободное окошко";
+  info.value = "Ряд смещен вниз; оставлено свободное окошко";
 }
 
 // Применить выбранную сетку учебных часов к одному дню: занятия этого дня
@@ -677,7 +745,7 @@ async function applyOrder() {
         crossPeriod: crossPeriod.value,
       });
     }
-    info.value = "Порядок применён к сетке дат";
+    info.value = "Порядок применен к сетке дат";
     await load();
   } catch (e) {
     error.value = e.message;
@@ -847,7 +915,7 @@ onMounted(load);
           <div class="min-w-0 flex-1">
             <div class="truncate font-medium italic text-slate-400">Свободное окошко</div>
             <div class="truncate text-xs text-slate-400">
-              Впишите занятие или подставьте нераспределённую тему
+              Впишите занятие или подставьте нераспределенную тему
             </div>
           </div>
           <select
@@ -856,12 +924,14 @@ onMounted(load);
             @change="assignTopic(it, Number($event.target.value)); $event.target.value = ''"
           >
             <option value="">
-              {{ unallocatedTopics.length ? "Из нераспределённых…" : "Нет нераспределённых" }}
+              {{ unallocatedTopics.length ? "Из нераспределенных…" : "Нет нераспределенных" }}
             </option>
             <option v-for="t in unallocatedTopics" :key="t.id" :value="t.id">
               {{ t.utp_number }}. {{ t.title }}
             </option>
           </select>
+          <button class="btn-secondary" @click="addOrgEvent(it)" title="Добавить организационное мероприятие">Орг. мероприятие</button>
+          <button class="btn-secondary" @click="addSelfStudySlot(it)" title="Заполнить самоподготовкой">Самоподготовка</button>
           <button class="btn-secondary" @click="openEditor(it)">Вписать занятие</button>
           <button class="btn-ghost text-slate-400" @click="deleteEmpty(it)">Удалить</button>
         </div>
@@ -873,7 +943,7 @@ onMounted(load);
             'conflict-row border-red-200': it.conflicts && it.conflicts.length,
             'ring-2 ring-blue-300': isSelected(it.id),
           }"
-          :title="conflictTitle(it)"
+          :title="changeTitle(it)"
         >
           <input
             type="checkbox"
@@ -887,6 +957,11 @@ onMounted(load);
           </div>
           <div class="min-w-0 flex-1">
             <div class="truncate font-medium" :class="isSelfStudy(it) ? 'italic text-slate-500' : 'text-slate-800'">
+              <span
+                v-if="it.is_modified"
+                class="mr-1 inline-block h-2 w-2 rounded-full bg-amber-400"
+                title="Занятие изменено после создания"
+              ></span>
               {{ itemTitle(it) }}
               <span
                 v-if="it.group_label"
@@ -918,7 +993,7 @@ onMounted(load);
       <div class="grid grid-cols-2 gap-4">
         <div>
           <label class="label">Тема</label>
-          <select v-model.number="editing.topic_id" class="input" @change="recheck">
+          <select v-model.number="editing.topic_id" class="input" @change="onTopicChange">
             <option :value="null">— Произвольное занятие —</option>
             <option v-for="t in topics" :key="t.id" :value="t.id">
               {{ t.utp_number }}. {{ t.title }}
@@ -926,7 +1001,7 @@ onMounted(load);
           </select>
         </div>
         <div>
-          <label class="label">Своё название (если без темы)</label>
+          <label class="label">Свое название (если без темы)</label>
           <input v-model="editing.custom_title" class="input" />
         </div>
         <div>
@@ -1034,10 +1109,18 @@ onMounted(load);
         <button
           v-if="editing.id && editing.topic_id"
           class="btn-ghost text-slate-500"
-          title="Очистить занятие и вернуть тему в список нераспределённых"
+          title="Очистить занятие и вернуть тему в список нераспределенных"
           @click="restoreToQueue(editing)"
         >
           Вернуть в очередь
+        </button>
+        <button
+          v-if="editing.id && editing.is_modified"
+          class="btn-ghost text-amber-600"
+          title="Снять отметку об изменении"
+          @click="clearChangeMark(editing)"
+        >
+          Снять отметку
         </button>
         <button class="btn-secondary" @click="editing = null">Отмена</button>
         <button class="btn-primary" @click="saveItem">Сохранить</button>

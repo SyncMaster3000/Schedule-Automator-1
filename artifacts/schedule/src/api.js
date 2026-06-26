@@ -169,6 +169,7 @@ export const api = {
     assignTopic: (data) => call("schedule:assignTopic", data),
     restoreToQueue: (data) => call("schedule:restoreToQueue", data),
     bulkUpdate: (data) => call("schedule:bulkUpdate", data),
+    clearChangeMark: (id) => call("schedule:clearChangeMark", id),
   },
   conflicts: {
     check: (data) => call("conflicts:check", data),

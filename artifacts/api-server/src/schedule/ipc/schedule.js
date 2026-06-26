@@ -58,11 +58,25 @@ export default {
 
     let itemId = data.id;
     if (itemId) {
+      const prev = db.prepare("SELECT * FROM schedule_items WHERE id = ?").get(itemId);
+      const changedFields = [];
+      if (prev && prev.topic_id !== (data.topic_id || null)) changedFields.push("тема");
+      if (prev && prev.lesson_type !== (data.lesson_type || null)) changedFields.push("вид занятия");
+      if (prev && prev.teacher_ids !== teacherIds) changedFields.push("преподаватели");
+      if (prev && prev.room_id !== (data.room_id || null)) changedFields.push("аудитория");
+      if (prev && prev.group_label !== (data.group_label || null)) changedFields.push("группа");
+      if (prev && prev.note !== (data.note || null)) changedFields.push("заметка");
+      if (prev && (prev.date !== data.date || prev.start_time !== data.start_time)) changedFields.push("дата/время");
+      const changeDesc = changedFields.length ? "Изменено: " + changedFields.join(", ") : null;
+      const modifiedAt = new Date().toISOString();
       db.prepare(
         `UPDATE schedule_items SET
           topic_id = ?, date = ?, start_time = ?, end_time = ?, start_dt = ?, end_dt = ?,
           lesson_type = ?, custom_title = ?, teacher_ids = ?, room_id = ?, group_ids = ?,
-          group_label = ?, note = ?
+          group_label = ?, note = ?,
+          is_modified = CASE WHEN ? > 0 THEN 1 ELSE is_modified END,
+          modified_at = CASE WHEN ? > 0 THEN ? ELSE modified_at END,
+          change_desc = CASE WHEN ? > 0 THEN ? ELSE change_desc END
          WHERE id = ?`
       ).run(
         data.topic_id || null,
@@ -78,6 +92,11 @@ export default {
         groupIds,
         data.group_label || null,
         data.note || null,
+        changedFields.length,
+        changedFields.length,
+        modifiedAt,
+        changedFields.length,
+        changeDesc,
         itemId
       );
     } else {
@@ -209,7 +228,7 @@ export default {
        WHERE id = ?`
     ).run(
       data.topic_id,
-      data.lesson_type || topic.default_lesson_type || "lecture",
+      data.lesson_type || topic.default_lesson_type || "Лекция",
       data.itemId
     );
     const saved = db.prepare("SELECT * FROM schedule_items WHERE id = ?").get(data.itemId);
@@ -237,6 +256,7 @@ export default {
       : null;
     db.prepare(
       `UPDATE schedule_items SET topic_id = NULL, teacher_ids = '[]', room_id = NULL,
+        group_ids = '[]', group_label = NULL, note = NULL,
         lesson_type = ?, custom_title = ? WHERE id = ?`
     ).run(
       selfStudy ? "self_study" : "empty",
@@ -292,6 +312,16 @@ export default {
       );
     }
     return { updated: ids.length };
+  },
+
+  // Снять метку изменения с занятия (пользователь просмотрел изменение).
+  "schedule:clearChangeMark": (id) => {
+    getDb()
+      .prepare(
+        "UPDATE schedule_items SET is_modified = 0, modified_at = NULL, change_desc = NULL WHERE id = ?"
+      )
+      .run(id);
+    return { id };
   },
 
   // История изменений программы (журнал аудита) — для просмотра в конструкторе.
