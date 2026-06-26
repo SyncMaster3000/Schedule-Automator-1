@@ -1,62 +1,23 @@
-// Генерация расписания в .docx по образцу (шапка УТВЕРЖДАЮ, таблица, подписи).
-// Используется библиотека docx для полного контроля над вёрсткой.
-import {
-  Document,
-  Packer,
-  Paragraph,
-  TextRun,
-  Table,
-  TableRow,
-  TableCell,
-  WidthType,
-  AlignmentType,
-  VerticalAlign,
-  VerticalMergeType,
-  BorderStyle,
-  PageOrientation,
-  TextDirection,
-} from "docx";
+// Экспорт расписания в .docx на основе шаблонов Word.
+// Открывает нужный шаблон через PizZip, заменяет текстовые метки,
+// заполняет таблицу данными расписания, сохраняет всё оформление.
+import PizZip from "pizzip";
+import fs from "node:fs";
+import path from "node:path";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale";
 
-const FONT = "Times New Roman";
-const BODY_SIZE = 24; // 12pt (half-points)
+const TEMPLATES_DIR = path.join(process.cwd(), "templates");
 
-const CELL_BORDERS = {
-  top: { style: BorderStyle.SINGLE, size: 4, color: "000000" },
-  bottom: { style: BorderStyle.SINGLE, size: 4, color: "000000" },
-  left: { style: BorderStyle.SINGLE, size: 4, color: "000000" },
-  right: { style: BorderStyle.SINGLE, size: 4, color: "000000" },
-};
+// ── Утилиты ───────────────────────────────────────────────────────────────────
 
-function pLines(lines, { align = AlignmentType.LEFT, bold = false, size = BODY_SIZE } = {}) {
-  const arr = Array.isArray(lines) ? lines : [lines];
-  return arr.map(
-    (text) =>
-      new Paragraph({
-        alignment: align,
-        children: [new TextRun({ text: text || "", bold, size, font: FONT })],
-      })
-  );
-}
-
-// Ячейка с одним или несколькими абзацами (например, преподаватели по строкам)
-function cell(
-  content,
-  { bold = false, align = AlignmentType.LEFT, width, verticalMerge, textDirection } = {}
-) {
-  const lines = Array.isArray(content) ? content : [content];
-  return new TableCell({
-    verticalAlign: VerticalAlign.CENTER,
-    width: width ? { size: width, type: WidthType.PERCENTAGE } : undefined,
-    borders: CELL_BORDERS,
-    verticalMerge,
-    textDirection,
-    children:
-      verticalMerge === VerticalMergeType.CONTINUE
-        ? [new Paragraph({ children: [] })]
-        : pLines(lines.length ? lines : [""], { align, bold }),
-  });
+function esc(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
 }
 
 function weekdayRu(dateStr) {
@@ -71,39 +32,10 @@ function fmtDate(dateStr) {
   try {
     return format(parseISO(dateStr), "dd.MM.yyyy");
   } catch {
-    return dateStr;
+    return dateStr || "";
   }
 }
 
-function buildHeader(program, dateRange, groupName) {
-  const approverLines = (program.approver_title || "Начальник Института")
-    .split("\n")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const approverName = program.approver_name || "";
-  const out = [
-    ...pLines("УТВЕРЖДАЮ", { align: AlignmentType.RIGHT, bold: true }),
-    ...approverLines.flatMap((l) => pLines(l, { align: AlignmentType.RIGHT })),
-  ];
-  if (approverName) out.push(...pLines(approverName, { align: AlignmentType.RIGHT }));
-  out.push(...pLines("__.__.20__", { align: AlignmentType.RIGHT }));
-  out.push(...pLines("", {}));
-  out.push(...pLines("РАСПИСАНИЕ", { align: AlignmentType.CENTER, bold: true, size: 28 }));
-  // Полное наименование программы для шапки берём из описания (официальное
-  // название), а короткий program.title оставляем как запасной вариант.
-  const fullName = (program.description || "").trim() || program.title;
-  const subtitle =
-    `учебных занятий по образовательной программе повышения квалификации ` +
-    `«${fullName}»` +
-    (dateRange ? ` (${dateRange})` : "") +
-    (groupName ? `, учебная группа № ${groupName}` : "");
-  out.push(...pLines(subtitle, { align: AlignmentType.CENTER }));
-  out.push(...pLines("", {}));
-  return out;
-}
-
-// Заголовок темы: «Тема X.Y Название» (номер показываем и для разделов с
-// римской цифрой); произвольное занятие — его название.
 function topicLabel(it) {
   if (it.custom_title) return it.custom_title;
   const title = it.topic_title || "";
@@ -117,82 +49,204 @@ function teacherLines(it, ctx) {
     .filter(Boolean);
 }
 
-function buildTable(items, ctx, groupColumn) {
-  const headerCells = [
-    cell("Дата", { bold: true, align: AlignmentType.CENTER }),
-    cell("День", { bold: true, align: AlignmentType.CENTER }),
-    cell("Время*", { bold: true, align: AlignmentType.CENTER }),
-    cell("Учебная дисциплина, номер темы", { bold: true, align: AlignmentType.CENTER }),
-    cell("Вид занятий", { bold: true, align: AlignmentType.CENTER }),
-    cell("Преподаватель", { bold: true, align: AlignmentType.CENTER }),
-    cell("Место проведения", { bold: true, align: AlignmentType.CENTER }),
-  ];
-  if (groupColumn) {
-    headerCells.push(cell("Группа", { bold: true, align: AlignmentType.CENTER }));
+// ── XML: поиск таблиц (учитывает вложенность) ────────────────────────────────
+
+function findTables(xml) {
+  const tables = [];
+  let depth = 0, start = -1, pos = 0;
+  while (pos < xml.length) {
+    const o = xml.indexOf("<w:tbl>", pos);
+    const c = xml.indexOf("</w:tbl>", pos);
+    if (o === -1 && c === -1) break;
+    const useOpen = o !== -1 && (c === -1 || o < c);
+    if (useOpen) {
+      if (depth === 0) start = o;
+      depth++;
+      pos = o + 7;
+    } else {
+      depth--;
+      if (depth === 0 && start !== -1) {
+        tables.push({ start, end: c + 8, xml: xml.slice(start, c + 8) });
+        start = -1;
+      }
+      pos = c + 8;
+    }
+  }
+  return tables;
+}
+
+// Извлекает все <w:tr ...>...</w:tr> из XML таблицы (верхний уровень).
+function extractRows(tblXml) {
+  const rows = [];
+  let pos = 0;
+  while ((pos = tblXml.indexOf("<w:tr ", pos)) !== -1) {
+    const end = tblXml.indexOf("</w:tr>", pos);
+    if (end === -1) break;
+    rows.push(tblXml.slice(pos, end + 7));
+    pos = end + 7;
+  }
+  return rows;
+}
+
+// Извлекает все <w:tc>...</w:tc> из строки таблицы.
+function extractCells(trXml) {
+  const cells = [];
+  let pos = 0;
+  while ((pos = trXml.indexOf("<w:tc>", pos)) !== -1) {
+    const end = trXml.indexOf("</w:tc>", pos);
+    if (end === -1) break;
+    cells.push(trXml.slice(pos, end + 7));
+    pos = end + 7;
+  }
+  return cells;
+}
+
+// Текстовое содержимое строки (для определения заголовочных строк).
+function rowText(trXml) {
+  return [...trXml.matchAll(/<w:t[^>]*>([^<]*)<\/w:t>/g)]
+    .map((m) => m[1])
+    .join(" ");
+}
+
+// ── XML: извлечение и построение ячеек ───────────────────────────────────────
+
+// Извлекает стилевые фрагменты из ячейки-образца.
+function getCellStyle(tcXml) {
+  // tcPr: ширина столбца, рамки, направление текста — всё оформление ячейки.
+  // Удаляем существующий vMerge, чтобы подставить свой.
+  let tcPr = tcXml.match(/<w:tcPr>[\s\S]*?<\/w:tcPr>/)?.[0] || "";
+  tcPr = tcPr
+    .replace(/<w:vMerge[^/]*\/>/g, "")
+    .replace(/<w:vMerge\b[^>]*>[\s\S]*?<\/w:vMerge>/g, "");
+  const pPr = tcXml.match(/<w:pPr>[\s\S]*?<\/w:pPr>/)?.[0] || "";
+  const rPr = tcXml.match(/<w:rPr>[\s\S]*?<\/w:rPr>/)?.[0] || "";
+  return { tcPr, pPr, rPr };
+}
+
+// Собирает XML одной ячейки.
+// vMerge: null | "restart" | "continue"
+function buildCell(style, content, vMerge = null) {
+  let tcPr = style.tcPr;
+  if (vMerge === "restart") {
+    tcPr = tcPr
+      ? tcPr.replace("</w:tcPr>", '<w:vMerge w:val="restart"/></w:tcPr>')
+      : '<w:tcPr><w:vMerge w:val="restart"/></w:tcPr>';
+  } else if (vMerge === "continue") {
+    tcPr = tcPr
+      ? tcPr.replace("</w:tcPr>", "<w:vMerge/></w:tcPr>")
+      : "<w:tcPr><w:vMerge/></w:tcPr>";
   }
 
-  const rows = [new TableRow({ tableHeader: true, children: headerCells })];
+  let paragraphs;
+  if (vMerge === "continue") {
+    // Ячейки продолжения merge обязаны иметь пустой параграф.
+    paragraphs = `<w:p>${style.pPr}</w:p>`;
+  } else {
+    const lines = Array.isArray(content) ? content : [content ?? ""];
+    if (!lines.length || (lines.length === 1 && !lines[0])) {
+      paragraphs = `<w:p>${style.pPr}</w:p>`;
+    } else {
+      paragraphs = lines
+        .map(
+          (line) =>
+            `<w:p>${style.pPr}<w:r>${style.rPr}<w:t xml:space="preserve">${esc(line)}</w:t></w:r></w:p>`
+        )
+        .join("");
+    }
+  }
+  return `<w:tc>${tcPr}${paragraphs}</w:tc>`;
+}
 
+// ── Заполнение таблицы данными ─────────────────────────────────────────────
+
+function buildDataRows(templateRow, items, ctx, hasGroups) {
+  const cells = extractCells(templateRow);
+  const styles = cells.map(getCellStyle);
+  const numCols = hasGroups ? 8 : 7;
+  while (styles.length < numCols) styles.push(styles[styles.length - 1] || {});
+
+  const trPr = templateRow.match(/<w:trPr>[\s\S]*?<\/w:trPr>/)?.[0] || "";
+  const rows = [];
   let lastDate = null;
+
   for (const it of items) {
-    const firstOfDay = it.date !== lastDate;
+    const isFirst = it.date !== lastDate;
     lastDate = it.date;
-    const merge = firstOfDay ? VerticalMergeType.RESTART : VerticalMergeType.CONTINUE;
+    const vm = isFirst ? "restart" : "continue";
 
     const teachers = teacherLines(it, ctx);
     const room = it.room_id ? ctx.roomsById[it.room_id]?.number || "" : "";
+    const time = `${it.start_time}-${it.end_time}`;
+    const topic = topicLabel(it);
+    const lessonType = it.lesson_type || "";
 
-    const cells = [
-      cell(firstOfDay ? fmtDate(it.date) : "", {
-        align: AlignmentType.CENTER,
-        verticalMerge: merge,
-        textDirection: TextDirection.BOTTOM_TO_TOP_LEFT_TO_RIGHT,
-      }),
-      cell(firstOfDay ? weekdayRu(it.date) : "", {
-        align: AlignmentType.CENTER,
-        verticalMerge: merge,
-        textDirection: TextDirection.BOTTOM_TO_TOP_LEFT_TO_RIGHT,
-      }),
-      cell(`${it.start_time}-${it.end_time}`, { align: AlignmentType.CENTER }),
-      cell(topicLabel(it)),
-      cell(it.lesson_type || "", { align: AlignmentType.CENTER }),
-      cell(teachers.length ? teachers : [""]),
-      cell(room, { align: AlignmentType.CENTER }),
-    ];
-    if (groupColumn) {
+    let colCells;
+    if (hasGroups) {
       const gids = JSON.parse(it.group_ids || "[]");
-      let gtext = "Все группы";
-      if (gids.length === 1) gtext = ctx.groupsById[gids[0]]?.name || "";
+      let groupText = "";
+      if (gids.length === 1) groupText = ctx.groupsById[gids[0]]?.name || "";
       else if (gids.length > 1)
-        gtext = gids.map((g) => ctx.groupsById[g]?.name).filter(Boolean).join(", ");
-      cells.push(cell(gtext, { align: AlignmentType.CENTER }));
+        groupText = gids.map((g) => ctx.groupsById[g]?.name).filter(Boolean).join(", ");
+      colCells = [
+        buildCell(styles[0], isFirst ? fmtDate(it.date) : "", vm),
+        buildCell(styles[1], isFirst ? weekdayRu(it.date) : "", vm),
+        buildCell(styles[2], time),
+        buildCell(styles[3], groupText),
+        buildCell(styles[4], topic),
+        buildCell(styles[5], lessonType),
+        buildCell(styles[6], teachers.length ? teachers : [""]),
+        buildCell(styles[7], room),
+      ];
+    } else {
+      colCells = [
+        buildCell(styles[0], isFirst ? fmtDate(it.date) : "", vm),
+        buildCell(styles[1], isFirst ? weekdayRu(it.date) : "", vm),
+        buildCell(styles[2], time),
+        buildCell(styles[3], topic),
+        buildCell(styles[4], lessonType),
+        buildCell(styles[5], teachers.length ? teachers : [""]),
+        buildCell(styles[6], room),
+      ];
     }
-    rows.push(new TableRow({ children: cells }));
+    rows.push(`<w:tr w:rsidR="00000000">${trPr}${colCells.join("")}</w:tr>`);
   }
-
-  return new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows,
-  });
+  return rows;
 }
 
-function buildFooter(program) {
-  const signerLines = (program.signer_title || "Начальник учебного отдела")
-    .split("\n")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const signerName = program.signer_name || "";
-  const out = [...pLines("", {}), ...pLines("", {})];
-  for (const l of signerLines) out.push(...pLines(l, {}));
-  if (signerName) out.push(...pLines(signerName, {}));
-  return out;
+// Заменяет содержимое таблицы расписания новыми строками,
+// сохраняя tblPr, tblGrid и строку заголовка.
+function fillScheduleTable(xml, items, ctx, hasGroups) {
+  const tables = findTables(xml);
+  if (!tables.length) return xml;
+
+  // Таблица расписания — первая, содержащая «Дата» в заголовке.
+  const schedTbl =
+    tables.find((t) => rowText(t.xml).includes("Дата")) || tables[0];
+
+  const rows = extractRows(schedTbl.xml);
+  if (!rows.length) return xml;
+
+  // Строка 0 — заголовок; образцовая строка — первая строка данных с нужным кол-вом ячеек.
+  const headerRow = rows[0];
+  const numCols = hasGroups ? 8 : 7;
+  const templateRow =
+    rows.slice(1).find((r) => extractCells(r).length === numCols) || rows[1];
+
+  const tblPr = schedTbl.xml.match(/<w:tblPr>[\s\S]*?<\/w:tblPr>/)?.[0] || "";
+  const tblGrid =
+    schedTbl.xml.match(/<w:tblGrid>[\s\S]*?<\/w:tblGrid>/)?.[0] || "";
+  const newDataRows = buildDataRows(templateRow, items, ctx, hasGroups);
+  const newTbl = `<w:tbl>${tblPr}${tblGrid}${headerRow}${newDataRows.join("")}</w:tbl>`;
+
+  return xml.slice(0, schedTbl.start) + newTbl + xml.slice(schedTbl.end);
 }
 
-// Главная функция экспорта. Возвращает Buffer .docx
+// ── Главная функция экспорта ──────────────────────────────────────────────────
+
 async function exportSchedule(data) {
   const { program, periods, groupColumn } = data;
-  // Пустые «окошки» — полностью незаполненные слоты — в документ не выводим.
-  // Занятие без названия, но с видом/преподавателем/аудиторией/группой — выводим.
+
+  // Пустые слоты (без названия/типа/преподавателя/аудитории/группы) не выводим.
   const isBlankRow = (it) =>
     !it.topic_id &&
     !it.custom_title &&
@@ -201,6 +255,7 @@ async function exportSchedule(data) {
     JSON.parse(it.teacher_ids || "[]").length === 0 &&
     JSON.parse(it.group_ids || "[]").length === 0 &&
     !it.note;
+
   const items = (data.items || []).filter((it) => !isBlankRow(it));
   const ctx = {
     teachersById: data.teachersById || {},
@@ -208,42 +263,51 @@ async function exportSchedule(data) {
     groupsById: data.groupsById || {},
   };
 
-  let dateRange = "";
+  // Даты начала / конца из элементов расписания или из периодов.
+  let dateBegin = "", dateEnd = "";
   if (items.length) {
     const dates = items.map((i) => i.date).sort();
-    dateRange = `${fmtDate(dates[0])}-${fmtDate(dates[dates.length - 1])}`;
-  } else if (periods && periods.length) {
-    dateRange = `${fmtDate(periods[0].start_date)}-${fmtDate(
-      periods[periods.length - 1].end_date
-    )}`;
+    dateBegin = fmtDate(dates[0]);
+    dateEnd = fmtDate(dates[dates.length - 1]);
+  } else if (periods?.length) {
+    dateBegin = fmtDate(periods[0].start_date);
+    dateEnd = fmtDate(periods[periods.length - 1].end_date);
   }
 
-  const children = [
-    ...buildHeader(program, dateRange, data.groupName),
-    buildTable(items, ctx, groupColumn),
-    ...buildFooter(program),
-  ];
+  // Выбираем шаблон.
+  const templateFile = groupColumn
+    ? "template-groups.docx"
+    : "template-no-groups.docx";
+  const templateBuf = fs.readFileSync(path.join(TEMPLATES_DIR, templateFile));
 
-  const doc = new Document({
-    styles: {
-      default: {
-        document: { run: { font: FONT, size: BODY_SIZE } },
-      },
-    },
-    sections: [
-      {
-        properties: {
-          page: {
-            size: { orientation: PageOrientation.LANDSCAPE },
-            margin: { top: 720, bottom: 720, left: 1000, right: 720 },
-          },
-        },
-        children,
-      },
-    ],
+  const zip = new PizZip(templateBuf);
+  let xml = zip.file("word/document.xml").asText();
+
+  // Заменяем 9 текстовых меток.
+  const markers = {
+    ApproverPosition: program.approver_title || "",
+    ApproverName: program.approver_name || "",
+    ApproveDate: program.approve_date || "",
+    ScheduleTitle: program.description || program.title || "",
+    DateBegin: dateBegin,
+    DateEnd: dateEnd,
+    SignerPosition: program.signer_title || "",
+    SignerName: program.signer_name || "",
+    SignDate: program.sign_date || "",
+  };
+  for (const [key, value] of Object.entries(markers)) {
+    xml = xml.replaceAll(key, esc(value));
+  }
+
+  // Заполняем таблицу расписания.
+  xml = fillScheduleTable(xml, items, ctx, groupColumn);
+
+  zip.file("word/document.xml", xml);
+  return zip.generate({
+    type: "nodebuffer",
+    mimeType:
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   });
-
-  return await Packer.toBuffer(doc);
 }
 
 export { exportSchedule };

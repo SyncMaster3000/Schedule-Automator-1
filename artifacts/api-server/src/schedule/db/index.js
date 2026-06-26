@@ -350,6 +350,9 @@ function runMigrations() {
   addColumnIfMissing("schedule_items", "is_modified", "is_modified INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing("schedule_items", "modified_at", "modified_at TEXT");
   addColumnIfMissing("schedule_items", "change_desc", "change_desc TEXT");
+  // Даты для печатной формы расписания.
+  addColumnIfMissing("programs", "approve_date", "approve_date TEXT");
+  addColumnIfMissing("programs", "sign_date", "sign_date TEXT");
 }
 
 // Однократная асинхронная инициализация (sql.js грузится асинхронно).

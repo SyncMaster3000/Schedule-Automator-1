@@ -36,16 +36,19 @@ export default {
     const info = db
       .prepare(
         `INSERT INTO programs
-          (title, description, approver_name, approver_title, signer_name, signer_title, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?)`
+          (title, description, approver_name, approver_title, approve_date,
+           signer_name, signer_title, sign_date, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)`
       )
       .run(
         data.title,
         data.description || null,
         data.approver_name || null,
         data.approver_title || null,
+        data.approve_date || null,
         data.signer_name || null,
         data.signer_title || null,
+        data.sign_date || null,
         ts,
         ts
       );
@@ -57,16 +60,18 @@ export default {
     const db = getDb();
     db.prepare(
       `UPDATE programs SET
-        title = ?, description = ?, approver_name = ?, approver_title = ?,
-        signer_name = ?, signer_title = ?, status = ?, updated_at = ?
+        title = ?, description = ?, approver_name = ?, approver_title = ?, approve_date = ?,
+        signer_name = ?, signer_title = ?, sign_date = ?, status = ?, updated_at = ?
        WHERE id = ?`
     ).run(
       data.title,
       data.description || null,
       data.approver_name || null,
       data.approver_title || null,
+      data.approve_date || null,
       data.signer_name || null,
       data.signer_title || null,
+      data.sign_date || null,
       data.status || "draft",
       now(),
       data.id

@@ -19,8 +19,10 @@ function blankForm() {
     description: "",
     approver_name: "",
     approver_title: "",
+    approve_date: "",
     signer_name: "",
     signer_title: "",
+    sign_date: "",
   };
 }
 
@@ -58,8 +60,10 @@ function openEdit(p) {
     description: p.description || "",
     approver_name: p.approver_name || "",
     approver_title: p.approver_title || "",
+    approve_date: p.approve_date || "",
     signer_name: p.signer_name || "",
     signer_title: p.signer_title || "",
+    sign_date: p.sign_date || "",
   };
   error.value = "";
   showCreate.value = true;
@@ -183,6 +187,10 @@ onMounted(load);
             <label class="label">Должность утверждающего</label>
             <input v-model="form.approver_title" class="input" />
           </div>
+          <div class="col-span-2">
+            <label class="label">Дата утверждения</label>
+            <input v-model="form.approve_date" class="input" placeholder="напр. 01.01.2025" />
+          </div>
           <div>
             <label class="label">Подписант (ФИО)</label>
             <input v-model="form.signer_name" class="input" />
@@ -190,6 +198,10 @@ onMounted(load);
           <div>
             <label class="label">Должность подписанта</label>
             <input v-model="form.signer_title" class="input" />
+          </div>
+          <div class="col-span-2">
+            <label class="label">Дата подписания</label>
+            <input v-model="form.sign_date" class="input" placeholder="напр. 01.01.2025" />
           </div>
         </div>
       </div>
