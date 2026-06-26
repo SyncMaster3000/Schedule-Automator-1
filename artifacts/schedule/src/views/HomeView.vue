@@ -10,6 +10,7 @@ const programs = ref([]);
 const loading = ref(true);
 const error = ref("");
 const showCreate = ref(false);
+const editingId = ref(null); // null = новое, число = редактирование
 const form = ref(blankForm());
 
 function blankForm() {
@@ -38,6 +39,7 @@ async function load() {
 // Открыть форму создания, подставив утверждающего/подписанта из последнего
 // расписания (programs.list отсортирован по updated_at DESC). Поля редактируемы.
 function openCreate() {
+  editingId.value = null;
   const prev = programs.value[0];
   form.value = blankForm();
   if (prev) {
@@ -49,16 +51,37 @@ function openCreate() {
   showCreate.value = true;
 }
 
-async function create() {
+function openEdit(p) {
+  editingId.value = p.id;
+  form.value = {
+    title: p.title || "",
+    description: p.description || "",
+    approver_name: p.approver_name || "",
+    approver_title: p.approver_title || "",
+    signer_name: p.signer_name || "",
+    signer_title: p.signer_title || "",
+  };
+  error.value = "";
+  showCreate.value = true;
+}
+
+async function save() {
   if (!form.value.title.trim()) {
-    error.value = "Укажите название программы";
+    error.value = "Укажите название";
     return;
   }
+  error.value = "";
   try {
-    const res = await api.programs.create(form.value);
-    showCreate.value = false;
-    form.value = blankForm();
-    router.push(`/programs/${res.id}`);
+    if (editingId.value) {
+      await api.programs.update({ id: editingId.value, ...form.value });
+      showCreate.value = false;
+      await load();
+    } else {
+      const res = await api.programs.create(form.value);
+      showCreate.value = false;
+      form.value = blankForm();
+      router.push(`/programs/${res.id}`);
+    }
   } catch (e) {
     error.value = e.message;
   }
@@ -131,12 +154,17 @@ onMounted(load);
           <button class="btn-primary flex-1" @click="router.push(`/programs/${p.id}`)">
             Открыть
           </button>
+          <button class="btn-secondary" title="Редактировать название и реквизиты" @click="openEdit(p)">✏️</button>
           <button class="btn-ghost text-red-500" @click="remove(p.id)">Удалить</button>
         </div>
       </div>
     </div>
 
-    <AppModal v-if="showCreate" title="Новое расписание" @close="showCreate = false">
+    <AppModal
+      v-if="showCreate"
+      :title="editingId ? 'Редактировать расписание' : 'Новое расписание'"
+      @close="showCreate = false"
+    >
       <div class="space-y-3">
         <div>
           <label class="label">Название программы *</label>
@@ -167,7 +195,7 @@ onMounted(load);
       </div>
       <template #footer>
         <button class="btn-secondary" @click="showCreate = false">Отмена</button>
-        <button class="btn-primary" @click="create">Создать</button>
+        <button class="btn-primary" @click="save">{{ editingId ? 'Сохранить' : 'Создать' }}</button>
       </template>
     </AppModal>
   </div>
