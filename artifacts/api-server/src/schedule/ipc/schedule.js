@@ -488,18 +488,17 @@ export default {
     // Остальные (включая закреплённые из выделения)
     const rest = allItems.filter((it) => !idSet.has(it.id) || it.is_pinned);
 
-    // Найти целевой индекс в rest (первый элемент rest, чья ячейка >= target)
+    // Найти целевой индекс в сетке ячеек (0-based)
     const targetKey = `${targetDate} ${targetStartTime}`;
     const targetCellIdx = cells.findIndex((c) => `${c.date} ${c.start}` === targetKey);
     if (targetCellIdx < 0) throw new Error("Целевой слот не найден в сетке периода");
 
     // Перестроить полный порядок: rest[0..insertAt-1] + selected + rest[insertAt..]
-    // insertAt = позиция в rest, соответствующая targetCellIdx
-    // Для простоты: вставляем перед первым элементом rest, чья дата >= targetDate
-    let insertAt = rest.findIndex(
-      (it) => it.date > targetDate || (it.date === targetDate && it.start_time >= targetStartTime)
-    );
-    if (insertAt < 0) insertAt = rest.length;
+    // После удаления M выбранных занятий из allItems, элементы в rest получают ячейки
+    // 0..rest.length-1. Чтобы первый выбранный оказался ровно в ячейке targetCellIdx,
+    // нужно поставить перед ним ровно targetCellIdx элементов rest.
+    // Если targetCellIdx > rest.length — прикрепляем в конец.
+    const insertAt = Math.min(targetCellIdx, rest.length);
 
     const newOrder = [
       ...rest.slice(0, insertAt),
