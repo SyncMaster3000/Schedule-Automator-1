@@ -1,9 +1,46 @@
 {
-  "name": "schedule-automator-desktop",
-  "version": "1.0.0",
-  "main": "main.js",
+  "name": "schedule-automator-enhanced",
+  "version": "2.0.0",
+  "description": "Enhanced desktop application for schedule construction with analytics",
+  "main": "electron/main.js",
+  "author": "Schedule App",
+  "license": "MIT",
   "scripts": {
-    "start": "electron .",
-    "build": "electron-builder"
+    "dev": "concurrently -k -n VITE,ELECTRON -c cyan,green \"npm:dev:vite\" \"npm:dev:electron\"",
+    "dev:vite": "vite",
+    "dev:electron": "wait-on tcp:5173 && cross-env NODE_ENV=development electron .",
+    "build": "vite build",
+    "preview": "vite preview",
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:linux": "npm run build && electron-builder --linux",
+    "rebuild": "electron-builder install-app-deps",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "chart.js": "^4.4.1",
+    "date-fns": "^4.1.0",
+    "docx": "^9.1.1",
+    "mammoth": "^1.9.0",
+    "node-html-parser": "^7.0.1",
+    "pinia": "^2.3.1",
+    "vue": "^3.5.13",
+    "vue-chartjs": "^5.3.0",
+    "vue-draggable-next": "^2.2.1",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
+    "electron": "^33.3.1",
+    "electron-builder": "^25.1.8",
+    "postcss": "^8.5.1",
+    "tailwindcss": "^3.4.17",
+    "vite": "^6.0.7",
+    "wait-on": "^8.0.2"
   }
 }

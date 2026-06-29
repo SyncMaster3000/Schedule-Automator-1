@@ -1,0 +1,41 @@
+{
+  // Enhanced version with analytics support
+  appId: "com.schedule.app.enhanced",
+  productName: "Конструктор расписания Pro",
+  directories: {
+    output: "release",
+    buildResources: "build",
+  },
+  files: [
+    "dist/**/*",
+    "electron/**/*",
+    "resources/**/*",
+    "package.json",
+  ],
+  extraResources: [
+    {
+      from: "resources",
+      to: "resources",
+    },
+  ],
+  npmRebuild: true,
+  asarUnpack: ["**/node_modules/better-sqlite3/**/*"],
+  win: {
+    target: ["nsis"],
+    artifactName: "${productName}-${version}-setup.${ext}",
+  },
+  nsis: {
+    oneClick: false,
+    allowToChangeInstallationDirectory: true,
+    createDesktopShortcut: true,
+    createStartMenuShortcut: true,
+  },
+  mac: {
+    target: ["dmg"],
+    category: "public.app-category.productivity",
+  },
+  linux: {
+    target: ["AppImage", "deb"],
+    category: "Office",
+  },
+}
