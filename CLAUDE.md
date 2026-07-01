@@ -22,11 +22,14 @@
 - **Штатно — на Replit:** кнопка **Run** (workflow `Project`). Поднимает оба сервиса
   и связывает их: фронт зовёт относительный `/api/schedule/...`, роутер Replit
   проксирует `/api` → api-server (порт 8080), `/` → фронтенд (порт 23496).
-- **Локально одной командой не запускается:** в `artifacts/schedule/vite.config.ts`
-  нет прокси на `/api`, поэтому нужны либо Replit, либо два процесса + прокси вручную.
-- Отдельные команды: `pnpm --filter @workspace/schedule run dev`,
-  `pnpm --filter @workspace/api-server run dev`. Пакетный менеджер — только **pnpm**
-  (в корне `preinstall` блокирует npm/yarn). Node 20/22 LTS.
+- **Локально (два процесса):** пакетный менеджер — только **pnpm** (в корне
+  `preinstall` блокирует npm/yarn), Node 20/22 LTS.
+  1. `pnpm install` (в корне).
+  2. Бэкенд: `PORT=8080 pnpm --filter @workspace/api-server run dev`.
+  3. Фронтенд: `PORT=5173 BASE_PATH=/ pnpm --filter @workspace/schedule run dev`.
+  4. Открыть `http://localhost:5173`.
+  Вне Replit `vite.config.ts` сам проксирует `/api` → `http://localhost:8080`
+  (переопределяется env `API_TARGET`); на Replit прокси не активируется.
 
 ## Архитектура фронт↔бэк
 
