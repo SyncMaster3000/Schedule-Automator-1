@@ -161,7 +161,22 @@ function initDb(dataDir) {
   const dbPath = path.join(dataDir, "schedule.db");
   db = new Database(dbPath);
   db.exec(SCHEMA);
+  migrate(db);
   return db;
+}
+
+// Лёгкие миграции для уже существующих баз (CREATE TABLE IF NOT EXISTS не добавляет
+// новые колонки к ранее созданным таблицам). Добавляем недостающие колонки idempotent.
+function migrate(database) {
+  const addColumnIfMissing = (table, column, definition) => {
+    const cols = database.prepare(`PRAGMA table_info(${table})`).all();
+    if (!cols.some((c) => c.name === column)) {
+      database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
+  };
+  // Даты утверждения и подписания заполняются на этапе утверждения расписания.
+  addColumnIfMissing("programs", "approval_date", "TEXT");
+  addColumnIfMissing("programs", "sign_date", "TEXT");
 }
 
 function getDb() {

@@ -61,7 +61,8 @@ module.exports = {
     db.prepare(
       `UPDATE programs SET
         title = ?, description = ?, approver_name = ?, approver_title = ?,
-        signer_name = ?, signer_title = ?, status = ?, updated_at = ?
+        signer_name = ?, signer_title = ?, approval_date = ?, sign_date = ?,
+        status = ?, updated_at = ?
        WHERE id = ?`
     ).run(
       data.title,
@@ -70,6 +71,8 @@ module.exports = {
       data.approver_title || null,
       data.signer_name || null,
       data.signer_title || null,
+      data.approval_date || null,
+      data.sign_date || null,
       data.status || "draft",
       now(),
       data.id

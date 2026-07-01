@@ -75,7 +75,11 @@ function buildHeader(program, dateRange, groupName) {
     }),
     new Paragraph({
       alignment: AlignmentType.RIGHT,
-      children: [new TextRun({ text: "__.__.20__" })],
+      children: [
+        new TextRun({
+          text: program.approval_date ? fmtDate(program.approval_date) : "__.__.20__",
+        }),
+      ],
     }),
     new Paragraph({ text: "" }),
     pCenter("РАСПИСАНИЕ", { bold: true, size: 28 }),
@@ -168,6 +172,13 @@ function buildFooter(program) {
     new Paragraph({ children: [new TextRun({ text: signerTitle })] }),
     new Paragraph({
       children: [new TextRun({ text: signerName })],
+    }),
+    new Paragraph({
+      children: [
+        new TextRun({
+          text: program.sign_date ? fmtDate(program.sign_date) : "__.__.20__",
+        }),
+      ],
     }),
   ];
 }
