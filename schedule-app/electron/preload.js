@@ -2,7 +2,23 @@
 // Renderer не имеет прямого доступа к Node/Electron — только к перечисленным методам.
 const { contextBridge, ipcRenderer } = require("electron");
 
-const invoke = (channel, payload) => ipcRenderer.invoke(channel, payload);
+// Renderer передаёт реактивные объекты Vue (Proxy), которые структурированное
+// клонирование Electron не умеет сериализовать ("An object could not be cloned").
+// Приводим payload к обычному объекту перед отправкой в main-процесс.
+const toPlain = (payload) => {
+  if (payload === undefined || payload === null) return payload;
+  if (typeof payload !== "object") return payload;
+  try {
+    return JSON.parse(JSON.stringify(payload));
+  } catch {
+    return payload;
+  }
+};
+
+const invoke = (channel, payload) =>
+  payload === undefined
+    ? ipcRenderer.invoke(channel)
+    : ipcRenderer.invoke(channel, toPlain(payload));
 
 contextBridge.exposeInMainWorld("api", {
   programs: {
