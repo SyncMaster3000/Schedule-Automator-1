@@ -1,0 +1,42 @@
+{
+  // Кроссплатформенная сборка установщиков (win/mac/linux).
+  appId: "com.schedule.constructor",
+  productName: "Конструктор расписаний",
+  directories: {
+    output: "release",
+    buildResources: "build",
+  },
+  files: [
+    "dist/**/*",
+    "electron/**/*",
+    "package.json",
+  ],
+  // Шаблоны Word кладём в ресурсы приложения — main задаёт путь
+  // SCHEDULE_TEMPLATES_DIR = process.resourcesPath/templates.
+  extraResources: [
+    {
+      from: "electron/backend/templates",
+      to: "templates",
+    },
+  ],
+  // sql.js читает свой .wasm через fs — распаковываем из asar, чтобы путь существовал.
+  asarUnpack: ["**/node_modules/sql.js/**"],
+  win: {
+    target: ["nsis"],
+    artifactName: "${productName}-${version}-setup.${ext}",
+  },
+  nsis: {
+    oneClick: false,
+    allowToChangeInstallationDirectory: true,
+    createDesktopShortcut: true,
+    createStartMenuShortcut: true,
+  },
+  mac: {
+    target: ["dmg"],
+    category: "public.app-category.productivity",
+  },
+  linux: {
+    target: ["AppImage", "deb"],
+    category: "Office",
+  },
+}
