@@ -18,10 +18,8 @@ else
   PNPM="corepack pnpm@10.33.0"
 fi
 
-if [ ! -d node_modules ]; then
-  echo "Первый запуск: устанавливаю зависимости (несколько минут)..."
-  $PNPM install || { echo "Ошибка установки зависимостей (нужна Node.js 20 или 22 LTS)."; exit 1; }
-fi
+echo "Проверяю и устанавливаю зависимости (первый раз — несколько минут)..."
+$PNPM install || { echo "Ошибка установки зависимостей (нужна Node.js 20 или 22 LTS)."; exit 1; }
 
 echo "Запускаю сервер API (порт 8080)..."
 PORT=8080 $PNPM --filter @workspace/api-server run dev &

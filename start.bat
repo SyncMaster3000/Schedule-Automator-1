@@ -21,8 +21,7 @@ if not errorlevel 1 goto have_pnpm
 set "PNPM=corepack pnpm@10.33.0"
 :have_pnpm
 
-if exist node_modules goto run
-echo Первый запуск: устанавливаю зависимости, это займёт несколько минут...
+echo Проверяю и устанавливаю зависимости (первый раз — несколько минут)...
 call %PNPM% install
 if errorlevel 1 goto install_failed
 
