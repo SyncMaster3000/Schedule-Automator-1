@@ -1167,7 +1167,7 @@ onUnmounted(() => {
 <template>
   <div class="mx-auto max-w-6xl px-8 py-8">
     <button class="btn-ghost mb-3 px-0" @click="router.push(`/programs/${programId}`)">
-      ← К программе
+      ← Назад
     </button>
 
     <div v-if="period" class="mb-6 flex items-start justify-between">
