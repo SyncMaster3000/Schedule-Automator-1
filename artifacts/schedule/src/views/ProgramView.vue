@@ -316,7 +316,7 @@ onMounted(async () => {
 
 <template>
   <div class="mx-auto max-w-6xl px-8 py-8">
-    <button class="btn-ghost mb-3 px-0" @click="router.push('/')">← К программам</button>
+    <button class="btn-ghost mb-3 px-0" @click="router.push('/')">← Назад</button>
 
     <div v-if="program" class="mb-6 flex items-start justify-between">
       <div>
