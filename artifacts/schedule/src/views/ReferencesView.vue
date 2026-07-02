@@ -313,7 +313,7 @@ onMounted(loadAll);
               v-for="(s, i) in g.slots"
               :key="i"
               class="badge"
-              :class="s.is_break ? 'bg-slate-100 text-slate-400' : 'bg-blue-50 text-blue-700'"
+              :class="s.is_break ? 'bg-slate-100 text-slate-400' : 'bg-brand-50 text-brand-700'"
             >
               {{ s.start }}–{{ s.end }}{{ s.is_break ? " (перерыв)" : "" }}
             </span>

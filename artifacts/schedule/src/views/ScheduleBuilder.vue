@@ -1276,9 +1276,9 @@ onUnmounted(() => {
         <!-- Заголовок дня -->
         <div
           v-if="ridx === 0 || groupedRows[ridx - 1].date !== row.date"
-          class="mb-1 mt-3 flex items-center gap-2 px-1 text-sm font-semibold text-blue-700"
+          class="mb-1 mt-3 flex items-center gap-2 px-1 text-sm font-semibold text-brand-700"
         >
-          <span class="h-px flex-1 bg-blue-100"></span>
+          <span class="h-px flex-1 bg-brand-100"></span>
           {{ formatDayHeader(row.date) }}
           <select
             v-if="grids.length"
@@ -1290,7 +1290,7 @@ onUnmounted(() => {
             <option value="" disabled>Сетка дня…</option>
             <option v-for="g in grids" :key="g.id" :value="g.id">{{ g.name }}</option>
           </select>
-          <span class="h-px flex-1 bg-blue-100"></span>
+          <span class="h-px flex-1 bg-brand-100"></span>
         </div>
         <!-- Ряд одного таймслота -->
         <div class="flex items-start gap-3">
@@ -1317,7 +1317,7 @@ onUnmounted(() => {
             <!-- Группы A / B — двумя колонками -->
             <div v-if="row.a.length || row.b.length" class="grid grid-cols-2 gap-3">
               <div class="space-y-2">
-                <div class="px-1 text-xs font-semibold text-blue-700">Группа A</div>
+                <div class="px-1 text-xs font-semibold text-brand-700">Группа A</div>
                 <LessonCard
                   v-for="it in row.a"
                   :key="it.id"
@@ -1339,7 +1339,7 @@ onUnmounted(() => {
                 </div>
               </div>
               <div class="space-y-2">
-                <div class="px-1 text-xs font-semibold text-blue-700">Группа B</div>
+                <div class="px-1 text-xs font-semibold text-brand-700">Группа B</div>
                 <LessonCard
                   v-for="it in row.b"
                   :key="it.id"
@@ -1379,9 +1379,9 @@ onUnmounted(() => {
         <!-- Заголовок дня -->
         <div
           v-if="idx === 0 || items[idx - 1].date !== it.date"
-          class="mb-1 mt-3 flex items-center gap-2 px-1 text-sm font-semibold text-blue-700"
+          class="mb-1 mt-3 flex items-center gap-2 px-1 text-sm font-semibold text-brand-700"
         >
-          <span class="h-px flex-1 bg-blue-100"></span>
+          <span class="h-px flex-1 bg-brand-100"></span>
           {{ formatDayHeader(it.date) }}
           <select
             v-if="grids.length"
@@ -1393,7 +1393,7 @@ onUnmounted(() => {
             <option value="" disabled>Сетка дня…</option>
             <option v-for="g in grids" :key="g.id" :value="g.id">{{ g.name }}</option>
           </select>
-          <span class="h-px flex-1 bg-blue-100"></span>
+          <span class="h-px flex-1 bg-brand-100"></span>
         </div>
         <!-- Свободное окошко: пустой слот для вписания занятия -->
         <div
@@ -1433,7 +1433,7 @@ onUnmounted(() => {
           class="card flex items-center gap-3 px-4 py-3 transition"
           :class="{
             'conflict-row border-red-200': it.conflicts && it.conflicts.length,
-            'ring-2 ring-blue-300': isSelected(it.id),
+            'ring-2 ring-brand-300': isSelected(it.id),
           }"
           :title="changeTitle(it)"
         >
@@ -1445,7 +1445,7 @@ onUnmounted(() => {
           />
           <button
             class="shrink-0 text-base leading-none transition"
-            :class="it.is_pinned ? 'text-blue-500' : 'text-slate-200 hover:text-slate-400'"
+            :class="it.is_pinned ? 'text-brand-500' : 'text-slate-200 hover:text-slate-400'"
             :title="it.is_pinned ? 'Открепить занятие' : 'Закрепить занятие (не смещать при авто-операциях)'"
             @click.stop="togglePin(it)"
           >📌</button>
@@ -1463,7 +1463,7 @@ onUnmounted(() => {
               {{ itemTitle(it) }}
               <span
                 v-if="it.group_label"
-                class="badge ml-1 bg-blue-50 text-blue-700"
+                class="badge ml-1 bg-brand-50 text-brand-700"
               >Группа {{ it.group_label }}</span>
             </div>
             <div v-if="isSelfStudy(it)" class="truncate text-xs text-slate-400">
@@ -1483,7 +1483,7 @@ onUnmounted(() => {
           >⏱ врем.</span>
           <span
             v-if="it.is_pinned"
-            class="badge bg-blue-50 text-blue-600"
+            class="badge bg-brand-50 text-brand-600"
             title="Занятие закреплено — не перемещается при авто-операциях"
           >📌 закреп.</span>
           <span
@@ -1866,12 +1866,12 @@ onUnmounted(() => {
         <div class="flex gap-2 border-b border-slate-200 pb-2">
           <button
             class="px-3 py-1 rounded-t text-sm font-medium transition"
-            :class="tempTab === 'list' ? 'bg-blue-600 text-white' : 'text-slate-500 hover:text-slate-700'"
+            :class="tempTab === 'list' ? 'bg-brand-600 text-white' : 'text-slate-500 hover:text-slate-700'"
             @click="tempTab = 'list'; editingTemp = null"
           >Список изменений ({{ tempItems.length }})</button>
           <button
             class="px-3 py-1 rounded-t text-sm font-medium transition"
-            :class="tempTab === 'preview' ? 'bg-blue-600 text-white' : 'text-slate-500 hover:text-slate-700'"
+            :class="tempTab === 'preview' ? 'bg-brand-600 text-white' : 'text-slate-500 hover:text-slate-700'"
             @click="tempTab = 'preview'; editingTemp = null; tempPreviewItems = []"
           >Предпросмотр на дату</button>
         </div>
@@ -1917,8 +1917,8 @@ onUnmounted(() => {
           </div>
 
           <!-- Форма добавления/редактирования temp-записи -->
-          <div v-if="editingTemp" class="rounded-lg border border-blue-200 bg-blue-50 p-3 space-y-3">
-            <div class="font-medium text-blue-800">
+          <div v-if="editingTemp" class="rounded-lg border border-brand-200 bg-brand-50 p-3 space-y-3">
+            <div class="font-medium text-brand-800">
               {{ editingTemp.id ? 'Редактировать временное изменение' : 'Новое временное изменение' }}
             </div>
 

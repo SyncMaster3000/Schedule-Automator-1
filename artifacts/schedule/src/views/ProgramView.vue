@@ -334,24 +334,38 @@ onMounted(async () => {
     <div v-if="info" class="mb-4 rounded-lg bg-green-50 px-4 py-3 text-sm text-green-700">{{ info }}</div>
 
     <!-- Прогресс очереди -->
-    <div class="card mb-6 flex items-center gap-6 px-5 py-4">
+    <div class="card mb-6 flex flex-wrap items-center gap-x-8 gap-y-4 px-6 py-5">
       <div>
-        <div class="text-xs uppercase text-slate-400">Тем всего</div>
-        <div class="text-xl font-semibold">{{ queue.total }}</div>
+        <div class="eyebrow">Тем всего</div>
+        <div class="font-display text-2xl font-semibold text-slate-800 [font-variant-numeric:tabular-nums]">
+          {{ queue.total }}
+        </div>
       </div>
       <div>
-        <div class="text-xs uppercase text-slate-400">Распределено</div>
-        <div class="text-xl font-semibold text-green-600">{{ queue.scheduled }}</div>
+        <div class="eyebrow">Распределено</div>
+        <div class="font-display text-2xl font-semibold text-green-600 [font-variant-numeric:tabular-nums]">
+          {{ queue.scheduled }}
+        </div>
       </div>
       <div>
-        <div class="text-xs uppercase text-slate-400">Осталось</div>
-        <div class="text-xl font-semibold text-slate-700">{{ queue.remaining }}</div>
+        <div class="eyebrow">Осталось</div>
+        <div class="font-display text-2xl font-semibold text-slate-700 [font-variant-numeric:tabular-nums]">
+          {{ queue.remaining }}
+        </div>
       </div>
-      <div class="ml-auto h-2 w-48 overflow-hidden rounded-full bg-slate-100">
-        <div
-          class="h-full bg-brand-500"
-          :style="{ width: queue.total ? (queue.scheduled / queue.total) * 100 + '%' : '0%' }"
-        />
+      <div class="ml-auto w-56">
+        <div class="mb-1.5 flex items-center justify-between text-xs text-slate-400">
+          <span>Готовность</span>
+          <span class="font-medium text-slate-600 [font-variant-numeric:tabular-nums]">
+            {{ queue.total ? Math.round((queue.scheduled / queue.total) * 100) : 0 }}%
+          </span>
+        </div>
+        <div class="h-2 overflow-hidden rounded-full bg-slate-100">
+          <div
+            class="h-full rounded-full bg-gradient-to-r from-brand-500 to-brand-700 transition-[width] duration-500"
+            :style="{ width: queue.total ? (queue.scheduled / queue.total) * 100 + '%' : '0%' }"
+          />
+        </div>
       </div>
     </div>
 
@@ -408,7 +422,7 @@ onMounted(async () => {
               </td>
               <td class="table-cell text-slate-400">{{ t.utp_number }}</td>
               <td class="table-cell">
-                <span v-if="t.is_section" class="badge mr-2 bg-blue-100 text-blue-700">Раздел</span>
+                <span v-if="t.is_section" class="badge mr-2 bg-brand-100 text-brand-700">Раздел</span>
                 <span :class="{ 'line-through': t.excluded }">{{ t.title }}</span>
               </td>
               <td class="table-cell">{{ t.total_hours }}</td>
@@ -541,7 +555,7 @@ onMounted(async () => {
               </td>
               <td class="table-cell text-slate-400">{{ t.utp_number }}</td>
               <td class="table-cell">
-                <span v-if="t.is_section" class="badge mr-2 bg-blue-100 text-blue-700">Раздел</span>
+                <span v-if="t.is_section" class="badge mr-2 bg-brand-100 text-brand-700">Раздел</span>
                 {{ t.title }}
               </td>
               <td class="table-cell">{{ t.total_hours }}</td>

@@ -5,10 +5,10 @@ import { RouterLink, RouterView } from "vue-router";
 
 <template>
   <div class="flex h-full">
-    <!-- Боковая панель -->
-    <aside class="flex w-60 shrink-0 flex-col border-r border-blue-100 bg-blue-50/90 backdrop-blur-sm">
-      <div class="flex items-center gap-2 px-5 py-5">
-        <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-600 text-white">
+    <!-- Боковая панель: тёмный «чернильный» блок, отделяющий навигацию от работы -->
+    <aside class="flex w-60 shrink-0 flex-col bg-brand-900 text-brand-100">
+      <div class="flex items-center gap-3 px-5 py-6">
+        <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-600 text-white shadow-sm">
           <svg
             xmlns="http://www.w3.org/2000/svg"
             viewBox="0 0 24 24"
@@ -25,11 +25,16 @@ import { RouterLink, RouterView } from "vue-router";
           </svg>
         </div>
         <div>
-          <div class="text-sm font-semibold text-slate-800">Конструктор расписаний</div>
+          <div class="font-display text-[15px] font-semibold leading-tight text-white">
+            Конструктор
+          </div>
+          <div class="font-display text-[15px] font-semibold leading-tight text-white">
+            расписаний
+          </div>
         </div>
       </div>
 
-      <nav class="flex-1 space-y-1 px-3">
+      <nav class="mt-2 flex-1 space-y-1 px-3">
         <RouterLink to="/" class="nav-link" active-class="nav-active">
           Создать расписание
         </RouterLink>
@@ -41,7 +46,7 @@ import { RouterLink, RouterView } from "vue-router";
         </RouterLink>
       </nav>
 
-      <div class="border-t border-slate-100 px-5 py-3 text-xs text-slate-400">
+      <div class="border-t border-white/10 px-5 py-4 text-xs text-brand-300/80">
         Офлайн-режим · v1.0
       </div>
     </aside>
@@ -55,9 +60,15 @@ import { RouterLink, RouterView } from "vue-router";
 
 <style scoped>
 .nav-link {
-  @apply block rounded-lg px-3 py-2 text-sm font-medium text-slate-700 hover:bg-blue-100/70;
+  @apply relative block rounded-lg px-3 py-2 text-sm font-medium leading-snug text-brand-100/80 transition
+         hover:bg-white/5 hover:text-white;
 }
 .nav-active {
-  @apply bg-blue-100 text-blue-800 font-semibold;
+  @apply bg-white/10 font-semibold text-white;
+}
+/* «Рельса» слева у активного пункта — где ты сейчас находишься. */
+.nav-active::before {
+  content: "";
+  @apply absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-full bg-brand-300;
 }
 </style>

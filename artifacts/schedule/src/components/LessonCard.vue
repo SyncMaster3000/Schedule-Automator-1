@@ -88,7 +88,7 @@ function conflictTitle(it) {
     :class="{
       'border-red-400 bg-red-50': item.is_outside_period,
       'conflict-row border-red-200': !item.is_outside_period && item.conflicts && item.conflicts.length,
-      'ring-2 ring-blue-300': selected,
+      'ring-2 ring-brand-300': selected,
     }"
     :title="item.is_outside_period ? 'Занятие вне рабочего расписания — попало в нерабочий день при сдвиге. Перенесите вручную или удалите.' : conflictTitle(item)"
   >
@@ -111,7 +111,7 @@ function conflictTitle(it) {
         {{ itemTitle(item) }}
         <span
           v-if="showGroupBadge && item.group_label"
-          class="badge ml-1 bg-blue-50 text-blue-700"
+          class="badge ml-1 bg-brand-50 text-brand-700"
         >Группа {{ item.group_label }}</span>
       </div>
       <div v-if="isSelfStudy(item)" class="truncate text-xs text-slate-400">

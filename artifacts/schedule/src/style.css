@@ -15,35 +15,65 @@ body,
 
 body {
   @apply text-slate-800 font-sans antialiased;
-  background-color: theme("colors.slate.100");
-  background-image: url("./assets/app-background.png");
-  background-size: cover;
-  background-position: center;
-  background-repeat: no-repeat;
+  /* Спокойный прохладный фон-«бумага»: белые карточки хорошо выделяются. */
+  background-color: #eef1f6;
+  background-image: linear-gradient(180deg, #f2f5fa 0%, #e8ecf3 100%);
   background-attachment: fixed;
+  line-height: 1.5;
+}
+
+@layer base {
+  /* Дисплейная гарнитура для крупных заголовков — единый «инструментальный»
+     характер. Тело текста и мелкие подписи остаются на Inter (читаемость). */
+  h1,
+  h2 {
+    @apply font-display;
+    letter-spacing: -0.015em;
+  }
+
+  ::selection {
+    background-color: theme("colors.brand.200");
+    color: theme("colors.brand.900");
+  }
+
+  /* Флажки и переключатели — в цвет основной палитры (единый акцент). */
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: theme("colors.brand.600");
+  }
+
+  /* Заметный фокус с клавиатуры — доступность. */
+  :focus-visible {
+    outline: 2px solid theme("colors.brand.500");
+    outline-offset: 2px;
+  }
 }
 
 @layer components {
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-300 focus-visible:ring-offset-1
+           disabled:cursor-not-allowed disabled:opacity-50;
   }
   .btn-primary {
-    @apply btn bg-brand-600 text-white hover:bg-brand-700;
+    @apply btn bg-brand-600 text-white shadow-sm hover:bg-brand-700 active:bg-brand-800;
   }
   .btn-secondary {
-    @apply btn bg-white text-slate-700 border border-slate-300 hover:bg-slate-100;
+    @apply btn border border-slate-200 bg-white text-slate-700 shadow-sm hover:border-slate-300 hover:bg-slate-50;
   }
   .btn-danger {
-    @apply btn bg-red-600 text-white hover:bg-red-700;
+    @apply btn bg-red-600 text-white shadow-sm hover:bg-red-700 active:bg-red-800;
   }
   .btn-ghost {
     @apply btn text-slate-600 hover:bg-slate-100;
   }
   .card {
-    @apply rounded-xl border border-slate-200 bg-white shadow-sm;
+    @apply rounded-2xl border border-slate-200/80 bg-white shadow-card;
   }
   .input {
-    @apply w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100;
+    @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none
+           transition placeholder:text-slate-400
+           focus:border-brand-500 focus:ring-2 focus:ring-brand-100;
   }
   .label {
     @apply mb-1 block text-sm font-medium text-slate-600;
@@ -52,11 +82,26 @@ body {
     @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
   }
   .table-cell {
-    @apply px-3 py-2 text-sm border-b border-slate-100;
+    @apply px-3 py-2.5 text-sm border-b border-slate-100 [font-variant-numeric:tabular-nums];
+  }
+  /* Мелкий текстовый ярлык-«надзаголовок» над блоками (единый приём). */
+  .eyebrow {
+    @apply text-xs font-semibold uppercase tracking-wide text-slate-400;
   }
 }
 
 /* Подсветка конфликтов */
 .conflict-row {
   @apply bg-red-50;
+}
+
+/* Уважать системную настройку «уменьшить движение». */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

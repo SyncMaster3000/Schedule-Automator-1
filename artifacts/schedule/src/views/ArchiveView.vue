@@ -168,7 +168,7 @@ onMounted(search);
           {{ g.year || "Без даты" }}
         </h2>
         <div v-for="m in g.months" :key="m.month" class="mb-4">
-          <div class="mb-1 px-1 text-xs font-semibold uppercase tracking-wide text-blue-600">
+          <div class="mb-1 px-1 text-xs font-semibold uppercase tracking-wide text-brand-600">
             {{ m.label }}
           </div>
           <div class="card divide-y divide-slate-100">
