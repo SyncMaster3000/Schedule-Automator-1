@@ -509,11 +509,11 @@ async function addSelfStudySlot(it) {
   try {
     await api.schedule.saveItem({
       ...it,
-      teacher_ids: JSON.parse(it.teacher_ids || "[]"),
-      group_ids: JSON.parse(it.group_ids || "[]"),
+      teacher_ids: [...(it.teacher_ids || [])],
+      group_ids: [...(it.group_ids || [])],
       topic_id: null,
       lesson_type: "self_study",
-      custom_title: "Самостоятельная подготовка",
+      custom_title: "Самоподготовка",
     });
     await load();
   } catch (e) {
