@@ -134,7 +134,7 @@ export async function exportDocxBuffer(data) {
   const groupColumn = Object.keys(groupsById).length > 0 && !data.groupId;
   const groupName = data.groupId ? groupsById[data.groupId]?.name : null;
 
-  const buffer = await exportSchedule({
+  const { buffer, count } = await exportSchedule({
     program,
     periods,
     items,
@@ -146,5 +146,5 @@ export async function exportDocxBuffer(data) {
   });
 
   const filename = `Расписание_${program.title}`.replace(/[\\/:*?"<>|]/g, "_") + ".docx";
-  return { buffer, filename, count: items.length };
+  return { buffer, filename, count };
 }

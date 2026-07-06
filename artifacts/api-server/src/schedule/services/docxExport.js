@@ -250,7 +250,7 @@ async function exportSchedule(data) {
   const isBlankRow = (it) =>
     !it.topic_id &&
     !it.custom_title &&
-    !it.lesson_type &&
+    (!it.lesson_type || it.lesson_type === "empty") &&
     !it.room_id &&
     JSON.parse(it.teacher_ids || "[]").length === 0 &&
     JSON.parse(it.group_ids || "[]").length === 0 &&
@@ -303,11 +303,12 @@ async function exportSchedule(data) {
   xml = fillScheduleTable(xml, items, ctx, groupColumn);
 
   zip.file("word/document.xml", xml);
-  return zip.generate({
+  const buffer = zip.generate({
     type: "nodebuffer",
     mimeType:
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   });
+  return { buffer, count: items.length };
 }
 
 export { exportSchedule };
