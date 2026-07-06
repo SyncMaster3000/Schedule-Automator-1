@@ -171,7 +171,7 @@ async function savePeriod() {
     } else {
       // Создание нового периода
       const groups = periodForm.value.groups
-        .split(",")
+        .split(";")
         .map((g) => g.trim())
         .filter(Boolean);
       await api.periods.create({
@@ -624,8 +624,8 @@ onMounted(async () => {
         <!-- Только при создании нового периода -->
         <template v-if="!editingPeriodId">
           <div>
-            <label class="label">Группы (через запятую)</label>
-            <input v-model="periodForm.groups" class="input" placeholder="Группа А, Группа Б" />
+            <label class="label">Группы (через точку с запятой)</label>
+            <input v-model="periodForm.groups" class="input" placeholder="Группа А; Группа Б" />
           </div>
           <div>
             <label class="label">Сетка учебных часов</label>
