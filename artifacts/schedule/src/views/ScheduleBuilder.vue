@@ -1185,8 +1185,6 @@ onUnmounted(() => {
         </label>
         <button class="btn-secondary" @click="openSettings">Настройки периода</button>
         <button class="btn-secondary" @click="fillGrid">Заполнить сетку</button>
-        <button class="btn-secondary" @click="openHistory">История</button>
-        <button class="btn-secondary" @click="openTemp">Временные изм.</button>
         <button class="btn-secondary" @click="applyOrder">Применить порядок</button>
         <button class="btn-secondary" @click="openBulkShift">Сдвинуть вниз…</button>
         <button
