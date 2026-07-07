@@ -13,7 +13,7 @@ const rooms = ref([]);
 const grids = ref([]);
 
 const newTeacher = ref({ fio: "", department: "", is_guest: 0 });
-const newRoom = ref({ number: "", type: "", capacity: null });
+const newRoom = ref({ number: "", type: "" });
 
 // Редактирование существующих записей
 const editTeacher = ref(null);
@@ -24,11 +24,6 @@ function flash(msg) {
   info.value = msg;
   error.value = "";
   setTimeout(() => (info.value = ""), 2500);
-}
-
-// Пустое значение -> null, иначе число (0 сохраняется)
-function normCap(v) {
-  return v === "" || v === null || v === undefined || Number.isNaN(v) ? null : v;
 }
 
 async function loadAll() {
@@ -94,9 +89,8 @@ async function addRoom() {
     await api.references.addRoom({
       number: newRoom.value.number,
       type: newRoom.value.type,
-      capacity: normCap(newRoom.value.capacity),
     });
-    newRoom.value = { number: "", type: "", capacity: null };
+    newRoom.value = { number: "", type: "" };
     rooms.value = await api.references.rooms();
     flash("Аудитория добавлена");
   } catch (e) {
@@ -113,7 +107,6 @@ async function saveRoom() {
       id: editRoom.value.id,
       number: editRoom.value.number,
       type: editRoom.value.type,
-      capacity: normCap(editRoom.value.capacity),
     });
     editRoom.value = null;
     rooms.value = await api.references.rooms();
@@ -255,7 +248,6 @@ onMounted(loadAll);
       <div class="mb-4 flex gap-2">
         <input v-model="newRoom.number" class="input flex-1" placeholder="Номер / название" @keyup.enter="addRoom" />
         <input v-model="newRoom.type" class="input flex-1" placeholder="Тип (лекционная…)" @keyup.enter="addRoom" />
-        <input v-model.number="newRoom.capacity" type="number" min="0" class="input w-28" placeholder="Мест" @keyup.enter="addRoom" />
         <button class="btn-primary" @click="addRoom">Добавить</button>
       </div>
       <table class="w-full">
@@ -263,7 +255,6 @@ onMounted(loadAll);
           <tr class="text-left text-xs uppercase text-slate-400">
             <th class="table-cell">Номер</th>
             <th class="table-cell">Тип</th>
-            <th class="table-cell">Вместимость</th>
             <th class="table-cell w-32"></th>
           </tr>
         </thead>
@@ -271,7 +262,6 @@ onMounted(loadAll);
           <tr v-for="r in rooms" :key="r.id">
             <td class="table-cell">{{ r.number }}</td>
             <td class="table-cell text-slate-500">{{ r.type || "—" }}</td>
-            <td class="table-cell text-slate-500">{{ r.capacity ?? "—" }}</td>
             <td class="table-cell text-right">
               <button class="btn-ghost" @click="editRoom = { ...r }">Изменить</button>
               <button class="btn-ghost text-red-500" @click="removeRoom(r.id)">✕</button>
@@ -358,10 +348,6 @@ onMounted(loadAll);
         <div>
           <label class="label">Тип</label>
           <input v-model="editRoom.type" class="input" placeholder="лекционная, компьютерный класс…" />
-        </div>
-        <div>
-          <label class="label">Количество мест</label>
-          <input v-model.number="editRoom.capacity" type="number" min="0" class="input" />
         </div>
       </div>
       <template #footer>

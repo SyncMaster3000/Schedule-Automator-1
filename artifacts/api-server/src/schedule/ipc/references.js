@@ -55,19 +55,19 @@ export default {
 
   // --- Аудитории ---
   "ref:rooms:list": () =>
-    getDb().prepare("SELECT * FROM rooms ORDER BY number").all(),
+    getDb().prepare("SELECT id, number, type FROM rooms ORDER BY number").all(),
 
   "ref:rooms:add": (data) => {
     const info = getDb()
-      .prepare("INSERT INTO rooms (number, type, capacity) VALUES (?, ?, ?)")
-      .run(data.number, data.type || null, data.capacity ?? null);
+      .prepare("INSERT INTO rooms (number, type) VALUES (?, ?)")
+      .run(data.number, data.type || null);
     return { id: info.lastInsertRowid };
   },
 
   "ref:rooms:update": (data) => {
     getDb()
-      .prepare("UPDATE rooms SET number = ?, type = ?, capacity = ? WHERE id = ?")
-      .run(data.number, data.type || null, data.capacity ?? null, data.id);
+      .prepare("UPDATE rooms SET number = ?, type = ? WHERE id = ?")
+      .run(data.number, data.type || null, data.id);
     return { id: data.id };
   },
 
