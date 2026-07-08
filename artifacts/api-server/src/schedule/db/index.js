@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS program_topics (
   sort_order INTEGER NOT NULL DEFAULT 0,
   FOREIGN KEY (program_id) REFERENCES programs(id) ON DELETE CASCADE
 );
-CREATE UNIQUE INDEX IF NOT EXISTS ux_topic_program_number
+CREATE INDEX IF NOT EXISTS ix_topic_program_number
   ON program_topics(program_id, utp_number);
 
 CREATE TABLE IF NOT EXISTS periods (
@@ -321,6 +321,9 @@ function addColumnIfMissing(table, column, ddl) {
 
 function runMigrations() {
   addColumnIfMissing("program_topics", "roundtable_hours", "roundtable_hours REAL NOT NULL DEFAULT 0");
+  // Один номер темы может иметь несколько сущностей — по одной на каждый вид занятия.
+  raw.run("DROP INDEX IF EXISTS ux_topic_program_number");
+  raw.run("CREATE INDEX IF NOT EXISTS ix_topic_program_number ON program_topics(program_id, utp_number)");
   addColumnIfMissing("program_topics", "excluded", "excluded INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing("program_topics", "is_section", "is_section INTEGER NOT NULL DEFAULT 0");
   // Вид занятия по умолчанию для темы (напр. «Зачёт»/«Экзамен» из формы аттестации)

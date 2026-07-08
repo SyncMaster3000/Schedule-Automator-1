@@ -396,7 +396,7 @@ onMounted(async () => {
       <div v-else>
       <p class="mb-3 text-xs text-slate-400">
         Снимите галочку «В расписании», чтобы исключить строку из автозаполнения и
-        экспорта (например, итоговый раздел-сумму). Часы: Лекции / Практические / Круглый стол.
+        экспорта (например, итоговый раздел-сумму). Каждый вид занятия показан отдельной строкой.
       </p>
       <div class="card overflow-hidden">
         <table class="w-full">
@@ -406,7 +406,7 @@ onMounted(async () => {
               <th class="table-cell w-12">№</th>
               <th class="table-cell">Тема</th>
               <th class="table-cell w-20">Часы</th>
-              <th class="table-cell w-28">Лек/Пр/КС</th>
+              <th class="table-cell w-44">Вид занятия</th>
               <th class="table-cell w-28">Статус</th>
               <th class="table-cell w-12"></th>
             </tr>
@@ -426,9 +426,7 @@ onMounted(async () => {
                 <span :class="{ 'line-through': t.excluded }">{{ t.title }}</span>
               </td>
               <td class="table-cell">{{ t.total_hours }}</td>
-              <td class="table-cell text-slate-500">
-                {{ t.lecture_hours }}/{{ t.practice_hours }}/{{ t.roundtable_hours || 0 }}
-              </td>
+              <td class="table-cell text-slate-500">{{ t.default_lesson_type || 'Раздел / не указан' }}</td>
               <td class="table-cell">
                 <span v-if="t.excluded" class="badge bg-slate-100 text-slate-500">Исключена</span>
                 <span
@@ -535,7 +533,7 @@ onMounted(async () => {
           Темы будут добавлены к существующим (сборка из нескольких УТП).
         </span>
         Найдено строк: {{ importPreview.topics.length }}. Снимите галочку «Вкл.» у строк,
-        которые не нужно планировать (например, разделы-суммы). Часы: Лек/Практ/Круглый стол.
+        которые не нужно планировать (например, разделы-суммы). Виды занятий импортированы отдельными строками.
       </p>
       <div class="max-h-96 overflow-auto rounded-lg border border-slate-200">
         <table class="w-full">
@@ -545,7 +543,7 @@ onMounted(async () => {
               <th class="table-cell">№</th>
               <th class="table-cell">Тема</th>
               <th class="table-cell w-16">Часы</th>
-              <th class="table-cell w-24">Лек/Пр/КС</th>
+              <th class="table-cell w-44">Вид занятия</th>
             </tr>
           </thead>
           <tbody>
@@ -559,9 +557,7 @@ onMounted(async () => {
                 {{ t.title }}
               </td>
               <td class="table-cell">{{ t.total_hours }}</td>
-              <td class="table-cell text-slate-500">
-                {{ t.lecture_hours }}/{{ t.practice_hours }}/{{ t.roundtable_hours || 0 }}
-              </td>
+              <td class="table-cell text-slate-500">{{ t.default_lesson_type || 'Раздел / не указан' }}</td>
             </tr>
           </tbody>
         </table>

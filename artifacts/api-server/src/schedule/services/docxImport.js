@@ -1,23 +1,22 @@
 // Импорт учебно-тематического плана (УТП) из .docx.
-// mammoth конвертирует .docx в HTML (включая таблицы),
-// node-html-parser извлекает таблицу УТП и распознаёт строки тем.
-//
-// Особенности реальных УТП:
-//  - в документе может быть несколько таблиц (например, блок «СОГЛАСОВАНО/
-//    УТВЕРЖДАЮ» тоже свёрстан таблицей) — нужную таблицу выбираем по содержимому;
-//  - шапка таблицы многострочная с объединёнными ячейками, поэтому распознавание
-//    колонок по одной строке заголовка ненадёжно — используем позиционную схему;
-//  - присутствуют служебные строки: нумерация колонок «1 2 3 …», строки «Всего»,
-//    «Форма итоговой аттестации» и разделы (римские цифры) — их пропускаем.
+// Mammoth сохраняет таблицы и сведения об объединённых ячейках. Мы разворачиваем
+// их в логическую сетку, чтобы сопоставлять часы с фактическими заголовками
+// колонок, а не с жёстко заданными позициями.
 import mammoth from "mammoth";
 import { parse } from "node-html-parser";
 
 function normalize(s) {
   return (s || "")
     .toLowerCase()
+    .replace(/[\u00ad\u200b]/g, "")
+    .replace(/([а-яё])-\s+(?=[а-яё])/gi, "$1")
     .replace(/\s+/g, " ")
-    .replace(/[№\.\,\:]/g, "")
+    .replace(/[№.,:;()]/g, "")
     .trim();
+}
+
+function cellText(cell) {
+  return cell.text.replace(/\s+/g, " ").trim();
 }
 
 function toNumber(s) {
@@ -28,228 +27,234 @@ function toNumber(s) {
   return Number.isFinite(n) ? n : 0;
 }
 
-const ROMAN = /^[IVXLCDM]+\.?$/i; // номер раздела: I, II, III …
-const TOPIC_NUM = /^\d+(\.\d+)*\.?$/; // номер темы: 1, 1.1, 2.3 …
+const ROMAN = /^[IVXLCDM]+\.?$/i;
+const TOPIC_NUM = /^\d+(?:\.\d+)*\.?$/;
 
 const isSectionNumber = (s) => ROMAN.test((s || "").trim());
 const isTopicNumber = (s) => TOPIC_NUM.test((s || "").trim());
 
-function getCells(tr) {
-  return tr.querySelectorAll("th,td").map((c) => c.text.replace(/\s+/g, " ").trim());
+// Превращает rowspan/colspan в прямоугольную матрицу. Значение объединённой
+// ячейки повторяется во всех занятых ею координатах.
+function logicalRows(table) {
+  const occupied = [];
+  return table.querySelectorAll("tr").map((tr, rowIndex) => {
+    occupied[rowIndex] ||= [];
+    const row = occupied[rowIndex];
+    let column = 0;
+    for (const cell of tr.querySelectorAll("th,td")) {
+      while (row[column] !== undefined) column += 1;
+      const text = cellText(cell);
+      const colspan = Number(cell.getAttribute("colspan") || 1);
+      const rowspan = Number(cell.getAttribute("rowspan") || 1);
+      for (let dy = 0; dy < rowspan; dy += 1) {
+        occupied[rowIndex + dy] ||= [];
+        for (let dx = 0; dx < colspan; dx += 1) {
+          occupied[rowIndex + dy][column + dx] = text;
+        }
+      }
+      column += colspan;
+    }
+    return row;
+  });
 }
 
-// Строка-нумерация колонок: «1», «2», «3» … по порядку
 function isColumnNumberRow(cells) {
-  const nonEmpty = cells.filter((c) => c.trim() !== "");
-  if (nonEmpty.length < 3) return false;
-  return nonEmpty.every(
-    (c, i) => /^\d+$/.test(c.trim()) && Number(c.trim()) === i + 1,
-  );
+  if (cells.length < 3) return false;
+  return cells.every((cell, index) => String(cell || "").trim() === String(index + 1));
 }
 
-// Итоговая/служебная строка: «Всего», «Итого», «Форма итоговой аттестации» …
-function isAggregateRow(cells) {
-  const first = normalize(cells.find((c) => c.trim() !== "") || "");
-  return /^(всего|итого|форма)/.test(first);
-}
-
-// Строка формы итоговой аттестации: «Форма итоговой аттестации: Зачет/Экзамен».
-// Возвращает вид занятия («Зачёт»/«Экзамен») либо null. Текст может быть разнесён
-// по нескольким ячейкам, поэтому склеиваем всю строку.
 function detectAssessment(cells) {
   const joined = normalize(cells.join(" "));
   if (!/форма/.test(joined) || !/аттестац/.test(joined)) return null;
   if (/экзамен/.test(joined)) return "Экзамен";
-  if (/зач[её]т/.test(joined)) return "Зачёт";
+  if (/собеседован/.test(joined)) return "Собеседование";
+  if (/зач[её]т/.test(joined)) return "Зачет";
   return null;
 }
 
-// Похожа ли строка на тему/раздел УТП (для оценки таблицы и выбора нужной)
-function looksLikeTopicRow(cells) {
-  if (cells.length < 3) return false;
-  if (isColumnNumberRow(cells)) return false;
-  const num = (cells[0] || "").trim();
-  const title = (cells[1] || "").trim();
-  return !!title && (isTopicNumber(num) || isSectionNumber(num));
+function isAggregateTitle(title) {
+  return /^(всего|итого)(?:\s|$)/.test(normalize(title));
 }
 
-// Определение индексов колонок по заголовку (используется, только если есть
-// «плоская» строка заголовка шириной с данными — иначе остаётся позиционная схема)
-function detectColumns(headerCells) {
-  const map = { total: -1, lecture: -1, practice: -1, roundtable: -1, note: -1 };
-  headerCells.forEach((raw, i) => {
-    const h = normalize(raw);
-    if (map.total === -1 && h.includes("всего")) map.total = i;
-    else if (map.lecture === -1 && h.includes("лекц")) map.lecture = i;
-    else if (
-      map.roundtable === -1 &&
-      (h.includes("кругл") || h.includes("стол"))
-    )
-      map.roundtable = i;
-    else if (
-      map.practice === -1 &&
-      (h.includes("практ") || h.includes("иное") || h.includes("семинар"))
-    )
-      map.practice = i;
-    else if (
-      map.note === -1 &&
-      (h.includes("примеч") || h.includes("кафедра") || h.includes("дисциплин"))
-    )
-      map.note = i;
-  });
-  return map;
+function lessonTypeFromHeader(headerPath) {
+  const h = normalize(headerPath.join(" "));
+  if (/лекц|лекцы/.test(h)) return "Лекция";
+  if (/практич|практыч/.test(h)) return "Практическое занятие";
+  if (/семинар/.test(h)) return "Семинарское занятие";
+  if (/кругл|круглы/.test(h)) return "Круглый стол";
+  if (/лаборатор/.test(h)) return "Лабораторное занятие";
+  if (/делов.*игр/.test(h)) return "Деловая игра";
+  if (/тренинг/.test(h)) return "Тренинг";
+  if (/конференц/.test(h)) return "Конференция";
+  if (/самостоятель|самастойн/.test(h)) return "Самостоятельная работа";
+  return null;
 }
 
-// Выбор таблицы УТП: та, где больше всего строк, похожих на темы/разделы
-function pickUtpTable(tables) {
-  let best = null;
-  let bestScore = 0;
-  for (const table of tables) {
-    const rows = table.querySelectorAll("tr");
-    let score = 0;
-    for (const tr of rows) if (looksLikeTopicRow(getCells(tr))) score += 1;
-    if (score > bestScore) {
-      bestScore = score;
-      best = table;
+function headerPath(rows, headerEnd, column) {
+  const result = [];
+  for (let row = 0; row < headerEnd; row += 1) {
+    const text = (rows[row][column] || "").trim();
+    if (text && result[result.length - 1] !== text) result.push(text);
+  }
+  return result;
+}
+
+function parseLayout(table) {
+  const rows = logicalRows(table);
+  const numberRow = rows.findIndex(isColumnNumberRow);
+  if (numberRow < 0) return null;
+
+  const width = rows[numberRow].length;
+  const headers = Array.from({ length: width }, (_, column) =>
+    headerPath(rows, numberRow, column),
+  );
+  const normalized = headers.map((path) => normalize(path.join(" ")));
+  const leaves = headers.map((path) => normalize(path[path.length - 1] || ""));
+
+  const title = normalized.findIndex((h) =>
+    /назван|наименован|назвы раздзела|компоненты учебного/.test(h),
+  );
+  const number = normalized.findIndex((h, index) =>
+    index !== title && (/п\/п/.test(headers[index].join(" ").toLowerCase()) || /номер|темы$/.test(h)),
+  );
+  const total = leaves.findIndex((h) => /^(всего|усяго)$/.test(h));
+  const note = normalized.findIndex((h) => /кафедр|циклов/.test(h));
+  const lessonTypes = headers
+    .map((path, column) => ({ column, type: lessonTypeFromHeader(path) }))
+    .filter(({ column, type }) => type && column !== total);
+
+  if (title < 0 || total < 0 || lessonTypes.length === 0) return null;
+
+  let score = 0;
+  for (const row of rows.slice(numberRow + 1)) {
+    const titleText = (row[title] || "").trim();
+    const numberText = number >= 0 ? (row[number] || "").trim() : titleText.split(/\s+/, 1)[0];
+    if (titleText && (isTopicNumber(numberText) || isSectionNumber(numberText))) score += 1;
+  }
+
+  return { rows, numberRow, title, number, total, note, lessonTypes, score };
+}
+
+function pickUtpLayout(tables) {
+  const layouts = tables.map(parseLayout).filter(Boolean);
+  layouts.sort((a, b) => b.score - a.score);
+  return layouts[0] || null;
+}
+
+function topicIdentity(row, layout) {
+  let title = (row[layout.title] || "").trim();
+  let number = layout.number >= 0 ? (row[layout.number] || "").trim() : "";
+
+  // В новых формах отдельной колонки номера нет: «2.8.1. Название темы».
+  if (!number) {
+    const match = title.match(/^((?:\d+(?:\.\d+)*|[IVXLCDM]+)\.?)\s+(.+)$/i);
+    if (match) {
+      number = match[1];
+      title = match[2].trim();
     }
   }
-  return bestScore > 0 ? best : tables[0];
+
+  return { number: number.replace(/\.$/, ""), title };
 }
 
-// Главная функция импорта. Принимает Buffer (.docx) либо путь к файлу.
+function legacyHours(type, hours) {
+  return {
+    lecture_hours: type === "Лекция" ? hours : 0,
+    practice_hours: type === "Практическое занятие" ? hours : 0,
+    roundtable_hours: type === "Круглый стол" ? hours : 0,
+  };
+}
+
+function hasChildTopic(number, nextNumber) {
+  if (!number || !nextNumber) return false;
+  if (isSectionNumber(number)) return /^\d+\./.test(nextNumber);
+  return nextNumber.startsWith(`${number}.`);
+}
+
 async function importUtp(input) {
   const options = Buffer.isBuffer(input) ? { buffer: input } : { path: input };
   const result = await mammoth.convertToHtml(options);
   const root = parse(result.value);
   const tables = root.querySelectorAll("table");
-  if (!tables.length) {
-    throw new Error("В документе не найдено ни одной таблицы");
+  if (!tables.length) throw new Error("В документе не найдено ни одной таблицы");
+
+  const layout = pickUtpLayout(tables);
+  if (!layout) {
+    throw new Error("Не удалось распознать структуру таблицы УТП");
   }
 
-  const table = pickUtpTable(tables);
-  const rows = table.querySelectorAll("tr");
-  if (rows.length < 2) {
-    throw new Error("Таблица УТП пуста или не содержит данных");
-  }
-
-  // Ширина строк данных (наиболее частое число колонок среди строк-тем)
-  const widthCount = {};
-  for (const tr of rows) {
-    const cells = getCells(tr);
-    if (looksLikeTopicRow(cells)) {
-      widthCount[cells.length] = (widthCount[cells.length] || 0) + 1;
-    }
-  }
-  const dataWidth = Object.keys(widthCount).reduce(
-    (best, w) => (widthCount[w] > (widthCount[best] || 0) ? Number(w) : best),
-    0,
-  );
-
-  // Позиционная схема по умолчанию: №=0, тема=1, всего=2, лекции=3, практ.=4,
-  // примечание/кафедра — последняя колонка.
-  const cols = {
-    number: 0,
-    title: 1,
-    total: 2,
-    lecture: 3,
-    practice: 4,
-    // «Круглые столы» — отдельная колонка перед примечанием (когда ширина ≥ 7)
-    roundtable: dataWidth >= 7 ? dataWidth - 2 : -1,
-    note: dataWidth > 5 ? dataWidth - 1 : -1,
-  };
-
-  // Область шапки — строки до первой строки-темы. Только здесь ищем заголовки колонок,
-  // чтобы не принять строку «Всего» или данные за заголовок.
-  let firstTopicIdx = rows.length;
-  for (let i = 0; i < rows.length; i++) {
-    if (looksLikeTopicRow(getCells(rows[i]))) {
-      firstTopicIdx = i;
-      break;
-    }
-  }
-
-  // Если в шапке есть «плоская» строка заголовка шириной с данными — уточняем колонки часов
-  for (let i = 0; i < firstTopicIdx; i++) {
-    const cells = getCells(rows[i]);
-    if (cells.length !== dataWidth) continue;
-    if (isColumnNumberRow(cells)) continue;
-    const detected = detectColumns(cells);
-    if (detected.total >= 0 || detected.lecture >= 0 || detected.practice >= 0) {
-      if (detected.total >= 0) cols.total = detected.total;
-      if (detected.lecture >= 0) cols.lecture = detected.lecture;
-      if (detected.practice >= 0) cols.practice = detected.practice;
-      if (detected.roundtable >= 0) cols.roundtable = detected.roundtable;
-      if (detected.note >= 0) cols.note = detected.note;
-      break;
-    }
-  }
-
-  const topics = [];
-  let order = 0;
-  for (const tr of rows) {
-    const cells = getCells(tr);
-    if (cells.length < 3) continue;
-    if (isColumnNumberRow(cells)) continue;
-
-    // Форма итоговой аттестации (Зачёт/Экзамен) — отдельное занятие в расписании.
-    // По умолчанию занимает 6 академических часов (3 занятия по 2 часа).
-    const assessment = detectAssessment(cells);
+  const sourceTopics = [];
+  for (const row of layout.rows.slice(layout.numberRow + 1)) {
+    const assessment = detectAssessment(row);
     if (assessment) {
-      order += 1;
-      topics.push({
-        utp_number: "",
+      sourceTopics.push({
+        number: "",
         title: assessment,
-        total_hours: 6,
-        lecture_hours: 0,
-        practice_hours: 0,
-        roundtable_hours: 0,
+        total: 6,
         note: "",
-        is_section: 0,
-        excluded: 0,
-        status: "pending",
-        default_lesson_type: assessment,
-        sort_order: order,
+        isAssessment: true,
+        lessonHours: [{ type: assessment, hours: 6 }],
       });
       continue;
     }
 
-    if (isAggregateRow(cells)) continue;
-
-    const number = (cells[cols.number] || "").trim();
-    const isSection = isSectionNumber(number); // раздел (римская цифра)
-
-    const title = (cells[cols.title] || "").trim();
+    const { number, title } = topicIdentity(row, layout);
     if (!title) continue;
+    if (isAggregateTitle(title)) continue;
 
-    const total = toNumber(cells[cols.total]);
-    // Берём строки, похожие на темы/разделы: с номером либо с указанием часов
-    if (!isTopicNumber(number) && !isSection && total <= 0) continue;
+    const lessonHours = layout.lessonTypes
+      .map(({ column, type }) => ({ type, hours: toNumber(row[column]) }))
+      .filter(({ hours }) => hours > 0);
+    const total = toNumber(row[layout.total]);
+    if (!isTopicNumber(number) && !isSectionNumber(number) && total <= 0) continue;
 
-    order += 1;
-    topics.push({
-      utp_number: number.replace(/\.$/, "") || String(order),
+    sourceTopics.push({
+      number,
       title,
-      total_hours: total,
-      lecture_hours: toNumber(cells[cols.lecture]),
-      practice_hours: toNumber(cells[cols.practice]),
-      roundtable_hours: cols.roundtable >= 0 ? toNumber(cells[cols.roundtable]) : 0,
-      note: cols.note >= 0 ? (cells[cols.note] || "").trim() : "",
-      is_section: isSection ? 1 : 0,
-      excluded: 0,
-      status: "pending",
-      sort_order: order,
+      total,
+      note: layout.note >= 0 ? (row[layout.note] || "").trim() : "",
+      isAssessment: false,
+      lessonHours,
     });
   }
 
-  // Авто-исключение разделов-агрегатов: если за разделом (римская цифра) сразу
-  // следуют подтемы с десятичными номерами (1.1, 1.2…) — это сумма, её не
-  // планируем (excluded=1). Раздел без таких подтем (напр. «II. Особенности…»,
-  // за которым идёт форма аттестации) — самостоятельная тема, оставляем.
-  const isSubtopicNumber = (s) => /\d\./.test((s || "").trim());
-  for (let i = 0; i < topics.length; i++) {
-    if (!topics[i].is_section) continue;
-    const next = topics[i + 1];
-    topics[i].excluded = next && !next.is_section && isSubtopicNumber(next.utp_number) ? 1 : 0;
+  const topics = [];
+  for (let index = 0; index < sourceTopics.length; index += 1) {
+    const source = sourceTopics[index];
+    const next = sourceTopics[index + 1];
+    const hasChildren = !source.isAssessment && hasChildTopic(source.number, next?.number);
+    const isSection = isSectionNumber(source.number) || hasChildren;
+    const isAggregate = hasChildren;
+
+    // Строка-раздел остаётся одной строкой-суммой и не планируется. Обычная тема
+    // разворачивается в отдельную сущность для каждой заполненной колонки вида.
+    let entities;
+    if (isAggregate) {
+      entities = [{ type: null, hours: source.total }];
+    } else {
+      entities = [...source.lessonHours];
+      const specifiedHours = entities.reduce((sum, entity) => sum + entity.hours, 0);
+      if (source.total > specifiedHours) {
+        entities.push({ type: "Вид занятия не указан", hours: source.total - specifiedHours });
+      }
+      if (!entities.length) entities.push({ type: null, hours: 0 });
+    }
+
+    for (const entity of entities) {
+      const hours = entity.hours || 0;
+      topics.push({
+        utp_number: source.number,
+        title: source.title,
+        total_hours: hours,
+        ...legacyHours(entity.type, hours),
+        note: source.note,
+        is_section: isSection ? 1 : 0,
+        excluded: isAggregate || hours <= 0 ? 1 : 0,
+        status: "pending",
+        default_lesson_type: entity.type,
+        sort_order: topics.length + 1,
+      });
+    }
   }
 
   if (!topics.length) {
