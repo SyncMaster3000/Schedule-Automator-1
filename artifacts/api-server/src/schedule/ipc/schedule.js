@@ -2,6 +2,36 @@
 import { getDb, audit } from "../db/index.js";
 import { checkScheduleItem, rebuildLocksForItem } from "../services/conflicts.js";
 import { buildCells, buildExtendedCells } from "./periods.js";
+const HOURS_PER_SLOT = 2;
+
+// Синхронизировать очередь УТП с фактическими занятиями темы в расписании.
+// Удаление одного из нескольких слотов переводит тему в partial, последнего — в pending.
+function refreshTopicProgress(db, topicId) {
+  if (!topicId) return;
+  const topic = db.prepare("SELECT total_hours FROM program_topics WHERE id = ?").get(topicId);
+  if (!topic) return;
+  const usage = db
+    .prepare(
+      `SELECT COUNT(*) AS slot_count, MIN(period_id) AS period_id
+       FROM schedule_items WHERE topic_id = ?`
+    )
+    .get(topicId);
+  const slotCount = Number(usage?.slot_count || 0);
+  const totalHours = Number(topic.total_hours || 0);
+  const scheduledHours = Math.min(totalHours, slotCount * HOURS_PER_SLOT);
+  const status =
+    slotCount === 0
+      ? "pending"
+      : totalHours <= 0 || scheduledHours >= totalHours
+        ? "scheduled"
+        : "partial";
+  db.prepare(
+    `UPDATE program_topics
+     SET status = ?, assigned_period_id = ?, scheduled_hours = ?
+     WHERE id = ?`
+  ).run(status, slotCount ? usage.period_id : null, scheduledHours, topicId);
+}
+
 
 // Список занятий периода с расчётом конфликтов для каждого
 function listByPeriod(periodId, crossPeriod = false) {
@@ -57,8 +87,10 @@ export default {
     const endDt = `${data.date}T${data.end_time}:00`;
 
     let itemId = data.id;
+    let previousTopicId = null;
     if (itemId) {
       const prev = db.prepare("SELECT * FROM schedule_items WHERE id = ?").get(itemId);
+      previousTopicId = prev?.topic_id || null;
       const changedFields = [];
       if (prev && prev.topic_id !== (data.topic_id || null)) changedFields.push("тема");
       if (prev && prev.lesson_type !== (data.lesson_type || null)) changedFields.push("вид занятия");
@@ -134,6 +166,10 @@ export default {
 
     const saved = db.prepare("SELECT * FROM schedule_items WHERE id = ?").get(itemId);
     rebuildLocksForItem(saved);
+    if (previousTopicId && previousTopicId !== saved.topic_id) {
+      refreshTopicProgress(db, previousTopicId);
+    }
+    refreshTopicProgress(db, saved.topic_id);
 
     const conflicts = checkScheduleItem(
       {
@@ -152,10 +188,52 @@ export default {
   },
 
   "schedule:deleteItem": (id) => {
-    getDb().prepare("DELETE FROM schedule_items WHERE id = ?").run(id);
-    return { id };
+    const db = getDb();
+    const item = db.prepare("SELECT * FROM schedule_items WHERE id = ?").get(id);
+    if (!item) return { id, deleted: 0, skipped: 0 };
+    if (item.is_pinned) return { id, deleted: 0, skipped: 1, reason: "pinned" };
+    const tx = db.transaction(() => {
+      db.prepare("DELETE FROM locks WHERE schedule_item_id = ?").run(id);
+      db.prepare("DELETE FROM schedule_items WHERE id = ?").run(id);
+      refreshTopicProgress(db, item.topic_id);
+      audit(item.program_id, item.period_id, "schedule_item_deleted", { itemId: id });
+    });
+    tx();
+    return { id, deleted: 1, skipped: 0 };
   },
 
+
+  // Удалить выбранные занятия. Закреплённые строки всегда остаются на месте.
+  "schedule:bulkDelete": (data) => {
+    const db = getDb();
+    const ids = [...new Set(Array.isArray(data.itemIds) ? data.itemIds : [])];
+    if (!ids.length) return { deleted: 0, skipped: 0 };
+    let deleted = 0;
+    let skipped = 0;
+    let auditItem = null;
+    const affectedTopics = new Set();
+    const tx = db.transaction(() => {
+      for (const id of ids) {
+        const item = db.prepare("SELECT * FROM schedule_items WHERE id = ?").get(id);
+        if (!item) continue;
+        if (item.is_pinned) {
+          skipped += 1;
+          continue;
+        }
+        auditItem ||= item;
+        if (item.topic_id) affectedTopics.add(item.topic_id);
+        db.prepare("DELETE FROM locks WHERE schedule_item_id = ?").run(id);
+        db.prepare("DELETE FROM schedule_items WHERE id = ?").run(id);
+        deleted += 1;
+      }
+      for (const topicId of affectedTopics) refreshTopicProgress(db, topicId);
+      if (auditItem && deleted) {
+        audit(auditItem.program_id, auditItem.period_id, "schedule_items_deleted", { requested: ids.length, deleted, skipped }, data.author || null);
+      }
+    });
+    tx();
+    return { deleted, skipped };
+  },
   // Заполнить сетку периода: создать пустые занятия для всех ячеек (дата × слот),
   // где ещё ничего не стоит. Режим period.empty_slot_mode задаёт подпись пустых
   // ячеек ('self_study' → «Самоподготовка», иначе остаются пустыми блоками).
@@ -231,6 +309,8 @@ export default {
       data.lesson_type || topic.default_lesson_type || "Лекция",
       data.itemId
     );
+    if (item.topic_id && item.topic_id !== data.topic_id) refreshTopicProgress(db, item.topic_id);
+    refreshTopicProgress(db, data.topic_id);
     const saved = db.prepare("SELECT * FROM schedule_items WHERE id = ?").get(data.itemId);
     rebuildLocksForItem(saved);
     audit(
@@ -251,6 +331,7 @@ export default {
     if (!item) throw new Error("Занятие не найдено");
     const period = db.prepare("SELECT * FROM periods WHERE id = ?").get(item.period_id);
     const selfStudy = period && period.empty_slot_mode === "self_study";
+    if (item.is_pinned) return { id: data.itemId, restored: 0, skipped: 1, reason: "pinned" };
     const prevTopic = item.topic_id
       ? db.prepare("SELECT title FROM program_topics WHERE id = ?").get(item.topic_id)
       : null;
@@ -263,6 +344,7 @@ export default {
       selfStudy ? "Самоподготовка" : null,
       data.itemId
     );
+    refreshTopicProgress(db, item.topic_id);
     db.prepare("DELETE FROM locks WHERE schedule_item_id = ?").run(data.itemId);
     audit(
       item.program_id,
@@ -271,7 +353,7 @@ export default {
       { itemId: data.itemId, title: prevTopic ? prevTopic.title : null },
       data.author || null
     );
-    return { id: data.itemId };
+    return { id: data.itemId, restored: 1, skipped: 0 };
   },
 
   // Массовое редактирование занятий: применить общие поля к набору занятий.
@@ -290,6 +372,16 @@ export default {
         const roomId = f.room_id !== undefined ? f.room_id || null : item.room_id;
         const groupLabel =
           f.group_label !== undefined ? f.group_label || null : item.group_label;
+        if (f.group_label !== undefined && groupLabel) {
+          const allowed = db
+            .prepare(
+              "SELECT id FROM groups WHERE period_id = ? AND is_active = 1 AND name = ?"
+            )
+            .get(item.period_id, groupLabel);
+          if (!allowed) {
+            throw new Error(`Группа «${groupLabel}» не выбрана для этого расписания`);
+          }
+        }
         const lessonType = f.lesson_type != null ? f.lesson_type : item.lesson_type;
         const note = f.note !== undefined ? f.note || null : item.note;
         db.prepare(
@@ -483,22 +575,29 @@ export default {
       .all(periodId);
 
     const idSet = new Set(itemIds);
-    // Из выделенных перемещаем только незакреплённые; закреплённые остаются на месте
+    // Из выделенных перемещаем только незакреплённые; закреплённые остаются в своих ячейках.
     const selected = allItems.filter((it) => idSet.has(it.id) && !it.is_pinned);
-    // Остальные (включая закреплённые из выделения)
-    const rest = allItems.filter((it) => !idSet.has(it.id) || it.is_pinned);
+    const skippedPinned = allItems.filter((it) => idSet.has(it.id) && it.is_pinned).length;
+    if (!selected.length) return { moved: 0, skippedPinned };
+    const rest = allItems.filter((it) => !idSet.has(it.id) && !it.is_pinned);
+    const pinned = allItems.filter((it) => it.is_pinned);
 
     // Найти целевой индекс в сетке ячеек (0-based)
     const targetKey = `${targetDate} ${targetStartTime}`;
     const targetCellIdx = cells.findIndex((c) => `${c.date} ${c.start}` === targetKey);
     if (targetCellIdx < 0) throw new Error("Целевой слот не найден в сетке периода");
 
-    // Перестроить полный порядок: rest[0..insertAt-1] + selected + rest[insertAt..]
-    // После удаления M выбранных занятий из allItems, элементы в rest получают ячейки
-    // 0..rest.length-1. Чтобы первый выбранный оказался ровно в ячейке targetCellIdx,
-    // нужно поставить перед ним ровно targetCellIdx элементов rest.
-    // Если targetCellIdx > rest.length — прикрепляем в конец.
-    const insertAt = Math.min(targetCellIdx, rest.length);
+    const pinnedCellIndexes = new Set(
+      pinned
+        .map((it) => cells.findIndex((cell) => cell.date === it.date && cell.start === it.start_time))
+        .filter((index) => index >= 0)
+    );
+    const availableCellIndexes = cells
+      .map((_, index) => index)
+      .filter((index) => !pinnedCellIndexes.has(index));
+    let insertAt = availableCellIndexes.findIndex((index) => index >= targetCellIdx);
+    if (insertAt < 0) throw new Error("После целевого слота нет свободных незакреплённых ячеек");
+    insertAt = Math.min(insertAt, rest.length);
 
     const newOrder = [
       ...rest.slice(0, insertAt),
@@ -506,13 +605,13 @@ export default {
       ...rest.slice(insertAt),
     ];
 
-    if (newOrder.length > cells.length)
+    if (newOrder.length > availableCellIndexes.length)
       throw new Error("Недостаточно слотов в сетке для перемещения занятий");
 
     const tx = db.transaction(() => {
       for (let i = 0; i < newOrder.length; i++) {
         const it = newOrder[i];
-        const cell = cells[i];
+        const cell = cells[availableCellIndexes[i]];
         if (!cell) continue;
         if (it.date === cell.date && it.start_time === cell.start) continue;
         db.prepare(
@@ -524,10 +623,11 @@ export default {
           `${cell.date}T${cell.end}:00`,
           it.id
         );
+        rebuildLocksForItem(db.prepare("SELECT * FROM schedule_items WHERE id = ?").get(it.id));
       }
     });
     tx();
-    return { moved: selected.length };
+    return { moved: selected.length, skippedPinned };
   },
 
   // Снять метку изменения с занятия (пользователь просмотрел изменение).

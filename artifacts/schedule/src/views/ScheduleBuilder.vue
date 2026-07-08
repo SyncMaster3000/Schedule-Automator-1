@@ -74,6 +74,8 @@ const selected = ref([]); // id выбранных занятий
 const bulkOpen = ref(false);
 const bulk = ref({ teacher_ids: [], room_id: null, applyTeachers: true, applyRoom: false });
 const bulkTeacherFilter = ref("");
+const bulkTeacherMixed = ref(false);
+const bulkRoomMixed = ref(false);
 
 // --- Массовое смещение (T5) ---
 const bulkShiftOpen = ref(false);
@@ -180,25 +182,55 @@ function toggleSelect(id) {
   if (i >= 0) selected.value.splice(i, 1);
   else selected.value.push(id);
 }
+const selectableItems = computed(() => items.value.filter((it) => !isEmptyItem(it)));
 const allSelected = computed(
-  () => items.value.length > 0 && selected.value.length === items.value.length
+  () => selectableItems.value.length > 0 && selected.value.length === selectableItems.value.length
 );
-// Уникальные непустые номера групп из текущего списка занятий — для datalist
-const usedGroupLabels = computed(() => [
-  ...new Set(items.value.map((it) => it.group_label).filter(Boolean)),
-]);
+const usedGroupLabels = computed(() =>
+  groups.value.filter((group) => group.is_active).map((group) => group.name)
+);
 function toggleSelectAll() {
-  selected.value = allSelected.value ? [] : items.value.map((it) => it.id);
+  selected.value = allSelected.value ? [] : selectableItems.value.map((it) => it.id);
+}
+function selectableItemsForDay(date) {
+  return items.value.filter((it) => it.date === date && !isEmptyItem(it));
+}
+function isDaySelected(date) {
+  const dayItems = selectableItemsForDay(date);
+  return dayItems.length > 0 && dayItems.every((it) => selected.value.includes(it.id));
+}
+function toggleSelectDay(date) {
+  const ids = selectableItemsForDay(date).map((it) => it.id);
+  const allDaySelected = ids.length > 0 && ids.every((id) => selected.value.includes(id));
+  const next = new Set(selected.value);
+  for (const id of ids) allDaySelected ? next.delete(id) : next.add(id);
+  selected.value = [...next];
 }
 
 function openBulk() {
+  const chosen = items.value.filter((it) => selected.value.includes(it.id));
+  if (!chosen.length) return;
+  const teacherSets = chosen.map((it) => [...(it.teacher_ids || [])].sort((a, b) => a - b));
+  const firstTeachers = teacherSets[0] || [];
+  const sameTeachers = teacherSets.every(
+    (ids) => JSON.stringify(ids) === JSON.stringify(firstTeachers)
+  );
+  const teacherUnion = [...new Set(teacherSets.flat())];
+  const roomIds = chosen.map((it) => it.room_id || null);
+  const sameRoom = roomIds.every((id) => id === roomIds[0]);
+  const lessonTypes = chosen.map((it) => it.lesson_type || "");
+  const sameLessonType = lessonTypes.every((type) => type === lessonTypes[0]);
+  const groupLabels = chosen.map((it) => it.group_label || "");
+  const sameGroup = groupLabels.every((label) => label === groupLabels[0]);
+  bulkTeacherMixed.value = !sameTeachers;
+  bulkRoomMixed.value = !sameRoom;
   bulk.value = {
-    teacher_ids: [],
-    room_id: null,
-    lesson_type: "",
-    group_label: "",
-    applyTeachers: true,
-    applyRoom: false,
+    teacher_ids: sameTeachers ? firstTeachers : teacherUnion,
+    room_id: sameRoom ? roomIds[0] : null,
+    lesson_type: sameLessonType ? lessonTypes[0] : "",
+    group_label: sameGroup ? groupLabels[0] : "",
+    applyTeachers: sameTeachers,
+    applyRoom: sameRoom && roomIds[0] != null,
     applyLessonType: false,
     applyGroupLabel: false,
   };
@@ -302,6 +334,8 @@ async function load() {
   try {
     const data = await api.schedule.listByPeriod(periodId.value, crossPeriod.value);
     period.value = data.period;
+    const currentIds = new Set(items.value.map((it) => it.id));
+    selected.value = selected.value.filter((id) => currentIds.has(id));
     items.value = data.items.map(normalize);
     settings.value = {
       work_week: data.period.work_week || "mon-fri",
@@ -331,11 +365,11 @@ async function load() {
 
 // Темы, ещё не распределённые в расписание (для замены из нераспределённых).
 const unallocatedTopics = computed(() => {
-  const used = new Set(
-    items.value.map((it) => it.topic_id).filter((id) => id != null)
-  );
   return topics.value.filter(
-    (t) => !t.excluded && !t.is_section && !used.has(t.id)
+    (t) =>
+      !t.excluded &&
+      !t.is_section &&
+      (t.status === "pending" || t.status === "partial" || Number(t.scheduled_hours) < Number(t.total_hours))
   );
 });
 
@@ -461,10 +495,21 @@ async function assignTopic(it, topicId) {
 
 // Вернуть занятие в очередь нераспределённых (освободить слот).
 async function restoreToQueue(it) {
+  if (it.is_pinned) {
+    error.value = "Закреплённое занятие нельзя вернуть в очередь. Сначала открепите его.";
+    return;
+  }
   pushUndo("возврат в очередь нераспределённых");
   error.value = "";
   try {
-    await api.schedule.restoreToQueue({ itemId: it.id, author: author.value || null });
+    const res = await api.schedule.restoreToQueue({
+      itemId: it.id,
+      author: author.value || null,
+    });
+    if (res.skipped) {
+      error.value = "Закреплённое занятие не изменено";
+      return;
+    }
     info.value = "Занятие возвращено в очередь нераспределенных";
     if (editing.value && editing.value.id === it.id) editing.value = null;
     await load();
@@ -625,10 +670,19 @@ async function deleteItem() {
     editing.value = null;
     return;
   }
-  if (!confirm("Удалить занятие?")) return;
+  if (editing.value.is_pinned) {
+    error.value = "Закреплённое занятие нельзя удалить. Сначала открепите его.";
+    return;
+  }
+  if (!confirm("Удалить занятие? Тема вернётся в очередь нераспределённых.")) return;
   pushUndo("удаление занятия");
-  await api.schedule.deleteItem(editing.value.id);
+  const res = await api.schedule.deleteItem(editing.value.id);
+  if (res.skipped) {
+    error.value = "Закреплённое занятие не удалено";
+    return;
+  }
   editing.value = null;
+  info.value = "Занятие удалено; тема возвращена в очередь УТП";
   await load();
 }
 
@@ -656,10 +710,30 @@ async function onDragEnd(evt) {
     return;
   }
   error.value = "";
-  pushUndo(dragMode.value === "swap" ? "перестановка занятий" : "сдвиг ряда");
+  const dragged = dragOrder.value[evt?.oldIndex];
+  const targetSlot = dragSlots.value[evt?.newIndex];
+  const multiSelectionDrag = Boolean(
+    dragged && targetSlot && selected.value.length > 1 && selected.value.includes(dragged.id)
+  );
+  pushUndo(
+    multiSelectionDrag
+      ? "перемещение выделенных занятий"
+      : dragMode.value === "swap" ? "перестановка занятий" : "сдвиг ряда"
+  );
   let failMsg = "";
   try {
-    if (dragMode.value === "swap") {
+    if (multiSelectionDrag) {
+      if (dragged.is_pinned) throw new Error("Закреплённое занятие нельзя перетаскивать");
+      const res = await api.schedule.moveSelected({
+        itemIds: [...selected.value],
+        targetDate: targetSlot.date,
+        targetStartTime: targetSlot.start_time,
+        periodId: periodId.value,
+      });
+      info.value = `Перемещено занятий: ${res.moved}` +
+        (res.skippedPinned ? `; закреплённых пропущено: ${res.skippedPinned}` : "");
+      selected.value = [];
+    } else if (dragMode.value === "swap") {
       await swapItems(evt);
     } else {
       await shiftItems(evt);
@@ -809,6 +883,32 @@ async function bulkPin(pinned) {
   }
 }
 
+async function bulkDeleteSelected() {
+  if (!selected.value.length) return;
+  const chosen = items.value.filter((it) => selected.value.includes(it.id));
+  const pinnedCount = chosen.filter((it) => it.is_pinned).length;
+  const deletableCount = chosen.length - pinnedCount;
+  if (!deletableCount) {
+    info.value = "Все выбранные занятия закреплены и не могут быть удалены";
+    return;
+  }
+  const suffix = pinnedCount ? ` Закреплённых будет пропущено: ${pinnedCount}.` : "";
+  if (!confirm(`Удалить выбранные занятия: ${deletableCount}?${suffix}`)) return;
+  pushUndo("массовое удаление занятий");
+  error.value = "";
+  try {
+    const res = await api.schedule.bulkDelete({
+      itemIds: [...selected.value],
+      author: author.value || null,
+    });
+    selected.value = [];
+    info.value = `Удалено занятий: ${res.deleted}; закреплённых пропущено: ${res.skipped}`;
+    await load();
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
 // --- T5: Массовое смещение вниз ---
 function openBulkShift() {
   const first = items.value.find((it) => !isEmptyItem(it));
@@ -862,7 +962,8 @@ async function applyMoveSelected() {
       periodId: periodId.value,
     });
     moveOpen.value = false;
-    info.value = `Перемещено занятий: ${res.moved}`;
+    info.value = `Перемещено занятий: ${res.moved}` +
+      (res.skippedPinned ? `; закреплённых пропущено: ${res.skippedPinned}` : "");
     selected.value = [];
     await load();
   } catch (e) {
@@ -1228,6 +1329,14 @@ onUnmounted(() => {
         <input type="checkbox" :checked="allSelected" @change="toggleSelectAll" />
         Выбрать все
       </label>
+      <button
+        v-if="selected.length"
+        class="btn-danger"
+        title="Удалить выбранные незакреплённые занятия и вернуть их темы в очередь УТП"
+        @click="bulkDeleteSelected"
+      >
+        Удалить выбранные
+      </button>
       <span class="text-slate-500">Выбрано: {{ selected.length }}</span>
       <button class="btn-secondary ml-auto" :disabled="!selected.length" @click="openBulk">
         Назначить преподавателей / аудиторию
@@ -1278,6 +1387,13 @@ onUnmounted(() => {
         >
           <span class="h-px flex-1 bg-brand-100"></span>
           {{ formatDayHeader(row.date) }}
+          <label class="flex items-center gap-1 text-xs font-normal text-slate-600" title="Выбрать или снять все занятия этого дня">
+            <input
+              type="checkbox"
+              :checked="isDaySelected(row.date)"
+              @change="toggleSelectDay(row.date)"
+            /> День
+          </label>
           <select
             v-if="grids.length"
             :value="dayGrid[row.date] ?? ''"
@@ -1381,6 +1497,13 @@ onUnmounted(() => {
         >
           <span class="h-px flex-1 bg-brand-100"></span>
           {{ formatDayHeader(it.date) }}
+          <label class="flex items-center gap-1 text-xs font-normal text-slate-600" title="Выбрать или снять все занятия этого дня">
+            <input
+              type="checkbox"
+              :checked="isDaySelected(it.date)"
+              @change="toggleSelectDay(it.date)"
+            /> День
+          </label>
           <select
             v-if="grids.length"
             :value="dayGrid[it.date] ?? ''"
@@ -1617,11 +1740,18 @@ onUnmounted(() => {
       </div>
 
       <template #footer>
-        <button v-if="editing.id" class="btn-danger mr-auto" @click="deleteItem">Удалить</button>
+        <button
+          v-if="editing.id"
+          class="btn-danger mr-auto"
+          :disabled="Boolean(editing.is_pinned)"
+          :title="editing.is_pinned ? 'Сначала открепите занятие' : 'Удалить занятие и вернуть тему в очередь УТП'"
+          @click="deleteItem"
+        >Удалить</button>
         <button
           v-if="editing.id && editing.topic_id"
           class="btn-ghost text-slate-500"
-          title="Очистить занятие и вернуть тему в список нераспределенных"
+          :disabled="Boolean(editing.is_pinned)"
+          :title="editing.is_pinned ? 'Сначала открепите занятие' : 'Очистить занятие и вернуть тему в список нераспределённых'"
           @click="restoreToQueue(editing)"
         >
           Вернуть в очередь
@@ -1673,6 +1803,9 @@ onUnmounted(() => {
             {{ t.fio }}
           </label>
         </div>
+        <p v-if="bulkTeacherMixed" class="mt-1 text-xs text-amber-600">
+          У выбранных занятий разные преподаватели; показаны все назначенные значения.
+        </p>
         <p class="mt-1 text-xs text-slate-400">
           Если не выбрать ни одного — преподаватели будут очищены у выбранных занятий.
         </p>
@@ -1690,6 +1823,9 @@ onUnmounted(() => {
         <option :value="null">— не выбрана —</option>
         <option v-for="r in rooms" :key="r.id" :value="r.id">{{ r.number }}</option>
       </select>
+      <p v-if="bulkRoomMixed" class="mt-1 text-xs text-amber-600">
+        У выбранных занятий разные аудитории; выберите аудиторию для применения ко всем.
+      </p>
 
       <label class="mb-2 mt-4 flex items-center gap-2 text-sm font-medium text-slate-700">
         <input type="checkbox" v-model="bulk.applyLessonType" />
@@ -1704,20 +1840,22 @@ onUnmounted(() => {
       />
 
       <label class="mb-2 mt-4 flex items-center gap-2 text-sm font-medium text-slate-700">
-        <input type="checkbox" v-model="bulk.applyGroupLabel" />
+        <input type="checkbox" v-model="bulk.applyGroupLabel" :disabled="!groups.some(g => g.is_active)" />
         Назначить номер группы
       </label>
-      <input
+      <select
         v-model="bulk.group_label"
-        type="text"
         class="input"
         :disabled="!bulk.applyGroupLabel"
-        placeholder="напр. 1, 2, А, Б …"
-        list="bulk-group-datalist"
-      />
-      <datalist id="bulk-group-datalist">
-        <option v-for="lbl in usedGroupLabels" :key="lbl" :value="lbl" />
-      </datalist>
+      >
+        <option value="">— без группы —</option>
+        <option v-for="g in groups.filter(g => g.is_active)" :key="g.id" :value="g.name">
+          {{ g.name }}
+        </option>
+      </select>
+      <p v-if="!groups.some(g => g.is_active)" class="mt-1 text-xs text-slate-400">
+        Для расписания не выбраны учебные группы.
+      </p>
 
       <template #footer>
         <button class="btn-secondary" @click="bulkOpen = false">Отмена</button>

@@ -165,6 +165,7 @@ export const api = {
       call("schedule:listByPeriod", { periodId, crossPeriod }),
     saveItem: (data) => call("schedule:saveItem", data),
     deleteItem: (id) => call("schedule:deleteItem", id),
+    bulkDelete: (data) => call("schedule:bulkDelete", data),
     fillGrid: (periodId) => call("schedule:fillGrid", { periodId }),
     assignTopic: (data) => call("schedule:assignTopic", data),
     restoreToQueue: (data) => call("schedule:restoreToQueue", data),
