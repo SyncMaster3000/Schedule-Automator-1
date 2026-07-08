@@ -135,6 +135,7 @@ export const api = {
     create: (data) => call("periods:create", data),
     update: (data) => call("periods:update", data),
     updateSettings: (data) => call("periods:updateSettings", data),
+    setDayGrid: (data) => call("periods:setDayGrid", data),
     remove: (id) => call("periods:delete", id),
     autofill: (data) => call("periods:autofill", data),
   },

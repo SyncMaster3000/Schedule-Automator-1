@@ -244,13 +244,31 @@ export default {
     const period = db.prepare("SELECT * FROM periods WHERE id = ?").get(periodId);
     if (!period) throw new Error("Период не найден");
 
-    const timeGrid = JSON.parse(period.time_grid_json || "[]");
-    const cells = buildCells(
+    const defaultGrid = JSON.parse(period.time_grid_json || "[]");
+    const defaultCells = buildCells(
       period.start_date,
       period.end_date,
-      timeGrid,
+      defaultGrid,
       period.work_week || "mon-fri"
     );
+    const dates = [...new Set(defaultCells.map((cell) => cell.date))];
+    const dayGridIds = JSON.parse(period.day_grids_json || "{}");
+    const gridCache = new Map();
+    const cells = [];
+    for (const date of dates) {
+      const gridId = Number(dayGridIds[date] || 0);
+      let slots = defaultGrid;
+      if (gridId) {
+        if (!gridCache.has(gridId)) {
+          const row = db.prepare("SELECT slots_json FROM time_grids WHERE id = ?").get(gridId);
+          gridCache.set(gridId, row ? JSON.parse(row.slots_json || "[]") : defaultGrid);
+        }
+        slots = gridCache.get(gridId);
+      }
+      cells.push(
+        ...buildCells(date, date, slots, period.work_week || "mon-fri")
+      );
+    }
 
     const existing = db
       .prepare("SELECT date, start_time FROM schedule_items WHERE period_id = ?")

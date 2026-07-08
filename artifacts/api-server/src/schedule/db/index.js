@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS periods (
   start_date TEXT NOT NULL,
   end_date TEXT NOT NULL,
   time_grid_json TEXT NOT NULL DEFAULT '[]',
+  day_grids_json TEXT NOT NULL DEFAULT '{}',
   status TEXT NOT NULL DEFAULT 'active',
   sort_order INTEGER NOT NULL DEFAULT 0,
   FOREIGN KEY (program_id) REFERENCES programs(id) ON DELETE CASCADE
@@ -334,6 +335,8 @@ function runMigrations() {
   addColumnIfMissing("periods", "work_week", "work_week TEXT NOT NULL DEFAULT 'mon-fri'");
   // Как показывать пустые слоты: 'empty' (пустой блок) | 'self_study' (Самоподготовка).
   addColumnIfMissing("periods", "empty_slot_mode", "empty_slot_mode TEXT NOT NULL DEFAULT 'empty'");
+  // Выбранная пользователем сетка учебных часов для отдельных дат периода.
+  addColumnIfMissing("periods", "day_grids_json", "day_grids_json TEXT NOT NULL DEFAULT '{}'");
   // Групповое расписание на две группы и раздельные лекции.
   addColumnIfMissing("periods", "group_mode", "group_mode INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing("periods", "separate_lectures", "separate_lectures INTEGER NOT NULL DEFAULT 0");

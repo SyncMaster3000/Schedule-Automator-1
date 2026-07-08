@@ -334,9 +334,10 @@ async function load() {
   try {
     const data = await api.schedule.listByPeriod(periodId.value, crossPeriod.value);
     period.value = data.period;
+    dayGrid.value = JSON.parse(data.period.day_grids_json || "{}");
+    items.value = data.items.map(normalize);
     const currentIds = new Set(items.value.map((it) => it.id));
     selected.value = selected.value.filter((id) => currentIds.has(id));
-    items.value = data.items.map(normalize);
     settings.value = {
       work_week: data.period.work_week || "mon-fri",
       empty_slot_mode: data.period.empty_slot_mode || "empty",
@@ -1167,6 +1168,11 @@ async function applyDayGrid(date, gridId) {
     error.value = "";
   }
   try {
+    await api.periods.setDayGrid({
+      id: periodId.value,
+      date,
+      gridId,
+    });
     for (let i = 0; i < dayItems.length && i < lessonSlots.length; i++) {
       const it = dayItems[i];
       const s = lessonSlots[i];

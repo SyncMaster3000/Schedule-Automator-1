@@ -170,6 +170,31 @@ const handlers = {
     return { id: data.id };
   },
 
+  // Сохранить выбор сетки учебных часов для конкретной даты периода.
+  "periods:setDayGrid": (data) => {
+    const db = getDb();
+    const period = db.prepare("SELECT * FROM periods WHERE id = ?").get(data.id);
+    if (!period) throw new Error("Период не найден");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(data.date || "")) throw new Error("Некорректная дата");
+    const dayGrids = JSON.parse(period.day_grids_json || "{}");
+    if (data.gridId) {
+      const grid = db.prepare("SELECT id FROM time_grids WHERE id = ?").get(data.gridId);
+      if (!grid) throw new Error("Сетка учебных часов не найдена");
+      dayGrids[data.date] = Number(data.gridId);
+    } else {
+      delete dayGrids[data.date];
+    }
+    db.prepare("UPDATE periods SET day_grids_json = ? WHERE id = ?").run(
+      JSON.stringify(dayGrids),
+      data.id
+    );
+    audit(period.program_id, period.id, "day_grid_selected", {
+      date: data.date,
+      gridId: data.gridId || null,
+    });
+    return { id: data.id, date: data.date, gridId: data.gridId || null };
+
+  },
   "periods:delete": (id) => {
     getDb().prepare("DELETE FROM periods WHERE id = ?").run(id);
     return { id };
