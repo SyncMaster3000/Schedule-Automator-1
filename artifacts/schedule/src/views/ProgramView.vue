@@ -1,5 +1,5 @@
 <script setup>
-// Карточка программы: темы УТП (импорт), периоды с группами и автозаполнением, версии
+// Карточка программы: темы УТП (импорт), периоды с группами и автозаполнением, проекты
 import { ref, computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import api from "../api";
@@ -28,11 +28,6 @@ const showPeriod = ref(false);
 const editingPeriodId = ref(null); // null = новый, число = редактирование
 const periodForm = ref(blankPeriod());
 const grids = ref([]); // именованные сетки учебных часов
-
-// Модал «Использовать версию как шаблон»
-const fromTemplateOpen = ref(false);
-const fromTemplateVersion = ref(null);
-const fromTemplateForm = ref({ newTitle: "", newStartDate: "" });
 
 // --- Утверждение: даты утверждения и подписания заполняются здесь, а не при
 // создании черновика; они попадают в шапку и подписи экспорта .docx.
@@ -192,50 +187,39 @@ async function savePeriod() {
   }
 }
 
-async function renameVersion(v) {
-  const label = prompt("Новое название версии:", v.version_label);
+async function renameProject(v) {
+  const label = prompt("Новое название проекта:", v.version_label);
   if (!label || label === v.version_label) return;
   error.value = "";
   try {
     await api.versions.rename({ id: v.id, version_label: label });
     v.version_label = label;
-    info.value = "Версия переименована";
+    info.value = "Проект переименован";
   } catch (e) {
     error.value = e.message;
   }
 }
 
-async function deleteVersion(id) {
-  if (!confirm("Удалить эту версию? Действие необратимо.")) return;
+async function deleteProject(id) {
+  if (!confirm("Удалить этот проект? Действие необратимо.")) return;
   error.value = "";
   try {
     await api.versions.delete(id);
-    info.value = "Версия удалена";
+    info.value = "Проект удален";
     await loadAll();
   } catch (e) {
     error.value = e.message;
   }
 }
 
-function openFromTemplate(v) {
-  fromTemplateVersion.value = v;
-  fromTemplateForm.value = {
-    newTitle: `${program.value?.title || "Расписание"} (из версии)`,
-    newStartDate: "",
-  };
-  fromTemplateOpen.value = true;
-}
-
-async function applyFromTemplate() {
+async function openProject(v) {
+  if (!confirm(`Открыть проект «${v.version_label}»? Текущее расписание будет заменено этим снимком.`)) return;
   error.value = "";
   try {
-    const res = await api.versions.fromTemplate({
-      versionId: fromTemplateVersion.value.id,
-      newTitle: fromTemplateForm.value.newTitle,
-      newStartDate: fromTemplateForm.value.newStartDate || null,
-    });
-    fromTemplateOpen.value = false;
-    info.value = `Новое расписание создано. Перейдите к нему на главной странице.`;
+    const res = await api.versions.restore(v.id);
+    const missing = res.missing?.length ? `; сброшено удалённых ресурсов: ${res.missing.length}` : "";
+    info.value = `Проект открыт${missing}`;
+    await loadAll();
   } catch (e) {
     error.value = e.message;
   }
@@ -274,15 +258,15 @@ async function confirmApprove() {
   }
 }
 
-async function saveVersion() {
-  const label = prompt("Название версии:", `Версия от ${new Date().toLocaleDateString("ru-RU")}`);
+async function saveProject() {
+  const label = prompt("Название проекта:", `Проект от ${new Date().toLocaleDateString("ru-RU")}`);
   if (!label) return;
   await api.versions.create({
     programId: programId.value,
     version_label: label,
-    status: program.value.status,
+    status: "draft",
   });
-  info.value = "Версия сохранена в архив";
+  info.value = "Проект сохранен";
   await loadAll();
 }
 
@@ -324,7 +308,7 @@ onMounted(async () => {
         <p class="text-sm text-slate-500">{{ program.description || "Без описания" }}</p>
       </div>
       <div class="flex gap-2">
-        <button class="btn-secondary" @click="saveVersion">Сохранить версию</button>
+        <button class="btn-secondary" @click="saveProject">Сохранить проект</button>
         <button class="btn-secondary" @click="exportDocx()">Экспорт в .docx</button>
         <button class="btn-primary" @click="approve">Утвердить</button>
       </div>
@@ -377,7 +361,7 @@ onMounted(async () => {
         Периоды ({{ periods.length }})
       </button>
       <button class="tab" :class="{ 'tab-active': tab === 'versions' }" @click="tab = 'versions'">
-        Версии ({{ versions.length }})
+        Проекты ({{ versions.length }})
       </button>
     </div>
 
@@ -481,14 +465,14 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- Версии -->
+    <!-- Проекты -->
     <div v-if="tab === 'versions'">
       <div class="mb-4 flex justify-between">
-        <p class="text-sm text-slate-500">Снимки расписания. Можно переименовать, удалить или развернуть в новое расписание.</p>
-        <button class="btn-secondary" @click="saveVersion">+ Сохранить текущую версию</button>
+        <p class="text-sm text-slate-500">Проекты — сохраненные снимки текущего расписания. Их можно открыть, переименовать или удалить.</p>
+        <button class="btn-secondary" @click="saveProject">+ Сохранить проект</button>
       </div>
       <div v-if="!versions.length" class="card p-10 text-center text-slate-400">
-        Версий пока нет. Нажмите «Сохранить текущую версию».
+        Проектов пока нет. Нажмите «Сохранить проект».
       </div>
       <div v-else class="card divide-y divide-slate-100">
         <div v-for="v in versions" :key="v.id" class="flex items-center justify-between px-5 py-4">
@@ -496,25 +480,24 @@ onMounted(async () => {
             <div class="font-medium text-slate-800">{{ v.version_label }}</div>
             <div class="text-xs text-slate-400">
               {{ new Date(v.created_at).toLocaleString("ru-RU") }}
-              <span v-if="v.status" class="ml-1">· {{ v.status }}</span>
               <span v-if="v.note" class="ml-1 italic">· {{ v.note }}</span>
             </div>
           </div>
           <div class="ml-4 flex shrink-0 gap-2">
             <button
               class="btn-secondary py-1 px-2 text-xs"
-              title="Создать новое расписание на основе этой версии"
-              @click="openFromTemplate(v)"
-            >Использовать как шаблон</button>
+              title="Открыть сохраненный проект"
+              @click="openProject(v)"
+            >Открыть</button>
             <button
               class="btn-secondary py-1 px-2 text-xs"
               title="Переименовать"
-              @click="renameVersion(v)"
+              @click="renameProject(v)"
             >✏️ Переименовать</button>
             <button
               class="btn-ghost py-1 px-2 text-xs text-red-500"
-              title="Удалить версию"
-              @click="deleteVersion(v.id)"
+              title="Удалить проект"
+              @click="deleteProject(v.id)"
             >Удалить</button>
           </div>
         </div>
@@ -565,34 +548,6 @@ onMounted(async () => {
       <template #footer>
         <button class="btn-secondary" @click="importPreview = null">Отмена</button>
         <button class="btn-primary" @click="confirmImport">Импортировать</button>
-      </template>
-    </AppModal>
-
-    <!-- Модал: развернуть версию как шаблон -->
-    <AppModal v-if="fromTemplateOpen" title="Создать расписание из версии" @close="fromTemplateOpen = false">
-      <div class="space-y-3 text-sm">
-        <p class="text-slate-500">
-          Будет создано новое расписание с теми же темами, периодами и занятиями, что в версии
-          <strong>«{{ fromTemplateVersion?.version_label }}»</strong>.
-        </p>
-        <div>
-          <label class="label">Название нового расписания</label>
-          <input v-model="fromTemplateForm.newTitle" class="input" placeholder="Название расписания" />
-        </div>
-        <div>
-          <label class="label">Новая дата начала первого периода (необязательно)</label>
-          <input v-model="fromTemplateForm.newStartDate" type="date" class="input" />
-          <p class="mt-1 text-xs text-slate-400">
-            Если указать — все даты занятий сдвинутся пропорционально.
-          </p>
-        </div>
-        <div v-if="error" class="rounded bg-red-50 px-3 py-2 text-red-700">{{ error }}</div>
-      </div>
-      <template #footer>
-        <button class="btn-secondary" @click="fromTemplateOpen = false">Отмена</button>
-        <button class="btn-primary" :disabled="!fromTemplateForm.newTitle" @click="applyFromTemplate">
-          Создать расписание
-        </button>
       </template>
     </AppModal>
 

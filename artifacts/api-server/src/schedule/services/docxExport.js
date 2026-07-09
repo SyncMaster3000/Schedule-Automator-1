@@ -288,12 +288,14 @@ async function exportSchedule(data) {
   const zip = new PizZip(templateBuf);
   let xml = zip.file("word/document.xml").asText();
 
+  const title = program.description || program.title || "";
+  const scheduleTitle = program.status === "approved" ? title : `ПРОЕКТ. ${title}`.trim();
   // Заменяем 9 текстовых меток.
   const markers = {
     ApproverPosition: program.approver_title || "",
     ApproverName: program.approver_name || "",
     ApproveDate: program.approve_date || "",
-    ScheduleTitle: program.description || program.title || "",
+    ScheduleTitle: scheduleTitle,
     DateBegin: dateBegin,
     DateEnd: dateEnd,
     SignerPosition: program.signer_title || "",

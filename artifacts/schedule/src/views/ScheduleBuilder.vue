@@ -474,7 +474,7 @@ function auditText(a) {
     version_created: "Создана версия",
     topics_imported: "Импорт УТП",
     topics_appended: "Добавлены темы из УТП",
-    created_from_template: "Создано из шаблона",
+    project_restored: "Открыт проект",
   };
   let base = map[a.action] || a.action;
   try {

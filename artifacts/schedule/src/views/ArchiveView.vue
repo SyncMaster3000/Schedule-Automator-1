@@ -1,19 +1,14 @@
 <script setup>
 // Архив расписаний: папки по типу обучения → годам → месяцам.
-// Поиск, просмотр, создание нового расписания из шаблона.
+// Поиск и удаление архивных расписаний.
 import { ref, computed, onMounted } from "vue";
-import { useRouter } from "vue-router";
 import api from "../api";
-import AppModal from "../components/AppModal.vue";
 
-const router = useRouter();
 const query = ref("");
 const versions = ref([]);
 const error = ref("");
 const loading = ref(false);
-
-const tmpl = ref(null); // выбранная версия для шаблона
-const tmplForm = ref({ newTitle: "", newStartDate: "" });
+const info = ref("");
 
 const statusLabel = { draft: "Черновик", approved: "Утверждено", archived: "Архив" };
 
@@ -88,24 +83,14 @@ async function search() {
   }
 }
 
-function openTemplate(v) {
-  tmpl.value = v;
-  tmplForm.value = { newTitle: `${v.program_title} (копия)`, newStartDate: "" };
-}
-
-async function createFromTemplate() {
+async function deleteArchived(v) {
+  if (!confirm(`Удалить расписание из архива: «${v.version_label}»? Действие необратимо.`)) return;
+  error.value = "";
+  info.value = "";
   try {
-    const res = await api.versions.fromTemplate({
-      versionId: tmpl.value.id,
-      newTitle: tmplForm.value.newTitle,
-      newStartDate: tmplForm.value.newStartDate || null,
-    });
-    const missing = res.missing?.length
-      ? `\nВнимание: ${res.missing.length} ссылок на удаленные ресурсы сброшены.`
-      : "";
-    alert("Расписание создано из шаблона." + missing);
-    tmpl.value = null;
-    router.push(`/programs/${res.newProgramId}`);
+    await api.versions.delete(v.id);
+    versions.value = versions.value.filter((item) => item.id !== v.id);
+    info.value = "Расписание удалено из архива";
   } catch (e) {
     error.value = e.message;
   }
@@ -123,7 +108,7 @@ onMounted(search);
   <div class="mx-auto max-w-5xl px-8 py-8">
     <h1 class="mb-1 text-2xl font-bold text-slate-800">Архив расписаний</h1>
     <p class="mb-6 text-sm text-slate-500">
-      Сохраненные версии расписаний. Любое можно использовать как шаблон для нового расписания.
+      Утвержденные расписания по разделам обучения.
     </p>
 
     <div class="mb-4 flex gap-2">
@@ -138,6 +123,9 @@ onMounted(search);
 
     <div v-if="error" class="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
       {{ error }}
+    </div>
+    <div v-if="info" class="mb-4 rounded-lg bg-green-50 px-4 py-3 text-sm text-green-700">
+      {{ info }}
     </div>
 
     <!-- Папки по типу обучения -->
@@ -188,8 +176,8 @@ onMounted(search);
                   <template v-if="v.note"> · {{ v.note }}</template>
                 </div>
               </div>
-              <button class="btn-secondary" @click="openTemplate(v)">
-                Использовать как шаблон
+              <button class="btn-ghost text-red-500" @click="deleteArchived(v)">
+                Удалить из архива
               </button>
             </div>
           </div>
@@ -197,26 +185,6 @@ onMounted(search);
       </section>
     </div>
 
-    <AppModal v-if="tmpl" title="Новое расписание из шаблона" @close="tmpl = null">
-      <div class="space-y-3">
-        <p class="text-sm text-slate-500">
-          Будут скопированы темы, периоды, группы и занятия из версии
-          «{{ tmpl.version_label }}». Даты можно сдвинуть на новый старт.
-        </p>
-        <div>
-          <label class="label">Название нового расписания</label>
-          <input v-model="tmplForm.newTitle" class="input" />
-        </div>
-        <div>
-          <label class="label">Новая дата начала (опционально — сдвинет все даты)</label>
-          <input v-model="tmplForm.newStartDate" type="date" class="input" />
-        </div>
-      </div>
-      <template #footer>
-        <button class="btn-secondary" @click="tmpl = null">Отмена</button>
-        <button class="btn-primary" @click="createFromTemplate">Создать</button>
-      </template>
-    </AppModal>
   </div>
 </template>
 
