@@ -211,8 +211,8 @@ export default {
       const insItem = db.prepare(
         `INSERT INTO schedule_items
           (period_id, program_id, topic_id, date, start_time, end_time, start_dt, end_dt,
-           lesson_type, custom_title, teacher_ids, room_id, group_ids, note, sort_order)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           lesson_type, custom_title, teacher_ids, custom_teachers, room_id, group_ids, note, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       );
       const insLock = db.prepare(
         `INSERT INTO locks
@@ -254,6 +254,7 @@ export default {
           it.lesson_type,
           it.custom_title,
           JSON.stringify(teacherIds),
+          it.custom_teachers || "[]",
           roomId,
           JSON.stringify(groupIds),
           it.note,

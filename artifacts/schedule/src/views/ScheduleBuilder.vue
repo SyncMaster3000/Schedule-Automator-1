@@ -68,6 +68,7 @@ const dragMode = ref("swap"); // 'swap' | 'shift'
 const editing = ref(null); // копия занятия
 const editConflicts = ref([]);
 const teacherFilter = ref(""); // поиск преподавателя по фамилии в редакторе
+const customTeacherText = ref(""); // фамилии преподавателей, введённые вручную только для занятия
 
 // --- Массовое назначение ---
 const selected = ref([]); // id выбранных занятий
@@ -98,6 +99,7 @@ const tempPreviewDate = ref("");
 const tempPreviewItems = ref([]);
 const editingTemp = ref(null);   // форма редактирования temp-записи
 const tempTeacherFilter = ref("");
+const tempCustomTeacherText = ref("");
 
 // Заголовок занятия: «Тема X.Y Название». Номер показываем и для разделов
 // (римские цифры), если он есть; произвольные занятия — без префикса.
@@ -124,16 +126,33 @@ function isEmptyItem(it) {
     (!it.lesson_type || it.lesson_type === "empty") &&
     !it.room_id &&
     !(it.teacher_ids && it.teacher_ids.length) &&
+    !(it.custom_teachers && it.custom_teachers.length) &&
     !(it.group_ids && it.group_ids.length) &&
     !it.note
   );
 }
 
-function teacherNames(ids) {
-  return (ids || [])
+function safeJsonArray(value) {
+  if (Array.isArray(value)) return value;
+  try {
+    return JSON.parse(value || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function parseCustomTeachers(text) {
+  return (text || "")
+    .split(/[;\n]+/)
+    .map((name) => name.trim())
+    .filter(Boolean);
+}
+
+function teacherNames(ids, customNames = []) {
+  const directoryNames = (ids || [])
     .map((id) => teachers.value.find((t) => t.id === id)?.fio)
-    .filter(Boolean)
-    .join(", ");
+    .filter(Boolean);
+  return [...directoryNames, ...customNames].join(", ");
 }
 function roomNumber(id) {
   return rooms.value.find((r) => r.id === id)?.number || "—";
@@ -171,8 +190,24 @@ function filterTeachers(query) {
   if (!q) return teachers.value;
   return teachers.value.filter((t) => t.fio.toLowerCase().includes(q));
 }
+function groupTeachersByDepartment(list) {
+  const groupsMap = new Map();
+  for (const t of list) {
+    const department = t.department || "Без подразделения";
+    if (!groupsMap.has(department)) groupsMap.set(department, []);
+    groupsMap.get(department).push(t);
+  }
+  return [...groupsMap.entries()].map(([department, teachers]) => ({
+    department,
+    teachers,
+  }));
+}
 const filteredTeachers = computed(() => filterTeachers(teacherFilter.value));
 const filteredBulkTeachers = computed(() => filterTeachers(bulkTeacherFilter.value));
+const filteredTempTeachers = computed(() => filterTeachers(tempTeacherFilter.value));
+const filteredTeacherGroups = computed(() => groupTeachersByDepartment(filteredTeachers.value));
+const filteredBulkTeacherGroups = computed(() => groupTeachersByDepartment(filteredBulkTeachers.value));
+const filteredTempTeacherGroups = computed(() => groupTeachersByDepartment(filteredTempTeachers.value));
 
 function isSelected(id) {
   return selected.value.includes(id);
@@ -522,14 +557,17 @@ async function restoreToQueue(it) {
 function normalize(it) {
   return {
     ...it,
-    teacher_ids: JSON.parse(it.teacher_ids || "[]"),
-    group_ids: JSON.parse(it.group_ids || "[]"),
+    teacher_ids: safeJsonArray(it.teacher_ids),
+    custom_teachers: safeJsonArray(it.custom_teachers),
+    group_ids: safeJsonArray(it.group_ids),
   };
 }
 
 function openEditor(it) {
   teacherFilter.value = "";
   editing.value = JSON.parse(JSON.stringify(it));
+  editing.value.custom_teachers = safeJsonArray(editing.value.custom_teachers);
+  customTeacherText.value = editing.value.custom_teachers.join("; ");
   editConflicts.value = it.conflicts || [];
 }
 
@@ -557,6 +595,7 @@ async function addSelfStudySlot(it) {
       ...it,
       teacher_ids: [...(it.teacher_ids || [])],
       group_ids: [...(it.group_ids || [])],
+      custom_teachers: [...(it.custom_teachers || [])],
       topic_id: null,
       lesson_type: "self_study",
       custom_title: "Самоподготовка",
@@ -570,6 +609,7 @@ async function addSelfStudySlot(it) {
 // Открыть редактор с преднастройкой для организационного мероприятия
 function addOrgEvent(it) {
   teacherFilter.value = "";
+  customTeacherText.value = "";
   editing.value = {
     ...JSON.parse(JSON.stringify(it)),
     topic_id: null,
@@ -577,6 +617,7 @@ function addOrgEvent(it) {
     lesson_type: "",
     teacher_ids: [],
     room_id: null,
+    custom_teachers: [],
     group_ids: [],
     group_label: "",
     note: "",
@@ -608,6 +649,7 @@ function changeTitle(it) {
 
 function newItem() {
   teacherFilter.value = "";
+  customTeacherText.value = "";
   const cell = gridCells.value[items.value.length] || gridCells.value[0] || {
     date: period.value.start_date,
     start: "09:00",
@@ -625,6 +667,7 @@ function newItem() {
     lesson_type: "Лекция",
     teacher_ids: [],
     room_id: null,
+    custom_teachers: [],
     group_ids: [],
     group_label: "",
     note: "",
@@ -657,8 +700,13 @@ async function recheck() {
 async function saveItem() {
   pushUndo("редактирование занятия");
   try {
-    await api.schedule.saveItem({ ...editing.value, crossPeriod: crossPeriod.value });
+    await api.schedule.saveItem({
+      ...editing.value,
+      custom_teachers: parseCustomTeachers(customTeacherText.value),
+      crossPeriod: crossPeriod.value,
+    });
     editing.value = null;
+    customTeacherText.value = "";
     info.value = "Занятие сохранено";
     await load();
   } catch (e) {
@@ -1074,19 +1122,23 @@ function openAddTemp(baseItem) {
     topic_id: baseItem?.topic_id ?? null,
     custom_title: baseItem?.custom_title ?? "",
     lesson_type: baseItem?.lesson_type ?? "",
-    teacher_ids: baseItem ? JSON.parse(baseItem.teacher_ids || "[]") : [],
+    teacher_ids: baseItem ? safeJsonArray(baseItem.teacher_ids) : [],
+    custom_teachers: baseItem ? safeJsonArray(baseItem.custom_teachers) : [],
     room_id: baseItem?.room_id ?? null,
     note: baseItem?.note ?? "",
   };
+  tempCustomTeacherText.value = editingTemp.value.custom_teachers.join("; ");
   tempTeacherFilter.value = "";
 }
 
 function openEditTemp(t) {
   editingTemp.value = {
     ...t,
-    teacher_ids: JSON.parse(t.teacher_ids || "[]"),
+    teacher_ids: safeJsonArray(t.teacher_ids),
+    custom_teachers: safeJsonArray(t.custom_teachers),
     is_cancelled: !!t.is_cancelled,
   };
+  tempCustomTeacherText.value = editingTemp.value.custom_teachers.join("; ");
   tempTeacherFilter.value = "";
 }
 
@@ -1096,14 +1148,16 @@ async function saveEditingTemp() {
     const d = editingTemp.value;
     if (!d.valid_from || !d.valid_until) throw new Error("Укажите период действия изменения");
     if (d.valid_from > d.valid_until) throw new Error("Дата начала не может быть позже даты окончания");
+    const payload = { ...d, custom_teachers: parseCustomTeachers(tempCustomTeacherText.value) };
     if (d.id) {
-      await api.schedule.saveTemp(d);
+      await api.schedule.saveTemp(payload);
     } else {
-      await api.schedule.addTemp(d);
+      await api.schedule.addTemp(payload);
     }
     const res = await api.schedule.listTemp(periodId.value);
     tempItems.value = res.items;
     editingTemp.value = null;
+    tempCustomTeacherText.value = "";
     info.value = d.id ? "Временное изменение обновлено" : "Временное изменение добавлено";
   } catch (e) {
     error.value = e.message;
@@ -1133,7 +1187,8 @@ async function runPreviewOnDate() {
     });
     tempPreviewItems.value = res.items.map((it) => ({
       ...it,
-      teacher_ids: JSON.parse(it.teacher_ids || "[]"),
+      teacher_ids: safeJsonArray(it.teacher_ids),
+      custom_teachers: safeJsonArray(it.custom_teachers),
     }));
   } catch (e) {
     error.value = e.message;
@@ -1599,7 +1654,7 @@ onUnmounted(() => {
             <div v-else class="truncate text-xs text-slate-500">
               <template v-if="it.group_label">Гр. {{ it.group_label }} · </template>
               <template v-if="it.lesson_type">{{ it.lesson_type }} · </template>
-              {{ teacherNames(it.teacher_ids) || "преп. не назначен" }} ·
+              {{ teacherNames(it.teacher_ids, it.custom_teachers) || "преп. не назначен" }} ·
               ауд. {{ roomNumber(it.room_id) }}
             </div>
           </div>
@@ -1700,19 +1755,38 @@ onUnmounted(() => {
             <p v-if="!filteredTeachers.length" class="text-xs text-slate-400">
               Преподаватели не найдены
             </p>
-            <label
-              v-for="t in filteredTeachers"
-              :key="t.id"
-              class="flex items-center gap-2 py-0.5 text-sm"
+            <div
+              v-for="group in filteredTeacherGroups"
+              :key="group.department"
+              class="mb-2 last:mb-0"
             >
-              <input
-                type="checkbox"
-                :checked="editing.teacher_ids.includes(t.id)"
-                @change="toggleTeacher(t.id)"
-              />
-              {{ t.fio }}
-            </label>
+              <div class="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                {{ group.department }}
+              </div>
+              <label
+                v-for="t in group.teachers"
+                :key="t.id"
+                class="flex items-center gap-2 py-0.5 text-sm"
+              >
+                <input
+                  type="checkbox"
+                  :checked="editing.teacher_ids.includes(t.id)"
+                  @change="toggleTeacher(t.id)"
+                />
+                {{ t.fio }}
+              </label>
+            </div>
           </div>
+          <label class="label mt-3">Преподаватели вручную</label>
+          <textarea
+            v-model="customTeacherText"
+            class="input"
+            rows="2"
+            placeholder="Например: Иванов; Петров"
+          />
+          <p class="mt-1 text-xs text-slate-400">
+            Эти фамилии сохраняются только в текущем расписании и не проверяются на накладки.
+          </p>
         </div>
         <div>
           <label class="label">Группы (пусто = все)</label>
@@ -1796,18 +1870,27 @@ onUnmounted(() => {
           <p v-if="!filteredBulkTeachers.length" class="text-xs text-slate-400">
             Преподаватели не найдены
           </p>
-          <label
-            v-for="t in filteredBulkTeachers"
-            :key="t.id"
-            class="flex items-center gap-2 py-0.5 text-sm"
+          <div
+            v-for="group in filteredBulkTeacherGroups"
+            :key="group.department"
+            class="mb-2 last:mb-0"
           >
-            <input
-              type="checkbox"
-              :checked="bulk.teacher_ids.includes(t.id)"
-              @change="bulkToggleTeacher(t.id)"
-            />
-            {{ t.fio }}
-          </label>
+            <div class="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+              {{ group.department }}
+            </div>
+            <label
+              v-for="t in group.teachers"
+              :key="t.id"
+              class="flex items-center gap-2 py-0.5 text-sm"
+            >
+              <input
+                type="checkbox"
+                :checked="bulk.teacher_ids.includes(t.id)"
+                @change="bulkToggleTeacher(t.id)"
+              />
+              {{ t.fio }}
+            </label>
+          </div>
         </div>
         <p v-if="bulkTeacherMixed" class="mt-1 text-xs text-amber-600">
           У выбранных занятий разные преподаватели; показаны все назначенные значения.
@@ -2142,17 +2225,37 @@ onUnmounted(() => {
                 <input v-model="tempTeacherFilter" class="input mb-1 w-full text-xs"
                   placeholder="Поиск по фамилии…" />
                 <div class="max-h-24 overflow-y-auto rounded border border-slate-200 bg-white">
-                  <label
-                    v-for="t in filterTeachers(tempTeacherFilter)"
-                    :key="t.id"
-                    class="flex items-center gap-2 px-2 py-1 hover:bg-slate-50"
+                  <p v-if="!filteredTempTeachers.length" class="px-2 py-1 text-xs text-slate-400">
+                    Преподаватели не найдены
+                  </p>
+                  <div
+                    v-for="group in filteredTempTeacherGroups"
+                    :key="group.department"
+                    class="border-b border-slate-100 last:border-b-0"
                   >
-                    <input type="checkbox"
-                      :checked="editingTemp.teacher_ids.includes(t.id)"
-                      @change="toggleTempTeacher(t.id)" />
-                    {{ t.fio }}
-                  </label>
+                    <div class="px-2 pt-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                      {{ group.department }}
+                    </div>
+                    <label
+                      v-for="t in group.teachers"
+                      :key="t.id"
+                      class="flex items-center gap-2 px-2 py-1 hover:bg-slate-50"
+                    >
+                      <input type="checkbox"
+                        :checked="editingTemp.teacher_ids.includes(t.id)"
+                        @change="toggleTempTeacher(t.id)" />
+                      {{ t.fio }}
+                    </label>
+                  </div>
                 </div>
+                <label class="mb-1 mt-2 block text-xs font-medium text-slate-700">
+                  Преподаватели вручную
+                </label>
+                <textarea
+                  v-model="tempCustomTeacherText"
+                  class="input w-full"
+                  rows="2"
+                  placeholder="через ; или с новой строки" />
               </div>
 
               <div>

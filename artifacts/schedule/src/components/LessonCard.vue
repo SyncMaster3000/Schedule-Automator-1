@@ -32,15 +32,16 @@ function isEmptyItem(it) {
     (!it.lesson_type || it.lesson_type === "empty") &&
     !it.room_id &&
     !(it.teacher_ids && it.teacher_ids.length) &&
+    !(it.custom_teachers && it.custom_teachers.length) &&
     !(it.group_ids && it.group_ids.length) &&
     !it.note
   );
 }
-function teacherNames(ids) {
-  return (ids || [])
+function teacherNames(ids, customNames = []) {
+  const directoryNames = (ids || [])
     .map((id) => props.teachers.find((t) => t.id === id)?.fio)
-    .filter(Boolean)
-    .join(", ");
+    .filter(Boolean);
+  return [...directoryNames, ...customNames].join(", ");
 }
 function roomNumber(id) {
   return props.rooms.find((r) => r.id === id)?.number || "—";
@@ -119,7 +120,7 @@ function conflictTitle(it) {
       </div>
       <div v-else class="truncate text-xs text-slate-500">
         <template v-if="item.lesson_type">{{ item.lesson_type }} · </template>
-        {{ teacherNames(item.teacher_ids) || "преп. не назначен" }} ·
+        {{ teacherNames(item.teacher_ids, item.custom_teachers) || "преп. не назначен" }} ·
         ауд. {{ roomNumber(item.room_id) }}
       </div>
     </div>

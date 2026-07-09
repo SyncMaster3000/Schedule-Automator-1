@@ -44,9 +44,13 @@ function topicLabel(it) {
 }
 
 function teacherLines(it, ctx) {
-  return JSON.parse(it.teacher_ids || "[]")
+  const directoryTeachers = JSON.parse(it.teacher_ids || "[]")
     .map((id) => ctx.teachersById[id]?.fio)
     .filter(Boolean);
+  const customTeachers = JSON.parse(it.custom_teachers || "[]")
+    .map((name) => String(name || "").trim())
+    .filter(Boolean);
+  return [...directoryTeachers, ...customTeachers];
 }
 
 // ── XML: поиск таблиц (учитывает вложенность) ────────────────────────────────
@@ -253,6 +257,7 @@ async function exportSchedule(data) {
     (!it.lesson_type || it.lesson_type === "empty") &&
     !it.room_id &&
     JSON.parse(it.teacher_ids || "[]").length === 0 &&
+    JSON.parse(it.custom_teachers || "[]").length === 0 &&
     JSON.parse(it.group_ids || "[]").length === 0 &&
     !it.note;
 

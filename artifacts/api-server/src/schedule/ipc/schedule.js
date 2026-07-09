@@ -82,6 +82,7 @@ export default {
   "schedule:saveItem": (data) => {
     const db = getDb();
     const teacherIds = JSON.stringify(data.teacher_ids || []);
+    const customTeachers = JSON.stringify(data.custom_teachers || []);
     const groupIds = JSON.stringify(data.group_ids || []);
     const startDt = `${data.date}T${data.start_time}:00`;
     const endDt = `${data.date}T${data.end_time}:00`;
@@ -95,6 +96,7 @@ export default {
       if (prev && prev.topic_id !== (data.topic_id || null)) changedFields.push("тема");
       if (prev && prev.lesson_type !== (data.lesson_type || null)) changedFields.push("вид занятия");
       if (prev && prev.teacher_ids !== teacherIds) changedFields.push("преподаватели");
+      if (prev && prev.custom_teachers !== customTeachers) changedFields.push("преподаватели вручную");
       if (prev && prev.room_id !== (data.room_id || null)) changedFields.push("аудитория");
       if (prev && prev.group_label !== (data.group_label || null)) changedFields.push("группа");
       if (prev && prev.note !== (data.note || null)) changedFields.push("заметка");
@@ -104,7 +106,7 @@ export default {
       db.prepare(
         `UPDATE schedule_items SET
           topic_id = ?, date = ?, start_time = ?, end_time = ?, start_dt = ?, end_dt = ?,
-          lesson_type = ?, custom_title = ?, teacher_ids = ?, room_id = ?, group_ids = ?,
+          lesson_type = ?, custom_title = ?, teacher_ids = ?, custom_teachers = ?, room_id = ?, group_ids = ?,
           group_label = ?, note = ?, is_outside_period = 0,
           is_modified = CASE WHEN ? > 0 THEN 1 ELSE is_modified END,
           modified_at = CASE WHEN ? > 0 THEN ? ELSE modified_at END,
@@ -120,6 +122,7 @@ export default {
         data.lesson_type || null,
         data.custom_title || null,
         teacherIds,
+        customTeachers,
         data.room_id || null,
         groupIds,
         data.group_label || null,
@@ -140,8 +143,8 @@ export default {
         .prepare(
           `INSERT INTO schedule_items
             (period_id, program_id, topic_id, date, start_time, end_time, start_dt, end_dt,
-             lesson_type, custom_title, teacher_ids, room_id, group_ids, group_label, note, sort_order)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+             lesson_type, custom_title, teacher_ids, custom_teachers, room_id, group_ids, group_label, note, sort_order)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           data.period_id,
@@ -155,6 +158,7 @@ export default {
           data.lesson_type || null,
           data.custom_title || null,
           teacherIds,
+          customTeachers,
           data.room_id || null,
           groupIds,
           data.group_label || null,
@@ -354,7 +358,7 @@ export default {
       ? db.prepare("SELECT title FROM program_topics WHERE id = ?").get(item.topic_id)
       : null;
     db.prepare(
-      `UPDATE schedule_items SET topic_id = NULL, teacher_ids = '[]', room_id = NULL,
+      `UPDATE schedule_items SET topic_id = NULL, teacher_ids = '[]', custom_teachers = '[]', room_id = NULL,
         group_ids = '[]', group_label = NULL, note = NULL,
         lesson_type = ?, custom_title = ? WHERE id = ?`
     ).run(
@@ -695,8 +699,8 @@ export default {
       `INSERT INTO schedule_temp_items
          (period_id, source_item_id, valid_from, valid_until, reason, is_cancelled,
           date, start_time, end_time, topic_id, custom_title, lesson_type,
-          teacher_ids, room_id, group_ids, group_label, note, created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+          teacher_ids, custom_teachers, room_id, group_ids, group_label, note, created_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).run(
       data.period_id,
       data.source_item_id ?? null,
@@ -711,6 +715,7 @@ export default {
       data.custom_title ?? null,
       data.lesson_type ?? null,
       JSON.stringify(data.teacher_ids || []),
+      JSON.stringify(data.custom_teachers || []),
       data.room_id ?? null,
       JSON.stringify(data.group_ids || []),
       data.group_label ?? null,
@@ -729,7 +734,7 @@ export default {
         `UPDATE schedule_temp_items
             SET valid_from = ?, valid_until = ?, reason = ?, is_cancelled = ?,
                 date = ?, start_time = ?, end_time = ?, topic_id = ?,
-                custom_title = ?, lesson_type = ?, teacher_ids = ?,
+                custom_title = ?, lesson_type = ?, teacher_ids = ?, custom_teachers = ?,
                 room_id = ?, group_ids = ?, group_label = ?, note = ?
           WHERE id = ?`
       )
@@ -745,6 +750,7 @@ export default {
         data.custom_title ?? null,
         data.lesson_type ?? null,
         JSON.stringify(data.teacher_ids || []),
+        JSON.stringify(data.custom_teachers || []),
         data.room_id ?? null,
         JSON.stringify(data.group_ids || []),
         data.group_label ?? null,
@@ -804,6 +810,7 @@ export default {
           custom_title: ov.custom_title ?? it.custom_title,
           lesson_type: ov.lesson_type ?? it.lesson_type,
           teacher_ids: ov.teacher_ids ?? it.teacher_ids,
+          custom_teachers: ov.custom_teachers ?? it.custom_teachers,
           room_id: ov.room_id ?? it.room_id,
           note: ov.note ?? it.note,
           _is_temp: true,

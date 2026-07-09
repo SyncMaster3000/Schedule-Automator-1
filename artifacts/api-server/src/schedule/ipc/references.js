@@ -32,19 +32,19 @@ export default {
 
   // --- Преподаватели ---
   "ref:teachers:list": () =>
-    getDb().prepare("SELECT * FROM teachers ORDER BY department, fio").all(),
+    getDb().prepare("SELECT id, fio, department FROM teachers ORDER BY department, fio").all(),
 
   "ref:teachers:add": (data) => {
     const info = getDb()
-      .prepare("INSERT INTO teachers (fio, department, is_guest) VALUES (?, ?, ?)")
-      .run(data.fio, data.department || null, data.is_guest ? 1 : 0);
+      .prepare("INSERT INTO teachers (fio, department) VALUES (?, ?)")
+      .run(data.fio, data.department || null);
     return { id: info.lastInsertRowid };
   },
 
   "ref:teachers:update": (data) => {
     getDb()
-      .prepare("UPDATE teachers SET fio = ?, department = ?, is_guest = ? WHERE id = ?")
-      .run(data.fio, data.department || null, data.is_guest ? 1 : 0, data.id);
+      .prepare("UPDATE teachers SET fio = ?, department = ? WHERE id = ?")
+      .run(data.fio, data.department || null, data.id);
     return { id: data.id };
   },
 

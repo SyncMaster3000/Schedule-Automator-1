@@ -110,6 +110,7 @@ CREATE TABLE IF NOT EXISTS schedule_items (
   lesson_type TEXT,
   custom_title TEXT,
   teacher_ids TEXT NOT NULL DEFAULT '[]',
+  custom_teachers TEXT NOT NULL DEFAULT '[]',
   room_id INTEGER,
   group_ids TEXT NOT NULL DEFAULT '[]',
   note TEXT,
@@ -182,6 +183,7 @@ CREATE TABLE IF NOT EXISTS schedule_temp_items (
   custom_title TEXT,
   lesson_type TEXT,
   teacher_ids TEXT NOT NULL DEFAULT '[]',
+  custom_teachers TEXT NOT NULL DEFAULT '[]',
   room_id INTEGER,
   group_ids TEXT NOT NULL DEFAULT '[]',
   group_label TEXT,
@@ -330,6 +332,9 @@ function runMigrations() {
   // Вид занятия по умолчанию для темы (напр. «Зачёт»/«Экзамен» из формы аттестации)
   addColumnIfMissing("program_topics", "default_lesson_type", "default_lesson_type TEXT");
   // Приглашённый преподаватель/эксперт: не участвует в проверке накладок.
+  // Фамилии, введённые вручную только для конкретного занятия.
+  addColumnIfMissing("schedule_items", "custom_teachers", "custom_teachers TEXT NOT NULL DEFAULT '[]'");
+  addColumnIfMissing("schedule_temp_items", "custom_teachers", "custom_teachers TEXT NOT NULL DEFAULT '[]'");
   addColumnIfMissing("teachers", "is_guest", "is_guest INTEGER NOT NULL DEFAULT 0");
   // Учебная неделя периода: 'mon-fri' (Пн–Пт) | 'mon-sat' (Пн–Сб).
   addColumnIfMissing("periods", "work_week", "work_week TEXT NOT NULL DEFAULT 'mon-fri'");

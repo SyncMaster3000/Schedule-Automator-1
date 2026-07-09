@@ -63,19 +63,10 @@ function checkResource({
   return rows;
 }
 
-// Множество id приглашённых преподавателей — они не участвуют в накладках.
-function guestTeacherIds() {
-  const rows = getDb().prepare("SELECT id FROM teachers WHERE is_guest = 1").all();
-  return new Set(rows.map((r) => r.id));
-}
-
 function checkScheduleItem(item, crossPeriod = false) {
   const conflicts = [];
   const teacherIds = Array.isArray(item.teacher_ids) ? item.teacher_ids : [];
-  const guests = guestTeacherIds();
-
   for (const tid of teacherIds) {
-    if (guests.has(tid)) continue; // приглашённый — вне проверки накладок
     const found = checkResource({
       resourceId: tid,
       resourceType: "teacher",
@@ -137,9 +128,7 @@ function rebuildLocksForItem(item) {
   );
 
   const teacherIds = JSON.parse(item.teacher_ids || "[]");
-  const guests = guestTeacherIds();
   for (const tid of teacherIds) {
-    if (guests.has(tid)) continue; // приглашённые не блокируют ресурс
     insert.run(
       item.id,
       item.period_id,
