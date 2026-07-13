@@ -43,8 +43,8 @@ function seedReferences() {
   seedDefaultGrid(db);
 }
 
-// Создаём одну именованную сетку «Основная сетка» из базовых слотов,
-// если именованных сеток ещё нет. Так per-day выбор сетки работает «из коробки».
+// Создаем одну именованную сетку «Основная сетка» из базовых слотов,
+// если именованных сеток еще нет. Так per-day выбор сетки работает «из коробки».
 function seedDefaultGrid(db) {
   const gridCount = db.prepare("SELECT COUNT(*) AS c FROM time_grids").get().c;
   if (gridCount > 0) return;
@@ -56,3 +56,4 @@ function seedDefaultGrid(db) {
 }
 
 export { seedReferences };
+

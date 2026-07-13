@@ -1,15 +1,16 @@
 // Импорт учебно-тематического плана (УТП) из .docx.
-// Mammoth сохраняет таблицы и сведения об объединённых ячейках. Мы разворачиваем
+// Mammoth сохраняет таблицы и сведения об объединенных ячейках. Мы разворачиваем
 // их в логическую сетку, чтобы сопоставлять часы с фактическими заголовками
-// колонок, а не с жёстко заданными позициями.
+// колонок, а не с жестко заданными позициями.
 import mammoth from "mammoth";
 import { parse } from "node-html-parser";
 
 function normalize(s) {
   return (s || "")
     .toLowerCase()
+    .replace(/\u0451/g, "е")
     .replace(/[\u00ad\u200b]/g, "")
-    .replace(/([а-яё])-\s+(?=[а-яё])/gi, "$1")
+    .replace(/([а-яе])-\s+(?=[а-яе])/gi, "$1")
     .replace(/\s+/g, " ")
     .replace(/[№.,:;()]/g, "")
     .trim();
@@ -33,7 +34,7 @@ const TOPIC_NUM = /^\d+(?:\.\d+)*\.?$/;
 const isSectionNumber = (s) => ROMAN.test((s || "").trim());
 const isTopicNumber = (s) => TOPIC_NUM.test((s || "").trim());
 
-// Превращает rowspan/colspan в прямоугольную матрицу. Значение объединённой
+// Превращает rowspan/colspan в прямоугольную матрицу. Значение объединенной
 // ячейки повторяется во всех занятых ею координатах.
 function logicalRows(table) {
   const occupied = [];
@@ -68,7 +69,7 @@ function detectAssessment(cells) {
   if (!/форма/.test(joined) || !/аттестац/.test(joined)) return null;
   if (/экзамен/.test(joined)) return "Экзамен";
   if (/собеседован/.test(joined)) return "Собеседование";
-  if (/зач[её]т/.test(joined)) return "Зачет";
+  if (/зач[ее]т/.test(joined)) return "Зачет";
   return null;
 }
 
@@ -226,7 +227,7 @@ async function importUtp(input) {
     const isSection = isSectionNumber(source.number) || hasChildren;
     const isAggregate = hasChildren;
 
-    // Строка-раздел остаётся одной строкой-суммой и не планируется. Обычная тема
+    // Строка-раздел остается одной строкой-суммой и не планируется. Обычная тема
     // разворачивается в отдельную сущность для каждой заполненной колонки вида.
     let entities;
     if (isAggregate) {
@@ -265,3 +266,5 @@ async function importUtp(input) {
 }
 
 export { importUtp };
+
+

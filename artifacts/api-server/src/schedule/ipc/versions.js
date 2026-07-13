@@ -1,4 +1,4 @@
-// Проекты расписаний и архив утверждённых расписаний.
+// Проекты расписаний и архив утвержденных расписаний.
 import { getDb, audit } from "../db/index.js";
 import { rebuildLocksForItem } from "../services/conflicts.js";
 
@@ -278,13 +278,13 @@ export default {
     return { id };
   },
 
-  // Удалить сохранённый проект или архивную запись
+  // Удалить сохраненный проект или архивную запись
   "versions:delete": (id) => {
     getDb().prepare("DELETE FROM schedule_versions WHERE id = ?").run(id);
     return { id };
   },
 
-  // Открыть проект: восстановить сохранённый снимок в текущую программу.
+  // Открыть проект: восстановить сохраненный снимок в текущую программу.
   "versions:restore": (id) => {
     const db = getDb();
     const version = db
@@ -292,7 +292,7 @@ export default {
       .get(id);
     if (!version) throw new Error("Проект не найден");
     if (version.status !== "draft" || version.archive_section) {
-      throw new Error("Можно открывать только сохранённые проекты");
+      throw new Error("Можно открывать только сохраненные проекты");
     }
     const snap = JSON.parse(version.snapshot_json);
     const tx = db.transaction(() => {
@@ -306,3 +306,4 @@ export default {
     return tx();
   },
 };
+

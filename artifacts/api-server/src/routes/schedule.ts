@@ -31,7 +31,7 @@ router.post("/call", async (req, res) => {
   }
 });
 
-// Обёртка над multer: ошибки загрузки (превышение размера и т.п.) возвращаются
+// Обертка над multer: ошибки загрузки (превышение размера и т.п.) возвращаются
 // как структурированный JSON, а не как стандартная HTML-страница ошибки Express.
 const uploadSingle = upload.single("file");
 const handleUpload = (
@@ -71,7 +71,7 @@ router.post("/import-utp", async (req, res) => {
   }
 });
 
-// Экспорт расписания в .docx (отдаётся файлом для скачивания)
+// Экспорт расписания в .docx (отдается файлом для скачивания)
 router.post("/export-docx", async (req, res) => {
   try {
     const { buffer, filename, count } = await exportDocxBuffer(req.body ?? {});
@@ -91,3 +91,4 @@ router.post("/export-docx", async (req, res) => {
 });
 
 export default router;
+

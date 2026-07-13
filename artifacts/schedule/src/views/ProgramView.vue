@@ -21,7 +21,7 @@ const versions = ref([]);
 
 // --- Импорт УТП ---
 const importPreview = ref(null); // { topics, meta }
-const importMode = ref("replace"); // "replace" — заменить, "append" — добавить из ещё одного УТП
+const importMode = ref("replace"); // "replace" — заменить, "append" — добавить из еще одного УТП
 
 // --- Период ---
 const showPeriod = ref(false);
@@ -221,7 +221,7 @@ async function openProject(v) {
   error.value = "";
   try {
     const res = await api.versions.restore(v.id);
-    const missing = res.missing?.length ? `; сброшено удалённых ресурсов: ${res.missing.length}` : "";
+    const missing = res.missing?.length ? `; сброшено удаленных ресурсов: ${res.missing.length}` : "";
     info.value = `Проект открыт${missing}`;
     await loadAll();
   } catch (e) {
@@ -660,3 +660,4 @@ onMounted(async () => {
   @apply border-brand-600 text-brand-700;
 }
 </style>
+

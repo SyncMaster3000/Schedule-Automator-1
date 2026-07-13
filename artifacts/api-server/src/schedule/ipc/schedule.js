@@ -33,7 +33,7 @@ function refreshTopicProgress(db, topicId) {
 }
 
 
-// Список занятий периода с расчётом конфликтов для каждого
+// Список занятий периода с расчетом конфликтов для каждого
 function listByPeriod(periodId, crossPeriod = false) {
   const db = getDb();
   const period = db.prepare("SELECT * FROM periods WHERE id = ?").get(periodId);
@@ -207,7 +207,7 @@ export default {
   },
 
 
-  // Удалить выбранные занятия. Закреплённые строки всегда остаются на месте.
+  // Удалить выбранные занятия. Закрепленные строки всегда остаются на месте.
   "schedule:bulkDelete": (data) => {
     const db = getDb();
     const ids = [...new Set(Array.isArray(data.itemIds) ? data.itemIds : [])];
@@ -239,7 +239,7 @@ export default {
     return { deleted, skipped };
   },
   // Заполнить сетку периода: создать пустые занятия для всех ячеек (дата × слот),
-  // где ещё ничего не стоит. Режим period.empty_slot_mode задаёт подпись пустых
+  // где еще ничего не стоит. Режим period.empty_slot_mode задает подпись пустых
   // ячеек ('self_study' → «Самоподготовка», иначе остаются пустыми блоками).
   // Существующие занятия (в т.ч. из УТП) не трогаются.
   "schedule:fillGrid": (payload) => {
@@ -313,8 +313,8 @@ export default {
     return { created };
   },
 
-  // Назначить тему из очереди нераспределённых на занятие (замена содержимого
-  // ячейки). Используется для замены из нераспределённых.
+  // Назначить тему из очереди нераспределенных на занятие (замена содержимого
+  // ячейки). Используется для замены из нераспределенных.
   "schedule:assignTopic": (data) => {
     const db = getDb();
     const item = db.prepare("SELECT * FROM schedule_items WHERE id = ?").get(data.itemId);
@@ -345,7 +345,7 @@ export default {
     return { id: data.itemId };
   },
 
-  // Вернуть занятие в очередь нераспределённых: очистить тему/преподавателей,
+  // Вернуть занятие в очередь нераспределенных: очистить тему/преподавателей,
   // ячейка снова становится пустой (или «Самоподготовка»).
   "schedule:restoreToQueue": (data) => {
     const db = getDb();
@@ -428,7 +428,7 @@ export default {
     return { updated: ids.length };
   },
 
-  // Закрепить / открепить занятие. Закреплённые не перемещаются при авто-операциях.
+  // Закрепить / открепить занятие. Закрепленные не перемещаются при авто-операциях.
   "schedule:setPin": ({ itemId, pinned }) => {
     getDb()
       .prepare("UPDATE schedule_items SET is_pinned = ? WHERE id = ?")
@@ -450,7 +450,7 @@ export default {
 
   // Массовое смещение занятий вниз на n слотов сетки.
   // scope: 'all' | 'week' | 'day'. Для 'week'/'day' нужна опорная дата (date).
-  // Закреплённые занятия не смещаются. Если слотов не хватает — бросает ошибку.
+  // Закрепленные занятия не смещаются. Если слотов не хватает — бросает ошибку.
   "schedule:bulkShift": ({ periodId, scope, date, n }) => {
     const db = getDb();
     const period = db.prepare("SELECT * FROM periods WHERE id = ?").get(periodId);
@@ -508,7 +508,7 @@ export default {
     const isEmptySlot = (it) =>
       it.lesson_type === "empty" || it.lesson_type === "self_study" || !it.topic_id;
 
-    // Сдвигаем только реальные, незакреплённые, не «вне периода» занятия из scope
+    // Сдвигаем только реальные, незакрепленные, не «вне периода» занятия из scope
     const realToShift = allItems.filter(
       (it) => inScope(it) && !it.is_pinned && !isEmptySlot(it) && !it.is_outside_period
     );
@@ -597,7 +597,7 @@ export default {
       .all(periodId);
 
     const idSet = new Set(itemIds);
-    // Из выделенных перемещаем только незакреплённые; закреплённые остаются в своих ячейках.
+    // Из выделенных перемещаем только незакрепленные; закрепленные остаются в своих ячейках.
     const selected = allItems.filter((it) => idSet.has(it.id) && !it.is_pinned);
     const skippedPinned = allItems.filter((it) => idSet.has(it.id) && it.is_pinned).length;
     if (!selected.length) return { moved: 0, skippedPinned };
@@ -618,7 +618,7 @@ export default {
       .map((_, index) => index)
       .filter((index) => !pinnedCellIndexes.has(index));
     let insertAt = availableCellIndexes.findIndex((index) => index >= targetCellIdx);
-    if (insertAt < 0) throw new Error("После целевого слота нет свободных незакреплённых ячеек");
+    if (insertAt < 0) throw new Error("После целевого слота нет свободных незакрепленных ячеек");
     insertAt = Math.min(insertAt, rest.length);
 
     const newOrder = [
@@ -766,9 +766,9 @@ export default {
     return { id };
   },
 
-  // Предпросмотр расписания на конкретную дату с учётом временных изменений.
+  // Предпросмотр расписания на конкретную дату с учетом временных изменений.
   // Возвращает список занятий, где временные переопределения заменяют исходные,
-  // отменённые занятия исключаются, новые временные — добавляются.
+  // отмененные занятия исключаются, новые временные — добавляются.
   "schedule:previewOnDate": ({ periodId, date }) => {
     const db = getDb();
 
@@ -849,3 +849,4 @@ export default {
     return { conflicts };
   },
 };
+

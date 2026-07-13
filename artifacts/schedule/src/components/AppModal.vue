@@ -9,7 +9,7 @@ defineProps({
 const emit = defineEmits(["close"]);
 
 // Окно закрывается только осознанным действием (крестик, «Отмена» или Escape).
-// Клик по затемнённому фону НЕ закрывает окно, чтобы случайно не потерять введённые данные.
+// Клик по затемненному фону НЕ закрывает окно, чтобы случайно не потерять введенные данные.
 function onKeydown(e) {
   if (e.key === "Escape") emit("close");
 }
@@ -33,3 +33,4 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
     </div>
   </div>
 </template>
+

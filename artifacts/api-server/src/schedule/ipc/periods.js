@@ -5,15 +5,15 @@ import { eachDayOfInterval, parseISO, format } from "date-fns";
 const HOURS_PER_SLOT = 2; // академических часов в одном слоте по умолчанию
 
 // Список видов занятий темы по часам: Лекция / Практическое занятие / Круглый стол.
-// Если разбивки нет — равномерно заполняем общий объём практическими занятиями.
+// Если разбивки нет — равномерно заполняем общий объем практическими занятиями.
 function plannedSlots(topic) {
   const slots = [];
   const addType = (hours, type) => {
     for (let h = 0; h < (hours || 0); h += HOURS_PER_SLOT) slots.push(type);
   };
 
-  // Тема с заданным видом по умолчанию (напр. «Зачёт»/«Экзамен» из формы
-  // итоговой аттестации) — все её часы заполняются этим видом занятия.
+  // Тема с заданным видом по умолчанию (напр. «Зачет»/«Экзамен» из формы
+  // итоговой аттестации) — все ее часы заполняются этим видом занятия.
   if (topic.default_lesson_type) {
     addType(topic.total_hours || HOURS_PER_SLOT, topic.default_lesson_type);
     return slots;
@@ -52,7 +52,7 @@ function isWorkDay(d, workWeek) {
   return true;
 }
 
-// Сформировать список ячеек (дата × слот) в строгом порядке с учётом учебной недели
+// Сформировать список ячеек (дата × слот) в строгом порядке с учетом учебной недели
 function buildCells(startDate, endDate, timeGrid, workWeek = "mon-fri") {
   const days = eachDayOfInterval({
     start: parseISO(startDate),
@@ -200,7 +200,7 @@ const handlers = {
     return { id };
   },
 
-  // Полуавтоматическое заполнение периода следующими нераспределёнными темами.
+  // Полуавтоматическое заполнение периода следующими нераспределенными темами.
   // Соблюдается строгий порядок очереди; темы partial идут первыми.
   "periods:autofill": (data) => {
     const db = getDb();
@@ -331,3 +331,4 @@ export function buildExtendedCells(startDate, endDate, timeGrid) {
   }
   return cells;
 }
+

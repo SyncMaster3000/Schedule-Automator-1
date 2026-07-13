@@ -43,7 +43,7 @@ function pickFile(accept) {
       finish(input.files && input.files[0] ? input.files[0] : null);
     });
     // Запасной механизм для браузеров без события "cancel": при возврате фокуса
-    // без выбора файла считаем диалог отменённым.
+    // без выбора файла считаем диалог отмененным.
     const onFocus = () => {
       setTimeout(() => finish(null), 1000);
     };
@@ -207,3 +207,4 @@ export const api = {
 };
 
 export default api;
+

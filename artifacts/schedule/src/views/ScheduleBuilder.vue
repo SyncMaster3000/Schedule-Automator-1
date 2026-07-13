@@ -69,7 +69,7 @@ const dragMode = ref("swap"); // 'swap' | 'shift'
 const editing = ref(null); // копия занятия
 const editConflicts = ref([]);
 const teacherFilter = ref(""); // поиск преподавателя по фамилии в редакторе
-const customTeacherText = ref(""); // фамилии преподавателей, введённые вручную только для занятия
+const customTeacherText = ref(""); // фамилии преподавателей, введенные вручную только для занятия
 
 // --- Массовое назначение ---
 const selected = ref([]); // id выбранных занятий
@@ -185,7 +185,7 @@ function formatDayHeader(dateStr) {
   return `${wd[0].toUpperCase()}${wd.slice(1)}, ${day}.${m}.${y}`;
 }
 
-// Фильтрация преподавателей по введённым буквам фамилии
+// Фильтрация преподавателей по введенным буквам фамилии
 function filterTeachers(query) {
   const q = (query || "").trim().toLowerCase();
   if (!q) return teachers.value;
@@ -396,7 +396,7 @@ const groupedRows = computed(() => {
   return rows;
 });
 
-// Рабочий ли день с учётом учебной недели периода (Пн–Пт / Пн–Сб).
+// Рабочий ли день с учетом учебной недели периода (Пн–Пт / Пн–Сб).
 function isWorkDay(d) {
   const dow = getDay(d); // 0 = вс, 6 = сб
   if (dow === 0) return false;
@@ -405,7 +405,7 @@ function isWorkDay(d) {
   return true;
 }
 
-// Сетка ячеек периода (дата × слот) — для пересчёта по порядку
+// Сетка ячеек периода (дата × слот) — для пересчета по порядку
 const gridCells = computed(() => {
   if (!period.value) return [];
   const grid = JSON.parse(period.value.time_grid_json || "[]").filter((s) => !s.is_break);
@@ -456,7 +456,7 @@ async function load() {
   }
 }
 
-// Темы, ещё не распределённые в расписание (для замены из нераспределённых).
+// Темы, еще не распределенные в расписание (для замены из нераспределенных).
 const unallocatedTopics = computed(() => {
   return topics.value.filter(
     (t) =>
@@ -568,7 +568,7 @@ async function removeNote(id) {
   notes.value = await api.notes.list({ programId: programId.value });
 }
 
-// Вписать нераспределённую тему в пустой слот (замена из нераспределённых).
+// Вписать нераспределенную тему в пустой слот (замена из нераспределенных).
 async function assignTopic(it, topicId) {
   if (!topicId) return;
   pushUndo("вписать тему в слот");
@@ -586,13 +586,13 @@ async function assignTopic(it, topicId) {
   }
 }
 
-// Вернуть занятие в очередь нераспределённых (освободить слот).
+// Вернуть занятие в очередь нераспределенных (освободить слот).
 async function restoreToQueue(it) {
   if (it.is_pinned) {
-    error.value = "Закреплённое занятие нельзя вернуть в очередь. Сначала открепите его.";
+    error.value = "Закрепленное занятие нельзя вернуть в очередь. Сначала открепите его.";
     return;
   }
-  pushUndo("возврат в очередь нераспределённых");
+  pushUndo("возврат в очередь нераспределенных");
   error.value = "";
   try {
     const res = await api.schedule.restoreToQueue({
@@ -600,7 +600,7 @@ async function restoreToQueue(it) {
       author: author.value || null,
     });
     if (res.skipped) {
-      error.value = "Закреплённое занятие не изменено";
+      error.value = "Закрепленное занятие не изменено";
       return;
     }
     info.value = "Занятие возвращено в очередь нераспределенных";
@@ -780,14 +780,14 @@ async function deleteItem() {
     return;
   }
   if (editing.value.is_pinned) {
-    error.value = "Закреплённое занятие нельзя удалить. Сначала открепите его.";
+    error.value = "Закрепленное занятие нельзя удалить. Сначала открепите его.";
     return;
   }
-  if (!confirm("Удалить занятие? Тема вернётся в очередь нераспределённых.")) return;
+  if (!confirm("Удалить занятие? Тема вернется в очередь нераспределенных.")) return;
   pushUndo("удаление занятия");
   const res = await api.schedule.deleteItem(editing.value.id);
   if (res.skipped) {
-    error.value = "Закреплённое занятие не удалено";
+    error.value = "Закрепленное занятие не удалено";
     return;
   }
   editing.value = null;
@@ -832,7 +832,7 @@ async function onDragEnd(evt) {
   let failMsg = "";
   try {
     if (multiSelectionDrag) {
-      if (dragged.is_pinned) throw new Error("Закреплённое занятие нельзя перетаскивать");
+      if (dragged.is_pinned) throw new Error("Закрепленное занятие нельзя перетаскивать");
       const res = await api.schedule.moveSelected({
         itemIds: [...selected.value],
         targetDate: targetSlot.date,
@@ -840,7 +840,7 @@ async function onDragEnd(evt) {
         periodId: periodId.value,
       });
       info.value = `Перемещено занятий: ${res.moved}` +
-        (res.skippedPinned ? `; закреплённых пропущено: ${res.skippedPinned}` : "");
+        (res.skippedPinned ? `; закрепленных пропущено: ${res.skippedPinned}` : "");
       selected.value = [];
     } else if (dragMode.value === "swap") {
       await swapItems(evt);
@@ -870,10 +870,10 @@ async function swapItems(evt) {
   const moved = order[oldIndex];
   const target = order[newIndex];
   if (!moved || !target || moved === target) return;
-  // Закреплённые занятия нельзя перетаскивать в режиме «поменять местами»
+  // Закрепленные занятия нельзя перетаскивать в режиме «поменять местами»
   if (moved.is_pinned || target.is_pinned) {
     throw new Error(
-      "Нельзя переставить закреплённое занятие. Открепите его (📌) и попробуйте снова."
+      "Нельзя переставить закрепленное занятие. Открепите его (📌) и попробуйте снова."
     );
   }
   await api.schedule.saveItem({
@@ -895,7 +895,7 @@ async function swapItems(evt) {
 
 // Сместить весь ряд: на исходную позицию перетянутого занятия вставляется
 // пустое «окошко», а все последующие занятия сдвигаются вниз на один слот
-// по сетке всего периода (дата × время). Окошко остаётся для вписания занятия.
+// по сетке всего периода (дата × время). Окошко остается для вписания занятия.
 async function shiftItems(evt) {
   const oldIndex = evt?.oldIndex;
   const newIndex = evt?.newIndex;
@@ -914,11 +914,11 @@ async function shiftItems(evt) {
     );
   }
 
-  // Закреплённые занятия нельзя смещать в режиме «ряд»
+  // Закрепленные занятия нельзя смещать в режиме «ряд»
   const hasPinned = ordered.some((it) => it && it.is_pinned);
   if (hasPinned) {
     error.value =
-      "Нельзя сместить ряд: среди занятий есть закреплённые. Открепите их и попробуйте снова.";
+      "Нельзя сместить ряд: среди занятий есть закрепленные. Открепите их и попробуйте снова.";
     await load();
     return;
   }
@@ -960,7 +960,7 @@ async function shiftItems(evt) {
       crossPeriod: crossPeriod.value,
     });
   }
-  info.value = "Ряд смещён вниз; оставлено свободное окошко";
+  info.value = "Ряд смещен вниз; оставлено свободное окошко";
 }
 
 // --- T11: Закрепить / открепить занятие ---
@@ -1001,7 +1001,7 @@ async function bulkDeleteSelected() {
     info.value = "Все выбранные занятия закреплены и не могут быть удалены";
     return;
   }
-  const suffix = pinnedCount ? ` Закреплённых будет пропущено: ${pinnedCount}.` : "";
+  const suffix = pinnedCount ? ` Закрепленных будет пропущено: ${pinnedCount}.` : "";
   if (!confirm(`Удалить выбранные занятия: ${deletableCount}?${suffix}`)) return;
   pushUndo("массовое удаление занятий");
   error.value = "";
@@ -1011,7 +1011,7 @@ async function bulkDeleteSelected() {
       author: author.value || null,
     });
     selected.value = [];
-    info.value = `Удалено занятий: ${res.deleted}; закреплённых пропущено: ${res.skipped}`;
+    info.value = `Удалено занятий: ${res.deleted}; закрепленных пропущено: ${res.skipped}`;
     await load();
   } catch (e) {
     error.value = e.message;
@@ -1072,7 +1072,7 @@ async function applyMoveSelected() {
     });
     moveOpen.value = false;
     info.value = `Перемещено занятий: ${res.moved}` +
-      (res.skippedPinned ? `; закреплённых пропущено: ${res.skippedPinned}` : "");
+      (res.skippedPinned ? `; закрепленных пропущено: ${res.skippedPinned}` : "");
     selected.value = [];
     await load();
   } catch (e) {
@@ -1082,15 +1082,15 @@ async function applyMoveSelected() {
 
 // --- Undo/Redo engine (T10) ---
 // Сохраняет снимок текущего состояния items в стек undo.
-// Вызывается в начале каждой операции записи (до await), пока items ещё не изменены.
+// Вызывается в начале каждой операции записи (до await), пока items еще не изменены.
 function pushUndo(desc) {
   undoStack.value.push({ desc, items: items.value.map((it) => ({ ...it })) });
   if (undoStack.value.length > MAX_UNDO) undoStack.value.shift();
   redoStack.value = [];
 }
 
-// Применяет сохранённый снимок: удаляет появившиеся после снимка занятия,
-// обновляет/воссоздаёт занятия из снимка, перечитывает данные из БД.
+// Применяет сохраненный снимок: удаляет появившиеся после снимка занятия,
+// обновляет/воссоздает занятия из снимка, перечитывает данные из БД.
 async function applySnapshot(snap) {
   const snapIds = new Set(snap.items.map((it) => it.id));
   const curIds = new Set(items.value.map((it) => it.id));
@@ -1100,12 +1100,12 @@ async function applySnapshot(snap) {
       try { await api.schedule.deleteItem(it.id); } catch { /* игнорируем */ }
     }
   }
-  // Восстановить занятия из снимка (UPDATE если ещё есть, INSERT если удалены)
+  // Восстановить занятия из снимка (UPDATE если еще есть, INSERT если удалены)
   for (const it of snap.items) {
     try {
       await api.schedule.saveItem({
         ...it,
-        id: curIds.has(it.id) ? it.id : null, // воссоздать, если был удалён
+        id: curIds.has(it.id) ? it.id : null, // воссоздать, если был удален
         crossPeriod: crossPeriod.value,
       });
     } catch { /* игнорируем конкретные ошибки строки */ }
@@ -1454,7 +1454,7 @@ onUnmounted(() => {
       <button
         v-if="selected.length"
         class="btn-danger"
-        title="Удалить выбранные незакреплённые занятия и вернуть их темы в очередь УТП"
+        title="Удалить выбранные незакрепленные занятия и вернуть их темы в очередь УТП"
         @click="bulkDeleteSelected"
       >
         Удалить выбранные
@@ -1886,7 +1886,7 @@ onUnmounted(() => {
           v-if="editing.id && editing.topic_id"
           class="btn-ghost text-slate-500"
           :disabled="Boolean(editing.is_pinned)"
-          :title="editing.is_pinned ? 'Сначала открепите занятие' : 'Очистить занятие и вернуть тему в список нераспределённых'"
+          :title="editing.is_pinned ? 'Сначала открепите занятие' : 'Очистить занятие и вернуть тему в список нераспределенных'"
           @click="restoreToQueue(editing)"
         >
           Вернуть в очередь
@@ -2346,7 +2346,7 @@ onUnmounted(() => {
 
           <div v-if="tempPreviewItems.length" class="space-y-1">
             <p class="text-xs text-slate-500">
-              Расписание на {{ tempPreviewDate }} с учётом временных изменений:
+              Расписание на {{ tempPreviewDate }} с учетом временных изменений:
             </p>
             <div
               v-for="it in tempPreviewItems"
@@ -2391,7 +2391,7 @@ onUnmounted(() => {
     <AppModal v-if="bulkShiftOpen" title="Сдвинуть занятия вниз" @close="bulkShiftOpen = false">
       <div class="space-y-4 text-sm">
         <p class="text-slate-600">
-          Занятия смещаются на N слотов сетки вниз. Закреплённые занятия пропускаются.
+          Занятия смещаются на N слотов сетки вниз. Закрепленные занятия пропускаются.
           Освободившиеся слоты сверху становятся пустыми окошками.
         </p>
 
@@ -2400,7 +2400,7 @@ onUnmounted(() => {
           <div class="space-y-1">
             <label class="flex items-center gap-2">
               <input type="radio" v-model="bulkShiftForm.scope" value="all" />
-              Всё расписание целиком
+              Все расписание целиком
             </label>
             <label class="flex items-center gap-2">
               <input type="radio" v-model="bulkShiftForm.scope" value="week" />
@@ -2509,4 +2509,5 @@ onUnmounted(() => {
     </AppModal>
   </div>
 </template>
+
 

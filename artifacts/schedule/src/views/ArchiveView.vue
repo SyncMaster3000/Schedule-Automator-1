@@ -12,7 +12,7 @@ const info = ref("");
 
 const statusLabel = { draft: "Черновик", approved: "Утверждено", archived: "Архив" };
 
-// Папки (вкладки) по разделу архива. Раздел задаётся при утверждении расписания;
+// Папки (вкладки) по разделу архива. Раздел задается при утверждении расписания;
 // для старых версий без раздела определяется по названию расписания.
 const FOLDERS = [
   { key: "qualification", label: "Повышение квалификации", section: "Повышение квалификации" },
@@ -37,7 +37,7 @@ function folderOf(v) {
   return "courses";
 }
 
-// Количество расписаний в каждой папке (с учётом текущего поиска)
+// Количество расписаний в каждой папке (с учетом текущего поиска)
 const folderCounts = computed(() => {
   const counts = { qualification: 0, retraining: 0, courses: 0 };
   for (const v of versions.value) counts[folderOf(v)] += 1;
@@ -196,3 +196,4 @@ onMounted(search);
   @apply border-brand-600 text-brand-700;
 }
 </style>
+

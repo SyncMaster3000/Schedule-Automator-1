@@ -167,7 +167,7 @@ CREATE TABLE IF NOT EXISTS schedule_notes (
 );
 
 -- Временные изменения расписания: переопределяют (или отменяют) конкретное занятие
--- в указанный период дат, не затрагивая утверждённую основную версию.
+-- в указанный период дат, не затрагивая утвержденную основную версию.
 CREATE TABLE IF NOT EXISTS schedule_temp_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   period_id INTEGER NOT NULL,
@@ -329,10 +329,10 @@ function runMigrations() {
   raw.run("CREATE INDEX IF NOT EXISTS ix_topic_program_number ON program_topics(program_id, utp_number)");
   addColumnIfMissing("program_topics", "excluded", "excluded INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing("program_topics", "is_section", "is_section INTEGER NOT NULL DEFAULT 0");
-  // Вид занятия по умолчанию для темы (напр. «Зачёт»/«Экзамен» из формы аттестации)
+  // Вид занятия по умолчанию для темы (напр. «Зачет»/«Экзамен» из формы аттестации)
   addColumnIfMissing("program_topics", "default_lesson_type", "default_lesson_type TEXT");
-  // Приглашённый преподаватель/эксперт: не участвует в проверке накладок.
-  // Фамилии, введённые вручную только для конкретного занятия.
+  // Приглашенный преподаватель/эксперт: не участвует в проверке накладок.
+  // Фамилии, введенные вручную только для конкретного занятия.
   addColumnIfMissing("schedule_items", "custom_teachers", "custom_teachers TEXT NOT NULL DEFAULT '[]'");
   addColumnIfMissing("schedule_temp_items", "custom_teachers", "custom_teachers TEXT NOT NULL DEFAULT '[]'");
   addColumnIfMissing("teachers", "is_guest", "is_guest INTEGER NOT NULL DEFAULT 0");
@@ -401,3 +401,4 @@ function audit(programId, periodId, action, details, author = null) {
 }
 
 export { ensureDb, getDb, audit, persist };
+

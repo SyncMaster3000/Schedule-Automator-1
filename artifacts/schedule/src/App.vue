@@ -5,7 +5,7 @@ import { RouterLink, RouterView } from "vue-router";
 
 <template>
   <div class="flex h-full">
-    <!-- Боковая панель: тёмный «чернильный» блок, отделяющий навигацию от работы -->
+    <!-- Боковая панель: темный «чернильный» блок, отделяющий навигацию от работы -->
     <aside class="flex w-60 shrink-0 flex-col bg-brand-900 text-brand-100">
       <div class="flex items-center gap-3 px-5 py-6">
         <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-600 text-white shadow-sm">
@@ -72,3 +72,4 @@ import { RouterLink, RouterView } from "vue-router";
   @apply absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-full bg-brand-300;
 }
 </style>
+

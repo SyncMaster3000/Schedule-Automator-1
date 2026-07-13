@@ -64,7 +64,7 @@ function conflictTitle(it) {
     <div class="min-w-0 flex-1">
       <div class="truncate font-medium italic text-slate-400">Свободное окошко</div>
       <div class="truncate text-xs text-slate-400">
-        Впишите занятие или подставьте нераспределённую тему
+        Впишите занятие или подставьте нераспределенную тему
       </div>
     </div>
     <select
@@ -73,7 +73,7 @@ function conflictTitle(it) {
       @change="emit('assign-topic', item, Number($event.target.value)); $event.target.value = ''"
     >
       <option value="">
-        {{ unallocatedTopics.length ? "Из нераспределённых…" : "Нет нераспределённых" }}
+        {{ unallocatedTopics.length ? "Из нераспределенных…" : "Нет нераспределенных" }}
       </option>
       <option v-for="t in unallocatedTopics" :key="t.id" :value="t.id">
         {{ t.utp_number }}. {{ t.title }}
@@ -139,3 +139,4 @@ function conflictTitle(it) {
     <button class="btn-secondary" @click="emit('edit', item)">Изменить</button>
   </div>
 </template>
+

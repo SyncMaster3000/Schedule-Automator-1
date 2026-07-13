@@ -45,7 +45,7 @@ export default {
     return { count: topics.length };
   },
 
-  // Добавить темы из ещё одного УТП к существующему расписанию (без удаления),
+  // Добавить темы из еще одного УТП к существующему расписанию (без удаления),
   // продолжая нумерацию sort_order. Используется для сборки одного расписания
   // из нескольких УТП.
   "topics:append": (data) => {
@@ -142,3 +142,4 @@ export default {
     return { total, scheduled, partial, pending, remaining: pending + partial };
   },
 };
+
