@@ -18,6 +18,27 @@ const topics = ref([]);
 const periods = ref([]);
 const queue = ref({ total: 0, scheduled: 0, partial: 0, pending: 0, remaining: 0 });
 const versions = ref([]);
+const exportPreview = ref(null);
+const exportPreviewPeriod = computed(() =>
+  exportPreview.value?.periodId
+    ? periods.value.find((p) => p.id === exportPreview.value.periodId)
+    : null
+);
+
+function formatRuDate(value) {
+  if (!value) return "—";
+  const [y, m, d] = String(value).split("-");
+  return y && m && d ? `${d}.${m}.${y}` : value;
+}
+function exportPreviewPeriodText() {
+  const p = exportPreviewPeriod.value;
+  if (p) return `с ${formatRuDate(p.start_date)} по ${formatRuDate(p.end_date)}`;
+  if (!periods.value.length) return "Периоды не созданы";
+  return `вся программа, ${periods.value.length} период(а)`;
+}
+function openExportPreview(periodId = null) {
+  exportPreview.value = { periodId };
+}
 
 // --- Импорт УТП ---
 const importPreview = ref(null); // { topics, meta }
@@ -279,6 +300,7 @@ async function exportDocx(periodId = null) {
   try {
     const res = await api.exportDocx({ programId: programId.value, periodId });
     if (res.canceled) return;
+    exportPreview.value = null;
     info.value = `Экспортировано занятий: ${res.count}. Файл: ${res.filePath}`;
   } catch (e) {
     error.value = e.message;
@@ -313,7 +335,7 @@ onMounted(async () => {
       </div>
       <div class="flex gap-2">
         <button class="btn-secondary" @click="saveProject">Сохранить проект</button>
-        <button class="btn-secondary" @click="exportDocx()">Экспорт в .docx</button>
+        <button class="btn-secondary" @click="openExportPreview()">Экспорт в .docx</button>
         <button class="btn-primary" @click="approve">Утвердить</button>
       </div>
     </div>
@@ -463,7 +485,7 @@ onMounted(async () => {
             >
               Конструктор
             </button>
-            <button class="btn-secondary" @click="exportDocx(p.id)">Экспорт</button>
+            <button class="btn-secondary" @click="openExportPreview(p.id)">Экспорт</button>
           </div>
         </div>
       </div>
@@ -649,6 +671,20 @@ onMounted(async () => {
         <button class="btn-primary" @click="confirmApprove">Утвердить</button>
       </template>
     </AppModal>
+
+    <AppModal v-if="exportPreview" title="Предпросмотр экспорта Word" @close="exportPreview = null">
+      <div class="space-y-3 text-sm text-slate-600">
+        <div><span class="font-medium text-slate-800">Название:</span> {{ program?.description || program?.title }}</div>
+        <div><span class="font-medium text-slate-800">Период:</span> {{ exportPreviewPeriodText() }}</div>
+        <div><span class="font-medium text-slate-800">Статус:</span> {{ program?.status === 'approved' ? 'утвержденное расписание' : 'проект расписания' }}</div>
+        <div><span class="font-medium text-slate-800">Утверждает:</span> {{ program?.approver_title || '—' }} {{ program?.approver_name || '' }}</div>
+        <div><span class="font-medium text-slate-800">Подписывает:</span> {{ program?.signer_title || '—' }} {{ program?.signer_name || '' }}</div>
+      </div>
+      <template #footer>
+        <button class="btn-secondary" @click="exportPreview = null">Отмена</button>
+        <button class="btn-primary" @click="exportDocx(exportPreview.periodId)">Экспортировать Word</button>
+      </template>
+    </AppModal>
   </div>
 </template>
 
@@ -660,4 +696,3 @@ onMounted(async () => {
   @apply border-brand-600 text-brand-700;
 }
 </style>
-

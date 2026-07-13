@@ -52,6 +52,8 @@ const newNote = ref("");
 // --- Утверждение с выбором раздела архива ---
 const approveOpen = ref(false);
 const approveSection = ref("Повышение квалификации");
+const exportPreview = ref(false);
+const exportProgram = ref(null);
 const ARCHIVE_SECTIONS = [
   "Повышение квалификации",
   "Переподготовка",
@@ -1346,10 +1348,26 @@ function toggleGroup(id) {
   recheck();
 }
 
+function formatRuDate(value) {
+  if (!value) return "—";
+  const [y, m, d] = String(value).split("-");
+  return y && m && d ? `${d}.${m}.${y}` : value;
+}
+async function openExportPreview() {
+  error.value = "";
+  try {
+    const data = await api.programs.get(programId.value);
+    exportProgram.value = data.program;
+    exportPreview.value = true;
+  } catch (e) {
+    error.value = e.message;
+  }
+}
 async function exportDocx() {
   try {
     const res = await api.exportDocx({ programId: programId.value, periodId: periodId.value });
     if (res.canceled) return;
+    exportPreview.value = false;
     info.value = `Экспортировано: ${res.filePath}`;
   } catch (e) {
     error.value = e.message;
@@ -1422,7 +1440,7 @@ onUnmounted(() => {
           title="Повторить (Ctrl+Shift+Z)"
           @click="redo"
         >↪ Повтор</button>
-        <button class="btn-secondary" @click="exportDocx">Экспорт</button>
+        <button class="btn-secondary" @click="openExportPreview">Экспорт</button>
         <button class="btn-primary" :disabled="hasConflicts" @click="approve">
           Утвердить
         </button>
@@ -1733,6 +1751,20 @@ onUnmounted(() => {
         </div>
       </div>
     </VueDraggableNext>
+
+    <AppModal v-if="exportPreview" title="Предпросмотр экспорта Word" @close="exportPreview = false">
+      <div class="space-y-3 text-sm text-slate-600">
+        <div><span class="font-medium text-slate-800">Название:</span> {{ exportProgram?.description || exportProgram?.title }}</div>
+        <div><span class="font-medium text-slate-800">Период:</span> с {{ formatRuDate(period?.start_date) }} по {{ formatRuDate(period?.end_date) }}</div>
+        <div><span class="font-medium text-slate-800">Статус:</span> {{ exportProgram?.status === 'approved' ? 'утвержденное расписание' : 'проект расписания' }}</div>
+        <div><span class="font-medium text-slate-800">Утверждает:</span> {{ exportProgram?.approver_title || '—' }} {{ exportProgram?.approver_name || '' }}</div>
+        <div><span class="font-medium text-slate-800">Подписывает:</span> {{ exportProgram?.signer_title || '—' }} {{ exportProgram?.signer_name || '' }}</div>
+      </div>
+      <template #footer>
+        <button class="btn-secondary" @click="exportPreview = false">Отмена</button>
+        <button class="btn-primary" @click="exportDocx">Экспортировать Word</button>
+      </template>
+    </AppModal>
 
     <!-- Редактор занятия -->
     <AppModal v-if="editing" title="Занятие" wide @close="editing = null">
@@ -2509,5 +2541,3 @@ onUnmounted(() => {
     </AppModal>
   </div>
 </template>
-
-

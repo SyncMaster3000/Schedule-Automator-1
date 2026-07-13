@@ -36,11 +36,21 @@ function fmtDate(dateStr) {
   }
 }
 
+function typography(s) {
+  return String(s || "").replace(/"([^"\n]+)"/g, "«$1»");
+}
+
 function topicLabel(it) {
-  if (it.custom_title) return it.custom_title;
-  const title = it.topic_title || "";
+  if (it.custom_title) return typography(it.custom_title);
+  if (!it.topic_id && it.lesson_type === "self_study") return "Самоподготовка";
+  const title = typography(it.topic_title || "");
   if (it.utp_number) return `Тема ${it.utp_number} ${title}`.trim();
   return title;
+}
+
+function isWideEvent(it) {
+  const title = String(it.custom_title || "").toLowerCase();
+  return !it.topic_id && (it.lesson_type === "self_study" || title.includes("организацион"));
 }
 
 function teacherLines(it, ctx) {
@@ -127,18 +137,36 @@ function getCellStyle(tcXml) {
   return { tcPr, pPr, rPr };
 }
 
+function ensureTcPr(tcPr) {
+  return tcPr || "<w:tcPr></w:tcPr>";
+}
+
+function setGridSpan(tcPr, span) {
+  if (!span || span <= 1) return tcPr;
+  tcPr = ensureTcPr(tcPr).replace(/<w:gridSpan\b[^/]*\/>/g, "");
+  return tcPr.replace("</w:tcPr>", `<w:gridSpan w:val="${span}"/></w:tcPr>`);
+}
+
+function setVerticalCenter(tcPr) {
+  tcPr = ensureTcPr(tcPr);
+  if (/<w:vAlign\b/.test(tcPr)) return tcPr.replace(/<w:vAlign\b[^/]*\/>/g, '<w:vAlign w:val="center"/>');
+  return tcPr.replace("</w:tcPr>", '<w:vAlign w:val="center"/></w:tcPr>');
+}
+
 // Собирает XML одной ячейки.
 // vMerge: null | "restart" | "continue"
-function buildCell(style, content, vMerge = null) {
+function buildCell(style, content, vMerge = null, options = {}) {
   let tcPr = style.tcPr;
+  if (options.gridSpan) tcPr = setGridSpan(tcPr, options.gridSpan);
+  if (options.vAlignCenter) tcPr = setVerticalCenter(tcPr);
   if (vMerge === "restart") {
-    tcPr = tcPr
-      ? tcPr.replace("</w:tcPr>", '<w:vMerge w:val="restart"/></w:tcPr>')
-      : '<w:tcPr><w:vMerge w:val="restart"/></w:tcPr>';
+    tcPr = ensureTcPr(tcPr)
+      .replace(/<w:vMerge[^/]*\/>/g, "")
+      .replace("</w:tcPr>", '<w:vMerge w:val="restart"/></w:tcPr>');
   } else if (vMerge === "continue") {
-    tcPr = tcPr
-      ? tcPr.replace("</w:tcPr>", "<w:vMerge/></w:tcPr>")
-      : "<w:tcPr><w:vMerge/></w:tcPr>";
+    tcPr = ensureTcPr(tcPr)
+      .replace(/<w:vMerge[^/]*\/>/g, "")
+      .replace("</w:tcPr>", "<w:vMerge/></w:tcPr>");
   }
 
   let paragraphs;
@@ -172,17 +200,22 @@ function buildDataRows(templateRow, items, ctx, hasGroups) {
   const trPr = templateRow.match(/<w:trPr>[\s\S]*?<\/w:trPr>/)?.[0] || "";
   const rows = [];
   let lastDate = null;
+  let lastTimeKey = null;
 
   for (const it of items) {
     const isFirst = it.date !== lastDate;
     lastDate = it.date;
     const vm = isFirst ? "restart" : "continue";
+    const timeKey = `${it.date}|${it.start_time}|${it.end_time}`;
+    const timeVm = hasGroups && timeKey === lastTimeKey ? "continue" : hasGroups ? "restart" : null;
+    lastTimeKey = timeKey;
 
     const teachers = teacherLines(it, ctx);
     const room = it.room_id ? ctx.roomsById[it.room_id]?.number || "" : "";
     const time = `${it.start_time}-${it.end_time}`;
     const topic = topicLabel(it);
-    const lessonType = it.lesson_type || "";
+    const lessonType = it.lesson_type === "self_study" ? "" : it.lesson_type || "";
+    const wideEvent = isWideEvent(it);
 
     let colCells;
     if (hasGroups) {
@@ -192,25 +225,37 @@ function buildDataRows(templateRow, items, ctx, hasGroups) {
       else if (gids.length > 1)
         groupText = gids.map((g) => ctx.groupsById[g]?.name).filter(Boolean).join(", ");
       colCells = [
-        buildCell(styles[0], isFirst ? fmtDate(it.date) : "", vm),
-        buildCell(styles[1], isFirst ? weekdayRu(it.date) : "", vm),
-        buildCell(styles[2], time),
-        buildCell(styles[3], groupText),
-        buildCell(styles[4], topic),
-        buildCell(styles[5], lessonType),
-        buildCell(styles[6], teachers.length ? teachers : [""]),
-        buildCell(styles[7], room),
+        buildCell(styles[0], isFirst ? fmtDate(it.date) : "", vm, { vAlignCenter: true }),
+        buildCell(styles[1], isFirst ? weekdayRu(it.date) : "", vm, { vAlignCenter: true }),
+        buildCell(styles[2], timeVm === "continue" ? "" : time, timeVm, { vAlignCenter: true }),
       ];
+      if (wideEvent) {
+        colCells.push(buildCell(styles[3], topic, null, { gridSpan: 5, vAlignCenter: true }));
+      } else {
+        colCells.push(
+          buildCell(styles[3], groupText, null, { vAlignCenter: true }),
+          buildCell(styles[4], topic),
+          buildCell(styles[5], lessonType),
+          buildCell(styles[6], teachers.length ? teachers : [""]),
+          buildCell(styles[7], room),
+        );
+      }
     } else {
       colCells = [
-        buildCell(styles[0], isFirst ? fmtDate(it.date) : "", vm),
-        buildCell(styles[1], isFirst ? weekdayRu(it.date) : "", vm),
-        buildCell(styles[2], time),
-        buildCell(styles[3], topic),
-        buildCell(styles[4], lessonType),
-        buildCell(styles[5], teachers.length ? teachers : [""]),
-        buildCell(styles[6], room),
+        buildCell(styles[0], isFirst ? fmtDate(it.date) : "", vm, { vAlignCenter: true }),
+        buildCell(styles[1], isFirst ? weekdayRu(it.date) : "", vm, { vAlignCenter: true }),
+        buildCell(styles[2], time, null, { vAlignCenter: true }),
       ];
+      if (wideEvent) {
+        colCells.push(buildCell(styles[3], topic, null, { gridSpan: 4, vAlignCenter: true }));
+      } else {
+        colCells.push(
+          buildCell(styles[3], topic),
+          buildCell(styles[4], lessonType),
+          buildCell(styles[5], teachers.length ? teachers : [""]),
+          buildCell(styles[6], room),
+        );
+      }
     }
     rows.push(`<w:tr w:rsidR="00000000">${trPr}${colCells.join("")}</w:tr>`);
   }
@@ -268,15 +313,18 @@ async function exportSchedule(data) {
     groupsById: data.groupsById || {},
   };
 
-  // Даты начала / конца из элементов расписания или из периодов.
+  // Период обучения берется из выбранных периодов, а не из первого/последнего
+  // фактически заполненного занятия: в расписании могут быть свободные дни.
   let dateBegin = "", dateEnd = "";
-  if (items.length) {
+  if (periods?.length) {
+    const starts = periods.map((p) => p.start_date).filter(Boolean).sort();
+    const ends = periods.map((p) => p.end_date).filter(Boolean).sort();
+    dateBegin = fmtDate(starts[0]);
+    dateEnd = fmtDate(ends[ends.length - 1]);
+  } else if (items.length) {
     const dates = items.map((i) => i.date).sort();
     dateBegin = fmtDate(dates[0]);
     dateEnd = fmtDate(dates[dates.length - 1]);
-  } else if (periods?.length) {
-    dateBegin = fmtDate(periods[0].start_date);
-    dateEnd = fmtDate(periods[periods.length - 1].end_date);
   }
 
   // Выбираем шаблон.
@@ -288,19 +336,22 @@ async function exportSchedule(data) {
   const zip = new PizZip(templateBuf);
   let xml = zip.file("word/document.xml").asText();
 
-  const title = program.description || program.title || "";
+  const title = typography(program.description || program.title || "");
   const scheduleTitle = program.status === "approved" ? title : `ПРОЕКТ. ${title}`.trim();
+  // Шаблон содержит DateBegin + слово "по" + DateEnd; подставляем скобки и "с".
+  const periodBegin = dateBegin ? `(с ${dateBegin}` : "";
+  const periodEnd = dateEnd ? `${dateEnd})` : "";
   // Заменяем 9 текстовых меток.
   const markers = {
     ApproverPosition: program.approver_title || "",
     ApproverName: program.approver_name || "",
-    ApproveDate: program.approve_date || "",
+    ApproveDate: fmtDate(program.approve_date) || "",
     ScheduleTitle: scheduleTitle,
-    DateBegin: dateBegin,
-    DateEnd: dateEnd,
+    DateBegin: periodBegin,
+    DateEnd: periodEnd,
     SignerPosition: program.signer_title || "",
     SignerName: program.signer_name || "",
-    SignDate: program.sign_date || "",
+    SignDate: fmtDate(program.sign_date) || "",
   };
   for (const [key, value] of Object.entries(markers)) {
     xml = xml.replaceAll(key, esc(value));
@@ -319,4 +370,6 @@ async function exportSchedule(data) {
 }
 
 export { exportSchedule };
+
+
 
