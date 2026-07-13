@@ -224,40 +224,73 @@ const handlers = {
       )
       .all(programId);
 
+    const activeGroups = period.group_mode
+      ? db.prepare("SELECT id, name FROM groups WHERE period_id = ? AND is_active = 1 ORDER BY id").all(periodId)
+      : [];
+
     let cellIdx = 0;
     let created = 0;
     const insertItem = db.prepare(
       `INSERT INTO schedule_items
         (period_id, program_id, topic_id, date, start_time, end_time, start_dt, end_dt,
-         lesson_type, teacher_ids, room_id, group_ids, sort_order)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', NULL, '[]', ?)`
+         lesson_type, teacher_ids, room_id, group_ids, group_label, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', NULL, ?, ?, ?)`
     );
 
     const tx = db.transaction(() => {
       for (const topic of topics) {
         const slots = plannedSlots(topic);
         let placed = 0;
+        const expectedPlacements = slots.reduce((sum, lessonType) => {
+          const sharedLecture =
+            activeGroups.length > 1 &&
+            !period.separate_lectures &&
+            String(lessonType || "").toLowerCase().includes("лекц");
+          return sum + (activeGroups.length && !sharedLecture ? activeGroups.length : 1);
+        }, 0);
 
         for (const lessonType of slots) {
-          if (cellIdx >= cells.length) break;
-          const cell = cells[cellIdx++];
-          insertItem.run(
-            periodId,
-            programId,
-            topic.id,
-            cell.date,
-            cell.start,
-            cell.end,
-            `${cell.date}T${cell.start}:00`,
-            `${cell.date}T${cell.end}:00`,
-            lessonType,
-            created
-          );
-          created += 1;
-          placed += 1;
+          const sharedLecture =
+            activeGroups.length > 1 &&
+            !period.separate_lectures &&
+            String(lessonType || "").toLowerCase().includes("лекц");
+          const placements =
+            activeGroups.length && !sharedLecture
+              ? activeGroups.map((group) => ({
+                  groupIds: [group.id],
+                  groupLabel: group.name,
+                }))
+              : [
+                  {
+                    groupIds: activeGroups.map((group) => group.id),
+                    groupLabel: activeGroups.length > 1 ? activeGroups.map((group) => group.name).join("; ") : null,
+                  },
+                ];
+
+          for (const placement of placements) {
+            if (cellIdx >= cells.length) break;
+            const cell = cells[cellIdx++];
+            insertItem.run(
+              periodId,
+              programId,
+              topic.id,
+              cell.date,
+              cell.start,
+              cell.end,
+              `${cell.date}T${cell.start}:00`,
+              `${cell.date}T${cell.end}:00`,
+              lessonType,
+              JSON.stringify(placement.groupIds),
+              placement.groupLabel,
+              created
+            );
+            created += 1;
+            placed += 1;
+          }
+          if (placed < expectedPlacements && cellIdx >= cells.length) break;
         }
 
-        const fullyScheduled = placed >= slots.length;
+        const fullyScheduled = placed >= expectedPlacements;
         const scheduledHours = placed * HOURS_PER_SLOT;
         db.prepare(
           `UPDATE program_topics SET status = ?, assigned_period_id = ?, scheduled_hours = ?

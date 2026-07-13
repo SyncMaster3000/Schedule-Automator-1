@@ -45,6 +45,8 @@ function blankPeriod() {
     end_date: "",
     groups: "",
     autofill: true,
+    group_mode: false,
+    separate_lectures: false,
     grid_id: null,
     time_grid: [],
   };
@@ -176,6 +178,8 @@ async function savePeriod() {
         end_date: periodForm.value.end_date,
         time_grid: periodForm.value.time_grid,
         groups,
+        group_mode: periodForm.value.group_mode && groups.length > 0,
+        separate_lectures: periodForm.value.separate_lectures,
         autofill: periodForm.value.autofill,
       });
       showPeriod.value = false;
@@ -578,6 +582,21 @@ onMounted(async () => {
             <label class="label">Группы (через точку с запятой)</label>
             <input v-model="periodForm.groups" class="input" placeholder="Группа А; Группа Б" />
           </div>
+          <label class="flex items-center gap-2 text-sm text-slate-600">
+            <input v-model="periodForm.group_mode" type="checkbox" />
+            Создать расписание для нескольких учебных групп
+          </label>
+          <label
+            class="ml-6 flex items-center gap-2 text-sm text-slate-600"
+            :class="{ 'opacity-50': !periodForm.group_mode }"
+          >
+            <input
+              v-model="periodForm.separate_lectures"
+              type="checkbox"
+              :disabled="!periodForm.group_mode"
+            />
+            Планировать лекции раздельно для каждой группы
+          </label>
           <div>
             <label class="label">Сетка учебных часов</label>
             <select

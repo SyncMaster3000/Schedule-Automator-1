@@ -24,6 +24,7 @@ const teachers = ref([]);
 const rooms = ref([]);
 const lessonTypes = ref([]);
 const crossPeriod = ref(false);
+const groupFilter = ref("");
 const error = ref("");
 const info = ref("");
 
@@ -224,11 +225,42 @@ const allSelected = computed(
 const usedGroupLabels = computed(() =>
   groups.value.filter((group) => group.is_active).map((group) => group.name)
 );
+const activeGroups = computed(() => groups.value.filter((group) => group.is_active));
+
+function itemGroupNames(it) {
+  const ids = safeJsonArray(it.group_ids).map((id) => Number(id));
+  const names = ids
+    .map((id) => groups.value.find((group) => group.id === id)?.name)
+    .filter(Boolean);
+  if (names.length) return names;
+  return String(it.group_label || "")
+    .split(";")
+    .map((name) => name.trim())
+    .filter(Boolean);
+}
+function itemGroupLabel(it) {
+  return itemGroupNames(it).join("; ");
+}
+function groupLabelForIds(ids) {
+  return (ids || [])
+    .map((id) => groups.value.find((group) => group.id === Number(id))?.name)
+    .filter(Boolean)
+    .join("; ");
+}
+function matchesGroupFilter(it) {
+  if (!groupFilter.value) return true;
+  const id = Number(groupFilter.value);
+  return safeJsonArray(it.group_ids).map((groupId) => Number(groupId)).includes(id);
+}
+const visibleItems = computed(() => items.value.filter(matchesGroupFilter));
+const displayedItems = computed(() =>
+  period.value?.group_mode ? visibleItems.value : items.value
+);
 function toggleSelectAll() {
   selected.value = allSelected.value ? [] : selectableItems.value.map((it) => it.id);
 }
 function selectableItemsForDay(date) {
-  return items.value.filter((it) => it.date === date && !isEmptyItem(it));
+  return displayedItems.value.filter((it) => it.date === date && !isEmptyItem(it));
 }
 function isDaySelected(date) {
   const dayItems = selectableItemsForDay(date);
@@ -309,13 +341,12 @@ const totalConflicts = computed(() =>
 const hasConflicts = computed(() => totalConflicts.value > 0);
 
 // Групповой режим: занятия одного слота (дата + время) собираются в один ряд.
-// Общие занятия (без метки группы) показываются на всю ширину, а занятия
-// групп A и B — двумя колонками рядом. Каждое занятие попадает ровно в один
-// список, поэтому дубликаты практических не возникают.
+// Общие занятия показываются на всю ширину, а занятия конкретных групп —
+// отдельными колонками по фактическим группам периода, без ограничения A/B.
 const groupedRows = computed(() => {
   const rows = [];
   const byKey = new Map();
-  for (const it of items.value) {
+  for (const it of visibleItems.value) {
     const key = `${it.date}|${it.start_time}|${it.end_time}`;
     let row = byKey.get(key);
     if (!row) {
@@ -325,16 +356,42 @@ const groupedRows = computed(() => {
         start_time: it.start_time,
         end_time: it.end_time,
         common: [],
-        a: [],
-        b: [],
+        groups: [],
+        groupMap: new Map(),
       };
       byKey.set(key, row);
       rows.push(row);
     }
-    const label = (it.group_label || "").toUpperCase();
-    if (label === "A") row.a.push(it);
-    else if (label === "B") row.b.push(it);
-    else row.common.push(it);
+    const names = itemGroupNames(it);
+    if (names.length === 1) {
+      const name = names[0];
+      let bucket = row.groupMap.get(name);
+      if (!bucket) {
+        bucket = { name, items: [] };
+        row.groupMap.set(name, bucket);
+        row.groups.push(bucket);
+      }
+      bucket.items.push(it);
+    } else {
+      row.common.push(it);
+    }
+  }
+  const order = new Map(activeGroups.value.map((group, idx) => [group.name, idx]));
+  for (const row of rows) {
+    for (const group of activeGroups.value) {
+      if (!row.groupMap.has(group.name)) {
+        const bucket = { name: group.name, items: [] };
+        row.groupMap.set(group.name, bucket);
+        row.groups.push(bucket);
+      }
+    }
+    row.groups.sort((a, b) => {
+      const ai = order.has(a.name) ? order.get(a.name) : Number.MAX_SAFE_INTEGER;
+      const bi = order.has(b.name) ? order.get(b.name) : Number.MAX_SAFE_INTEGER;
+      if (ai !== bi) return ai - bi;
+      return a.name.localeCompare(b.name, "ru");
+    });
+    delete row.groupMap;
   }
   return rows;
 });
@@ -700,8 +757,11 @@ async function recheck() {
 async function saveItem() {
   pushUndo("редактирование занятия");
   try {
+    const groupIds = safeJsonArray(editing.value.group_ids).map((id) => Number(id));
     await api.schedule.saveItem({
       ...editing.value,
+      group_ids: groupIds,
+      group_label: groupIds.length ? groupLabelForIds(groupIds) : editing.value.group_label,
       custom_teachers: parseCustomTeachers(customTeacherText.value),
       crossPeriod: crossPeriod.value,
     });
@@ -1282,6 +1342,7 @@ function toggleGroup(id) {
   const i = arr.indexOf(id);
   if (i >= 0) arr.splice(i, 1);
   else arr.push(id);
+  editing.value.group_label = groupLabelForIds(arr);
   recheck();
 }
 
@@ -1432,13 +1493,25 @@ onUnmounted(() => {
           <option value="shift">Сместить весь ряд</option>
         </select>
       </div>
+      <div
+        v-if="period && period.group_mode && activeGroups.length"
+        class="flex items-center gap-2 border-l border-slate-200 pl-3 text-slate-600"
+      >
+        <span>Показать:</span>
+        <select v-model="groupFilter" class="input h-8 w-auto py-0 text-sm">
+          <option value="">Все группы</option>
+          <option v-for="g in activeGroups" :key="g.id" :value="g.id">
+            {{ g.name }}
+          </option>
+        </select>
+      </div>
     </div>
 
     <div v-if="!items.length" class="card p-10 text-center text-slate-400">
       Нет занятий. Добавьте занятие или вернитесь к периоду для автозаполнения.
     </div>
 
-    <!-- Групповой режим: занятия одного слота в одном ряду (две колонки A/B) -->
+    <!-- Групповой режим: занятия одного слота в одном ряду, группы — отдельными колонками -->
     <div v-else-if="period && period.group_mode" class="space-y-2">
       <div v-for="(row, ridx) in groupedRows" :key="row.key">
         <!-- Заголовок дня -->
@@ -1489,12 +1562,16 @@ onUnmounted(() => {
               @assign-topic="assignTopic"
               @toggle-select="toggleSelect"
             />
-            <!-- Группы A / B — двумя колонками -->
-            <div v-if="row.a.length || row.b.length" class="grid grid-cols-2 gap-3">
-              <div class="space-y-2">
-                <div class="px-1 text-xs font-semibold text-brand-700">Группа A</div>
+            <!-- Группы периода — отдельными колонками -->
+            <div
+              v-if="row.groups.length"
+              class="grid gap-3"
+              :style="{ gridTemplateColumns: `repeat(${Math.min(row.groups.length, 4)}, minmax(0, 1fr))` }"
+            >
+              <div v-for="group in row.groups" :key="group.name" class="space-y-2">
+                <div class="px-1 text-xs font-semibold text-brand-700">Группа {{ group.name }}</div>
                 <LessonCard
-                  v-for="it in row.a"
+                  v-for="it in group.items"
                   :key="it.id"
                   :item="it"
                   :selected="isSelected(it.id)"
@@ -1509,29 +1586,7 @@ onUnmounted(() => {
                   @assign-topic="assignTopic"
                   @toggle-select="toggleSelect"
                 />
-                <div v-if="!row.a.length" class="px-1 text-xs italic text-slate-300">
-                  нет занятия
-                </div>
-              </div>
-              <div class="space-y-2">
-                <div class="px-1 text-xs font-semibold text-brand-700">Группа B</div>
-                <LessonCard
-                  v-for="it in row.b"
-                  :key="it.id"
-                  :item="it"
-                  :selected="isSelected(it.id)"
-                  :unallocated-topics="unallocatedTopics"
-                  :teachers="teachers"
-                  :rooms="rooms"
-                  :show-drag="false"
-                  :show-time="false"
-                  :show-group-badge="false"
-                  @edit="openEditor"
-                  @delete-empty="deleteEmpty"
-                  @assign-topic="assignTopic"
-                  @toggle-select="toggleSelect"
-                />
-                <div v-if="!row.b.length" class="px-1 text-xs italic text-slate-300">
+                <div v-if="!group.items.length" class="px-1 text-xs italic text-slate-300">
                   нет занятия
                 </div>
               </div>
@@ -1644,15 +1699,15 @@ onUnmounted(() => {
               ></span>
               {{ itemTitle(it) }}
               <span
-                v-if="it.group_label"
+                v-if="itemGroupLabel(it)"
                 class="badge ml-1 bg-brand-50 text-brand-700"
-              >Группа {{ it.group_label }}</span>
+              >Группа {{ itemGroupLabel(it) }}</span>
             </div>
             <div v-if="isSelfStudy(it)" class="truncate text-xs text-slate-400">
               Самостоятельная подготовка
             </div>
             <div v-else class="truncate text-xs text-slate-500">
-              <template v-if="it.group_label">Гр. {{ it.group_label }} · </template>
+              <template v-if="itemGroupLabel(it)">Гр. {{ itemGroupLabel(it) }} · </template>
               <template v-if="it.lesson_type">{{ it.lesson_type }} · </template>
               {{ teacherNames(it.teacher_ids, it.custom_teachers) || "преп. не назначен" }} ·
               ауд. {{ roomNumber(it.room_id) }}
@@ -2454,3 +2509,4 @@ onUnmounted(() => {
     </AppModal>
   </div>
 </template>
+
