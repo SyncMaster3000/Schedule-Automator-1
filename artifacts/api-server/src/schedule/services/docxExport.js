@@ -538,7 +538,7 @@ function buildDataRows(templateRow, items, ctx, hasGroups) {
             vAlignCenter: true,
           }),
           buildCell(rowStyles[6], selfStudy ? "" : teacherContent),
-          buildCell(rowStyles[7], selfStudy ? "" : room),
+          buildCell(rowStyles[7], selfStudy ? "" : room, null, { vAlignCenter: true }),
         );
       } else if (wideEvent) {
         colCells.push(buildCell(rowStyles[3], topic, null, { gridSpan: 5, vAlignCenter: true }));
@@ -548,7 +548,7 @@ function buildDataRows(templateRow, items, ctx, hasGroups) {
           buildCell(rowStyles[4], topic),
           buildCell(rowStyles[5], lessonType),
           buildCell(rowStyles[6], teachers.length ? teachers : [""]),
-          buildCell(rowStyles[7], room),
+          buildCell(rowStyles[7], room, null, { vAlignCenter: true }),
         );
       }
     } else {
@@ -564,7 +564,7 @@ function buildDataRows(templateRow, items, ctx, hasGroups) {
             vAlignCenter: true,
           }),
           buildCell(rowStyles[5], selfStudy ? "" : teacherContent),
-          buildCell(rowStyles[6], selfStudy ? "" : room),
+          buildCell(rowStyles[6], selfStudy ? "" : room, null, { vAlignCenter: true }),
         );
       } else if (wideEvent) {
         colCells.push(buildCell(rowStyles[3], topic, null, { gridSpan: 4, vAlignCenter: true }));
@@ -573,7 +573,7 @@ function buildDataRows(templateRow, items, ctx, hasGroups) {
           buildCell(rowStyles[3], topic),
           buildCell(rowStyles[4], lessonType),
           buildCell(rowStyles[5], teachers.length ? teachers : [""]),
-          buildCell(rowStyles[6], room),
+          buildCell(rowStyles[6], room, null, { vAlignCenter: true }),
         );
       }
     }
