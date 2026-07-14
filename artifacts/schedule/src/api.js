@@ -203,6 +203,7 @@ export const api = {
     rename: (data) => call("versions:rename", data),
     delete: (id) => call("versions:delete", id),
     restore: (id) => call("versions:restore", id),
+    createFromArchive: (id) => call("versions:createFromArchive", id),
   },
 };
 

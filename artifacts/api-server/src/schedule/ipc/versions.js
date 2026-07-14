@@ -191,6 +191,39 @@ function restoreSnapshotToProgram(db, programId, snap) {
   return { missing };
 }
 
+function createProgramFromSnapshot(db, version, snap) {
+  const now = new Date().toISOString();
+  const sourceTitle = snap.program?.title || version.version_label || "Расписание";
+  const title = `Копия: ${sourceTitle}`;
+  const info = db
+    .prepare(
+      `INSERT INTO programs
+        (title, description, approver_name, approver_title, approve_date,
+         signer_name, signer_title, sign_date, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)`
+    )
+    .run(
+      title,
+      snap.program?.description || null,
+      snap.program?.approver_name || null,
+      snap.program?.approver_title || null,
+      snap.program?.approve_date || null,
+      snap.program?.signer_name || null,
+      snap.program?.signer_title || null,
+      snap.program?.sign_date || null,
+      now,
+      now
+    );
+  const programId = info.lastInsertRowid;
+  const restored = restoreSnapshotToProgram(db, programId, snap);
+  audit(programId, null, "program_created_from_archive", {
+    versionId: version.id,
+    sourceProgramId: version.program_id,
+    missingResources: restored.missing.length,
+  });
+  return { id: programId, ...restored };
+}
+
 export default {
   "versions:list": (programId) =>
     getDb()
@@ -303,6 +336,21 @@ export default {
       });
       return { id, ...restored };
     });
+    return tx();
+  },
+
+  // Создать новую черновую программу из архивного расписания-шаблона.
+  "versions:createFromArchive": (id) => {
+    const db = getDb();
+    const version = db
+      .prepare("SELECT * FROM schedule_versions WHERE id = ?")
+      .get(id);
+    if (!version) throw new Error("Архивная запись не найдена");
+    if (!version.archive_section || !["approved", "archived"].includes(version.status)) {
+      throw new Error("Как шаблон можно использовать только запись из архива");
+    }
+    const snap = JSON.parse(version.snapshot_json);
+    const tx = db.transaction(() => createProgramFromSnapshot(db, version, snap));
     return tx();
   },
 };

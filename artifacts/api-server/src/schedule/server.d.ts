@@ -5,7 +5,8 @@ export function importUtpFromBuffer(
   buffer: Buffer,
 ): Promise<{ topics: unknown[]; rawTableCount: number }>;
 export function exportDocxBuffer(data: {
-  programId: number;
+  programId?: number;
+  versionId?: number;
   periodId?: number;
   groupId?: number;
 }): Promise<{ buffer: Buffer; filename: string; count: number }>;

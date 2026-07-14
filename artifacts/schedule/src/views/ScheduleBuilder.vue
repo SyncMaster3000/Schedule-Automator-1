@@ -1308,30 +1308,6 @@ async function applyDayGrid(date, gridId) {
   }
 }
 
-async function applyOrder() {
-  pushUndo("применить порядок");
-  error.value = "";
-  try {
-    const cells = gridCells.value;
-    for (let i = 0; i < items.value.length; i++) {
-      const cell = cells[i];
-      if (!cell) break;
-      const it = items.value[i];
-      await api.schedule.saveItem({
-        ...it,
-        date: cell.date,
-        start_time: cell.start,
-        end_time: cell.end,
-        crossPeriod: crossPeriod.value,
-      });
-    }
-    info.value = "Порядок применен к сетке дат";
-    await load();
-  } catch (e) {
-    error.value = e.message;
-  }
-}
-
 function toggleTeacher(id) {
   const arr = editing.value.teacher_ids;
   const i = arr.indexOf(id);
@@ -1426,7 +1402,6 @@ onUnmounted(() => {
         </label>
         <button class="btn-secondary" @click="openSettings">Настройки периода</button>
         <button class="btn-secondary" @click="fillGrid">Заполнить сетку</button>
-        <button class="btn-secondary" @click="applyOrder">Применить порядок</button>
         <button class="btn-secondary" @click="openBulkShift">Сдвинуть вниз…</button>
         <button
           class="btn-secondary"

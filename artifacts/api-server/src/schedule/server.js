@@ -87,10 +87,95 @@ export async function importUtpFromBuffer(buffer) {
   return importUtp(buffer);
 }
 
-// Экспорт расписания в .docx. data: { programId, periodId?, groupId? }
+function safeJsonArray(value) {
+  if (Array.isArray(value)) return value;
+  try {
+    return JSON.parse(value || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function mapById(rows) {
+  const result = {};
+  for (const row of rows || []) result[row.id] = row;
+  return result;
+}
+
+async function exportVersionDocxBuffer(db, data) {
+  const version = db
+    .prepare("SELECT * FROM schedule_versions WHERE id = ?")
+    .get(data.versionId);
+  if (!version) throw new Error("Архивная запись не найдена");
+
+  const snapshot = JSON.parse(version.snapshot_json || "{}");
+  const topicById = mapById(snapshot.topics || []);
+  const program = {
+    ...(snapshot.program || {}),
+    status: version.archive_section && ["approved", "archived"].includes(version.status)
+      ? "approved"
+      : snapshot.program?.status || version.status,
+  };
+
+  const periods = data.periodId
+    ? (snapshot.periods || []).filter((p) => p.id === data.periodId)
+    : [...(snapshot.periods || [])].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  const periodIds = new Set(periods.map((p) => p.id));
+  if (!periodIds.size) throw new Error("Нет периодов для экспорта");
+
+  const groups = (snapshot.groups || []).filter((g) => periodIds.has(g.period_id));
+  const groupsById = mapById(groups);
+  let items = (snapshot.items || [])
+    .filter((it) => periodIds.has(it.period_id))
+    .map((it) => {
+      const topic = topicById[it.topic_id] || {};
+      return {
+        ...it,
+        utp_number: it.utp_number ?? topic.utp_number,
+        topic_title: it.topic_title ?? topic.title,
+        is_section: it.is_section ?? topic.is_section,
+      };
+    })
+    .sort((a, b) =>
+      String(a.date || "").localeCompare(String(b.date || "")) ||
+      String(a.start_time || "").localeCompare(String(b.start_time || "")) ||
+      (a.sort_order || 0) - (b.sort_order || 0)
+    );
+
+  if (data.groupId) {
+    items = items.filter((it) => {
+      const gids = safeJsonArray(it.group_ids);
+      return gids.length === 0 || gids.includes(data.groupId);
+    });
+  }
+
+  const teachersById = mapById(db.prepare("SELECT * FROM teachers").all());
+  const roomsById = mapById(db.prepare("SELECT * FROM rooms").all());
+  const groupColumn = Object.keys(groupsById).length > 0 && !data.groupId;
+  const groupName = data.groupId ? groupsById[data.groupId]?.name : null;
+
+  const { buffer, count } = await exportSchedule({
+    program,
+    periods,
+    items,
+    teachersById,
+    roomsById,
+    groupsById,
+    groupColumn,
+    groupName,
+  });
+
+  const baseName = version.version_label || program.title || "Архивное расписание";
+  const filename = `Расписание_${baseName}`.replace(/[\\/:*?"<>|]/g, "_") + ".docx";
+  return { buffer, filename, count };
+}
+
+// Экспорт расписания в .docx. data: { programId, periodId?, groupId? } или { versionId }
 export async function exportDocxBuffer(data) {
   await ensureReady();
   const db = getDb();
+  if (data.versionId) return exportVersionDocxBuffer(db, data);
+
   const program = db.prepare("SELECT * FROM programs WHERE id = ?").get(data.programId);
   if (!program) throw new Error("Программа не найдена");
 

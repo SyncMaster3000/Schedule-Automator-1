@@ -2,6 +2,7 @@
 // Архив расписаний: папки по типу обучения → годам → месяцам.
 // Поиск и удаление архивных расписаний.
 import { ref, computed, onMounted } from "vue";
+import { useRouter } from "vue-router";
 import api from "../api";
 
 const query = ref("");
@@ -9,6 +10,7 @@ const versions = ref([]);
 const error = ref("");
 const loading = ref(false);
 const info = ref("");
+const router = useRouter();
 
 const statusLabel = { draft: "Черновик", approved: "Утверждено", archived: "Архив" };
 
@@ -96,6 +98,30 @@ async function deleteArchived(v) {
   }
 }
 
+async function openWord(v) {
+  error.value = "";
+  info.value = "";
+  try {
+    const res = await api.exportDocx({ versionId: v.id });
+    info.value = `Word-файл подготовлен: ${res.filePath}`;
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
+async function useAsTemplate(v) {
+  if (!confirm(`Создать новую программу по архивному расписанию «${v.version_label}»?`)) return;
+  error.value = "";
+  info.value = "";
+  try {
+    const res = await api.versions.createFromArchive(v.id);
+    info.value = "Создана новая программа по архивному шаблону";
+    router.push(`/programs/${res.id}`);
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
 function fmt(dt) {
   if (!dt) return "";
   return new Date(dt).toLocaleString("ru-RU");
@@ -176,9 +202,17 @@ onMounted(search);
                   <template v-if="v.note"> · {{ v.note }}</template>
                 </div>
               </div>
-              <button class="btn-ghost text-red-500" @click="deleteArchived(v)">
-                Удалить из архива
-              </button>
+              <div class="flex shrink-0 flex-wrap justify-end gap-2">
+                <button class="btn-secondary" @click="openWord(v)">
+                  Открыть Word
+                </button>
+                <button class="btn-secondary" @click="useAsTemplate(v)">
+                  Использовать как шаблон
+                </button>
+                <button class="btn-ghost text-red-500" @click="deleteArchived(v)">
+                  Удалить из архива
+                </button>
+              </div>
             </div>
           </div>
         </div>

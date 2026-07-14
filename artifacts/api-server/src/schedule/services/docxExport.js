@@ -40,6 +40,42 @@ function typography(s) {
   return String(s || "").replace(/"([^"\n]+)"/g, "«$1»");
 }
 
+function isProjectStatus(status) {
+  return status !== "approved" && status !== "archived";
+}
+
+function projectBannerXml() {
+  return [
+    "<w:p>",
+    '<w:pPr><w:jc w:val="left"/></w:pPr>',
+    "<w:r>",
+    '<w:rPr><w:b/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr>',
+    "<w:t>ПРОЕКТ</w:t>",
+    "</w:r>",
+    "</w:p>",
+  ].join("");
+}
+
+function insertProjectBanner(xml) {
+  const banner = projectBannerXml();
+  const approvalPos = xml.indexOf("УТВЕРЖДАЮ");
+  if (approvalPos === -1) {
+    const bodyPos = xml.indexOf("<w:body>");
+    return bodyPos === -1
+      ? banner + xml
+      : xml.slice(0, bodyPos + "<w:body>".length) + banner + xml.slice(bodyPos + "<w:body>".length);
+  }
+
+  let paragraphStart = -1;
+  const paragraphRe = /<w:p(?:\s|>)/g;
+  let match;
+  while ((match = paragraphRe.exec(xml)) && match.index < approvalPos) {
+    paragraphStart = match.index;
+  }
+  if (paragraphStart === -1) return xml;
+  return xml.slice(0, paragraphStart) + banner + xml.slice(paragraphStart);
+}
+
 function topicLabel(it) {
   if (it.custom_title) return typography(it.custom_title);
   if (!it.topic_id && it.lesson_type === "self_study") return "Самоподготовка";
@@ -337,7 +373,10 @@ async function exportSchedule(data) {
   let xml = zip.file("word/document.xml").asText();
 
   const title = typography(program.description || program.title || "");
-  const scheduleTitle = program.status === "approved" ? title : `ПРОЕКТ. ${title}`.trim();
+  const scheduleTitle = title;
+  if (isProjectStatus(program.status)) {
+    xml = insertProjectBanner(xml);
+  }
   // Шаблон содержит DateBegin + слово "по" + DateEnd; подставляем скобки и "с".
   const periodBegin = dateBegin ? `(с ${dateBegin}` : "";
   const periodEnd = dateEnd ? `${dateEnd})` : "";
