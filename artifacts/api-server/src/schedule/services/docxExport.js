@@ -224,7 +224,11 @@ function topicLabel(it) {
 
 function isWideEvent(it) {
   const title = String(it.custom_title || "").toLowerCase();
-  return !it.topic_id && (it.lesson_type === "self_study" || title.includes("организацион"));
+  return !it.topic_id && title.includes("организацион");
+}
+
+function isSelfStudy(it) {
+  return !it.topic_id && it.lesson_type === "self_study";
 }
 
 function teacherLines(it, ctx) {
@@ -390,6 +394,7 @@ function buildDataRows(templateRow, items, ctx, hasGroups) {
     const topic = topicLabel(it);
     const lessonType = it.lesson_type === "self_study" ? "" : it.lesson_type || "";
     const wideEvent = isWideEvent(it);
+    const selfStudy = isSelfStudy(it);
 
     let colCells;
     if (hasGroups) {
@@ -403,7 +408,14 @@ function buildDataRows(templateRow, items, ctx, hasGroups) {
         buildCell(styles[1], isFirst ? weekdayRu(it.date) : "", vm, { vAlignCenter: true }),
         buildCell(styles[2], timeVm === "continue" ? "" : time, timeVm, { vAlignCenter: true }),
       ];
-      if (wideEvent) {
+      if (selfStudy) {
+        colCells.push(
+          buildCell(styles[3], groupText, null, { vAlignCenter: true }),
+          buildCell(styles[4], topic, null, { gridSpan: 2, vAlignCenter: true }),
+          buildCell(styles[6], ""),
+          buildCell(styles[7], ""),
+        );
+      } else if (wideEvent) {
         colCells.push(buildCell(styles[3], topic, null, { gridSpan: 5, vAlignCenter: true }));
       } else {
         colCells.push(
@@ -420,7 +432,13 @@ function buildDataRows(templateRow, items, ctx, hasGroups) {
         buildCell(styles[1], isFirst ? weekdayRu(it.date) : "", vm, { vAlignCenter: true }),
         buildCell(styles[2], time, null, { vAlignCenter: true }),
       ];
-      if (wideEvent) {
+      if (selfStudy) {
+        colCells.push(
+          buildCell(styles[3], topic, null, { gridSpan: 2, vAlignCenter: true }),
+          buildCell(styles[5], ""),
+          buildCell(styles[6], ""),
+        );
+      } else if (wideEvent) {
         colCells.push(buildCell(styles[3], topic, null, { gridSpan: 4, vAlignCenter: true }));
       } else {
         colCells.push(
