@@ -22,6 +22,9 @@ const projectEditor = ref(null); // { mode: "create" | "rename", versionId? }
 const projectLabel = ref("");
 const projectEditorError = ref("");
 const projectSaving = ref(false);
+const projectAction = ref(null); // { mode: "open" | "delete", version }
+const projectActionError = ref("");
+const projectActionRunning = ref(false);
 const exportPreview = ref(null);
 const exportPreviewPeriod = computed(() =>
   exportPreview.value?.periodId
@@ -272,28 +275,41 @@ async function submitProjectEditor() {
   }
 }
 
-async function deleteProject(id) {
-  if (!confirm("Удалить этот проект? Действие необратимо.")) return;
+function requestProjectAction(mode, version) {
+  projectAction.value = { mode, version };
+  projectActionError.value = "";
   error.value = "";
-  try {
-    await api.versions.delete(id);
-    info.value = "Проект удален";
-    await loadAll();
-  } catch (e) {
-    error.value = e.message;
-  }
 }
 
-async function openProject(v) {
-  if (!confirm(`Открыть проект «${v.version_label}»? Текущее расписание будет заменено этим снимком.`)) return;
+function closeProjectAction() {
+  if (projectActionRunning.value) return;
+  projectAction.value = null;
+  projectActionError.value = "";
+}
+
+async function confirmProjectAction() {
+  if (!projectAction.value || projectActionRunning.value) return;
+  const action = projectAction.value;
+  projectActionRunning.value = true;
+  projectActionError.value = "";
   error.value = "";
   try {
-    const res = await api.versions.restore(v.id);
-    const missing = res.missing?.length ? `; сброшено удаленных ресурсов: ${res.missing.length}` : "";
-    info.value = `Проект открыт${missing}`;
+    if (action.mode === "delete") {
+      await api.versions.delete(action.version.id);
+      info.value = "Проект удален";
+    } else {
+      const res = await api.versions.restore(action.version.id);
+      const missing = res.missing?.length
+        ? `; сброшено удаленных ресурсов: ${res.missing.length}`
+        : "";
+      info.value = `Проект открыт${missing}`;
+    }
+    projectAction.value = null;
     await loadAll();
   } catch (e) {
-    error.value = e.message;
+    projectActionError.value = e.message || "Не удалось выполнить действие с проектом";
+  } finally {
+    projectActionRunning.value = false;
   }
 }
 
@@ -550,7 +566,7 @@ onMounted(async () => {
             <button
               class="btn-secondary py-1 px-2 text-xs"
               title="Открыть сохраненный проект"
-              @click="openProject(v)"
+              @click="requestProjectAction('open', v)"
             >Открыть</button>
             <button
               class="btn-secondary py-1 px-2 text-xs"
@@ -560,7 +576,7 @@ onMounted(async () => {
             <button
               class="btn-ghost py-1 px-2 text-xs text-red-500"
               title="Удалить проект"
-              @click="deleteProject(v.id)"
+              @click="requestProjectAction('delete', v)"
             >Удалить</button>
           </div>
         </div>
@@ -595,6 +611,42 @@ onMounted(async () => {
         <button class="btn-secondary" :disabled="projectSaving" @click="closeProjectEditor">Отмена</button>
         <button class="btn-primary" :disabled="projectSaving" @click="submitProjectEditor">
           {{ projectSaving ? 'Сохранение…' : projectEditor.mode === 'rename' ? 'Переименовать' : 'Сохранить' }}
+        </button>
+      </template>
+    </AppModal>
+
+    <!-- Подтверждение открытия / удаления сохраненного проекта -->
+    <AppModal
+      v-if="projectAction"
+      :title="projectAction.mode === 'delete' ? 'Удалить проект' : 'Открыть проект'"
+      @close="closeProjectAction"
+    >
+      <div class="space-y-3 text-sm text-slate-600">
+        <p>
+          <template v-if="projectAction.mode === 'delete'">
+            Проект «{{ projectAction.version.version_label }}» будет удален без возможности восстановления.
+          </template>
+          <template v-else>
+            Текущее расписание будет заменено снимком «{{ projectAction.version.version_label }}».
+          </template>
+        </p>
+        <p v-if="projectAction.mode === 'open'" class="text-slate-500">
+          Если текущее состояние нужно сохранить, сначала создайте для него отдельный проект.
+        </p>
+        <div v-if="projectActionError" class="rounded bg-red-50 px-3 py-2 text-red-700">
+          {{ projectActionError }}
+        </div>
+      </div>
+      <template #footer>
+        <button class="btn-secondary" :disabled="projectActionRunning" @click="closeProjectAction">
+          Отмена
+        </button>
+        <button
+          :class="projectAction.mode === 'delete' ? 'btn-secondary text-red-600' : 'btn-primary'"
+          :disabled="projectActionRunning"
+          @click="confirmProjectAction"
+        >
+          {{ projectActionRunning ? 'Выполнение…' : projectAction.mode === 'delete' ? 'Удалить' : 'Открыть' }}
         </button>
       </template>
     </AppModal>
