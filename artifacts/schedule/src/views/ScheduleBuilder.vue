@@ -1345,7 +1345,9 @@ async function exportDocx() {
     const res = await api.exportDocx({ programId: programId.value, periodId: periodId.value });
     if (res.canceled) return;
     exportPreview.value = false;
-    info.value = `Экспортировано: ${res.filePath}`;
+    info.value = res.opened === false
+      ? `Файл сохранен: ${res.filePath}. Не удалось открыть его автоматически.`
+      : `Файл и папка открыты: ${res.filePath}`;
   } catch (e) {
     error.value = e.message;
   }

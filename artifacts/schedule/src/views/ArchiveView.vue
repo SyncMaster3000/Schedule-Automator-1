@@ -104,7 +104,9 @@ async function openWord(v) {
   try {
     const res = await api.exportDocx({ versionId: v.id });
     if (res.canceled) return;
-    info.value = `Word-файл подготовлен: ${res.filePath}`;
+    info.value = res.opened === false
+      ? `Word-файл сохранен: ${res.filePath}. Не удалось открыть его автоматически.`
+      : `Word-файл и папка открыты: ${res.filePath}`;
   } catch (e) {
     error.value = e.message;
   }

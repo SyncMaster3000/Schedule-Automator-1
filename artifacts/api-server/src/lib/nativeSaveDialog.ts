@@ -14,7 +14,7 @@ const SETTINGS_FILE = path.join(SETTINGS_DIR, "export-settings.json");
 type SaveDialogResult =
   | { supported: false }
   | { supported: true; canceled: true }
-  | { supported: true; canceled: false; filePath: string };
+  | { supported: true; canceled: false; filePath: string; opened: boolean };
 
 function toBase64(value: string): string {
   return Buffer.from(value, "utf8").toString("base64");
@@ -113,6 +113,30 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
   return selectedPath;
 }
 
+async function openSavedFileAndFolder(filePath: string): Promise<boolean> {
+  const filePath64 = toBase64(filePath);
+  const script = `
+$ErrorActionPreference = 'Stop'
+$target = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${filePath64}'))
+$directory = Split-Path -Parent $target
+Start-Process -FilePath $directory
+Start-Sleep -Milliseconds 300
+Start-Process -FilePath $target
+`;
+  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  try {
+    await execFileAsync(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-STA", "-EncodedCommand", encoded],
+      { encoding: "utf8", windowsHide: true, maxBuffer: 1024 * 1024 },
+    );
+    return true;
+  } catch {
+    // Файл уже сохранен: ошибка автоматического открытия не отменяет экспорт.
+    return false;
+  }
+}
+
 export async function saveBufferWithDialog(
   buffer: Buffer,
   suggestedFilename: string,
@@ -127,5 +151,6 @@ export async function saveBufferWithDialog(
 
   await fs.writeFile(selectedPath, buffer);
   await rememberDirectory(path.dirname(selectedPath));
-  return { supported: true, canceled: false, filePath: selectedPath };
+  const opened = await openSavedFileAndFolder(selectedPath);
+  return { supported: true, canceled: false, filePath: selectedPath, opened };
 }

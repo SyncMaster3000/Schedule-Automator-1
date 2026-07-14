@@ -105,7 +105,12 @@ router.post("/export-docx/save", async (req, res) => {
       ok: true,
       data: saved.canceled
         ? { canceled: true }
-        : { canceled: false, count, filePath: saved.filePath },
+        : {
+            canceled: false,
+            count,
+            filePath: saved.filePath,
+            opened: saved.opened,
+          },
     });
   } catch (err) {
     res.status(400).json({ ok: false, error: errMsg(err) });

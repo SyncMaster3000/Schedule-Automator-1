@@ -301,7 +301,9 @@ async function exportDocx(periodId = null) {
     const res = await api.exportDocx({ programId: programId.value, periodId });
     if (res.canceled) return;
     exportPreview.value = null;
-    info.value = `Экспортировано занятий: ${res.count}. Файл: ${res.filePath}`;
+    info.value = res.opened === false
+      ? `Экспортировано занятий: ${res.count}. Файл сохранен: ${res.filePath}. Не удалось открыть его автоматически.`
+      : `Экспортировано занятий: ${res.count}. Файл и папка открыты: ${res.filePath}`;
   } catch (e) {
     error.value = e.message;
   }
