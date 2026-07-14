@@ -342,6 +342,28 @@ function setVerticalCenter(tcPr) {
   return tcPr.replace("</w:tcPr>", '<w:vAlign w:val="center"/></w:tcPr>');
 }
 
+function setKeepNext(pPr) {
+  pPr = pPr || "<w:pPr></w:pPr>";
+  if (/<w:keepNext\b/.test(pPr)) return pPr;
+  return pPr.replace("</w:pPr>", "<w:keepNext/></w:pPr>");
+}
+
+function setCantSplit(trPr) {
+  trPr = trPr || "<w:trPr></w:trPr>";
+  if (/<w:cantSplit\b/.test(trPr)) return trPr;
+  return trPr.replace("</w:trPr>", "<w:cantSplit/></w:trPr>");
+}
+
+function markAsRepeatingHeader(rowXml) {
+  const existing = rowXml.match(/<w:trPr>[\s\S]*?<\/w:trPr>/)?.[0] || "";
+  let trPr = setCantSplit(existing);
+  if (!/<w:tblHeader\b/.test(trPr)) {
+    trPr = trPr.replace("</w:trPr>", "<w:tblHeader/></w:trPr>");
+  }
+  if (existing) return rowXml.replace(existing, trPr);
+  return rowXml.replace(/^(<w:tr(?:\s[^>]*)?>)/, `$1${trPr}`);
+}
+
 // Собирает XML одной ячейки.
 // vMerge: null | "restart" | "continue"
 function buildCell(style, content, vMerge = null, options = {}) {
@@ -380,20 +402,111 @@ function buildCell(style, content, vMerge = null, options = {}) {
 
 // ── Заполнение таблицы данными ─────────────────────────────────────────────
 
+function wrappedLineCount(value, charsPerLine) {
+  const values = Array.isArray(value) ? value : [value];
+  return Math.max(
+    1,
+    values.reduce((sum, part) => {
+      const lines = String(part || "").split(/\r?\n/);
+      return (
+        sum +
+        lines.reduce(
+          (lineSum, line) => lineSum + Math.max(1, Math.ceil(line.length / charsPerLine)),
+          0,
+        )
+      );
+    }, 0),
+  );
+}
+
+function groupTextForItem(it, ctx) {
+  const gids = JSON.parse(it.group_ids || "[]");
+  if (gids.length === 1) return ctx.groupsById[gids[0]]?.name || "";
+  if (gids.length > 1) {
+    return gids.map((id) => ctx.groupsById[id]?.name).filter(Boolean).join(", ");
+  }
+  return "";
+}
+
+// Word сам рассчитывает высоту строк по переносу текста. Эта оценка нужна лишь
+// для очень длинного дня: делим его на блоки, которые помещаются на отдельной
+// странице, и заново печатаем дату/день в начале следующего блока.
+function estimateRowHeight(it, ctx, hasGroups) {
+  const selfStudy = isSelfStudy(it);
+  const assessmentLabel = assessmentLessonLabel(it);
+  const topic = assessmentLabel || topicLabel(it);
+  const topicChars = selfStudy || assessmentLabel ? 72 : hasGroups ? 58 : 52;
+  const topicLines = wrappedLineCount(topic, topicChars);
+  const lessonLines = selfStudy
+    ? 1
+    : wrappedLineCount(it.lesson_type || "", hasGroups ? 13 : 17);
+  const teacherLinesCount = wrappedLineCount(
+    teacherLines(it, ctx),
+    hasGroups ? 17 : 20,
+  );
+  const roomLines = wrappedLineCount(
+    it.room_id ? ctx.roomsById[it.room_id]?.number || "" : "",
+    hasGroups ? 15 : 19,
+  );
+  const groupLines = hasGroups
+    ? wrappedLineCount(groupTextForItem(it, ctx), 10)
+    : 1;
+  const lines = Math.max(
+    topicLines,
+    lessonLines,
+    teacherLinesCount,
+    roomLines,
+    groupLines,
+  );
+  return Math.max(hasGroups ? 520 : 705, lines * 240 + 120);
+}
+
+function buildPageChunkIds(items, ctx, hasGroups) {
+  // Полезная высота альбомной страницы шаблона после повторяемой шапки таблицы.
+  const maxChunkHeight = hasGroups ? 9000 : 8500;
+  const result = [];
+  let chunkId = -1;
+  let date = null;
+  let height = 0;
+  for (const it of items) {
+    const rowHeight = estimateRowHeight(it, ctx, hasGroups);
+    const newDate = it.date !== date;
+    const overflow = !newDate && height > 0 && height + rowHeight > maxChunkHeight;
+    if (newDate || overflow) {
+      chunkId += 1;
+      date = it.date;
+      height = 0;
+    }
+    result.push(chunkId);
+    height += rowHeight;
+  }
+  return result;
+}
+
 function buildDataRows(templateRow, items, ctx, hasGroups) {
   const cells = extractCells(templateRow);
   const styles = cells.map(getCellStyle);
   const numCols = hasGroups ? 8 : 7;
   while (styles.length < numCols) styles.push(styles[styles.length - 1] || {});
 
-  const trPr = templateRow.match(/<w:trPr>[\s\S]*?<\/w:trPr>/)?.[0] || "";
+  const trPr = setCantSplit(
+    templateRow.match(/<w:trPr>[\s\S]*?<\/w:trPr>/)?.[0] || "",
+  );
   const rows = [];
-  let lastDate = null;
+  const chunkIds = buildPageChunkIds(items, ctx, hasGroups);
+  let lastChunkId = null;
   let lastTimeKey = null;
 
-  for (const it of items) {
-    const isFirst = it.date !== lastDate;
-    lastDate = it.date;
+  for (let index = 0; index < items.length; index += 1) {
+    const it = items[index];
+    const chunkId = chunkIds[index];
+    const isFirst = chunkId !== lastChunkId;
+    const keepNext = chunkIds[index + 1] === chunkId;
+    const rowStyles = keepNext
+      ? styles.map((style) => ({ ...style, pPr: setKeepNext(style.pPr) }))
+      : styles;
+    if (isFirst) lastTimeKey = null;
+    lastChunkId = chunkId;
     const vm = isFirst ? "restart" : "continue";
     const timeKey = `${it.date}|${it.start_time}|${it.end_time}`;
     const timeVm = hasGroups && timeKey === lastTimeKey ? "continue" : hasGroups ? "restart" : null;
@@ -411,60 +524,56 @@ function buildDataRows(templateRow, items, ctx, hasGroups) {
 
     let colCells;
     if (hasGroups) {
-      const gids = JSON.parse(it.group_ids || "[]");
-      let groupText = "";
-      if (gids.length === 1) groupText = ctx.groupsById[gids[0]]?.name || "";
-      else if (gids.length > 1)
-        groupText = gids.map((g) => ctx.groupsById[g]?.name).filter(Boolean).join(", ");
+      const groupText = groupTextForItem(it, ctx);
       colCells = [
-        buildCell(styles[0], isFirst ? fmtDate(it.date) : "", vm, { vAlignCenter: true }),
-        buildCell(styles[1], isFirst ? weekdayRu(it.date) : "", vm, { vAlignCenter: true }),
-        buildCell(styles[2], timeVm === "continue" ? "" : time, timeVm, { vAlignCenter: true }),
+        buildCell(rowStyles[0], isFirst ? fmtDate(it.date) : "", vm, { vAlignCenter: true }),
+        buildCell(rowStyles[1], isFirst ? weekdayRu(it.date) : "", vm, { vAlignCenter: true }),
+        buildCell(rowStyles[2], timeVm === "continue" ? "" : time, timeVm, { vAlignCenter: true }),
       ];
       if (selfStudy || assessmentLabel) {
         colCells.push(
-          buildCell(styles[3], groupText, null, { vAlignCenter: true }),
-          buildCell(styles[4], assessmentLabel || topic, null, {
+          buildCell(rowStyles[3], groupText, null, { vAlignCenter: true }),
+          buildCell(rowStyles[4], assessmentLabel || topic, null, {
             gridSpan: 2,
             vAlignCenter: true,
           }),
-          buildCell(styles[6], selfStudy ? "" : teacherContent),
-          buildCell(styles[7], selfStudy ? "" : room),
+          buildCell(rowStyles[6], selfStudy ? "" : teacherContent),
+          buildCell(rowStyles[7], selfStudy ? "" : room),
         );
       } else if (wideEvent) {
-        colCells.push(buildCell(styles[3], topic, null, { gridSpan: 5, vAlignCenter: true }));
+        colCells.push(buildCell(rowStyles[3], topic, null, { gridSpan: 5, vAlignCenter: true }));
       } else {
         colCells.push(
-          buildCell(styles[3], groupText, null, { vAlignCenter: true }),
-          buildCell(styles[4], topic),
-          buildCell(styles[5], lessonType),
-          buildCell(styles[6], teachers.length ? teachers : [""]),
-          buildCell(styles[7], room),
+          buildCell(rowStyles[3], groupText, null, { vAlignCenter: true }),
+          buildCell(rowStyles[4], topic),
+          buildCell(rowStyles[5], lessonType),
+          buildCell(rowStyles[6], teachers.length ? teachers : [""]),
+          buildCell(rowStyles[7], room),
         );
       }
     } else {
       colCells = [
-        buildCell(styles[0], isFirst ? fmtDate(it.date) : "", vm, { vAlignCenter: true }),
-        buildCell(styles[1], isFirst ? weekdayRu(it.date) : "", vm, { vAlignCenter: true }),
-        buildCell(styles[2], time, null, { vAlignCenter: true }),
+        buildCell(rowStyles[0], isFirst ? fmtDate(it.date) : "", vm, { vAlignCenter: true }),
+        buildCell(rowStyles[1], isFirst ? weekdayRu(it.date) : "", vm, { vAlignCenter: true }),
+        buildCell(rowStyles[2], time, null, { vAlignCenter: true }),
       ];
       if (selfStudy || assessmentLabel) {
         colCells.push(
-          buildCell(styles[3], assessmentLabel || topic, null, {
+          buildCell(rowStyles[3], assessmentLabel || topic, null, {
             gridSpan: 2,
             vAlignCenter: true,
           }),
-          buildCell(styles[5], selfStudy ? "" : teacherContent),
-          buildCell(styles[6], selfStudy ? "" : room),
+          buildCell(rowStyles[5], selfStudy ? "" : teacherContent),
+          buildCell(rowStyles[6], selfStudy ? "" : room),
         );
       } else if (wideEvent) {
-        colCells.push(buildCell(styles[3], topic, null, { gridSpan: 4, vAlignCenter: true }));
+        colCells.push(buildCell(rowStyles[3], topic, null, { gridSpan: 4, vAlignCenter: true }));
       } else {
         colCells.push(
-          buildCell(styles[3], topic),
-          buildCell(styles[4], lessonType),
-          buildCell(styles[5], teachers.length ? teachers : [""]),
-          buildCell(styles[6], room),
+          buildCell(rowStyles[3], topic),
+          buildCell(rowStyles[4], lessonType),
+          buildCell(rowStyles[5], teachers.length ? teachers : [""]),
+          buildCell(rowStyles[6], room),
         );
       }
     }
@@ -487,7 +596,7 @@ function fillScheduleTable(xml, items, ctx, hasGroups) {
   if (!rows.length) return xml;
 
   // Строка 0 — заголовок; образцовая строка — первая строка данных с нужным кол-вом ячеек.
-  const headerRow = rows[0];
+  const headerRow = markAsRepeatingHeader(rows[0]);
   const numCols = hasGroups ? 8 : 7;
   const templateRow =
     rows.slice(1).find((r) => extractCells(r).length === numCols) || rows[1];
