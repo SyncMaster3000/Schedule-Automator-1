@@ -5,6 +5,7 @@ import {
   importUtpFromBuffer,
   exportDocxBuffer,
 } from "../schedule/server.js";
+import { saveBufferWithDialog } from "../lib/nativeSaveDialog.js";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -85,6 +86,27 @@ router.post("/export-docx", async (req, res) => {
     );
     res.setHeader("X-Item-Count", String(count));
     res.send(buffer);
+  } catch (err) {
+    res.status(400).json({ ok: false, error: errMsg(err) });
+  }
+});
+
+// Локальный экспорт через отдельное окно Windows. Диалог запускается сервером,
+// поэтому не зависит от поддержки системных окон во встроенном браузере.
+router.post("/export-docx/save", async (req, res) => {
+  try {
+    const { buffer, filename, count } = await exportDocxBuffer(req.body ?? {});
+    const saved = await saveBufferWithDialog(buffer, filename);
+    if (!saved.supported) {
+      res.status(501).json({ ok: false, unsupported: true });
+      return;
+    }
+    res.json({
+      ok: true,
+      data: saved.canceled
+        ? { canceled: true }
+        : { canceled: false, count, filePath: saved.filePath },
+    });
   } catch (err) {
     res.status(400).json({ ok: false, error: errMsg(err) });
   }

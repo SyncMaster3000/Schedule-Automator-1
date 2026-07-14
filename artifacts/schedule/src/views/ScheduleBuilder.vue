@@ -1341,11 +1341,7 @@ async function openExportPreview() {
 }
 async function exportDocx() {
   try {
-    const res = await api.exportDocx({
-      programId: programId.value,
-      periodId: periodId.value,
-      suggestedName: `Расписание_${exportProgram.value?.title || "программы"}.docx`,
-    });
+    const res = await api.exportDocx({ programId: programId.value, periodId: periodId.value });
     if (res.canceled) return;
     exportPreview.value = false;
     info.value = `Экспортировано: ${res.filePath}`;
