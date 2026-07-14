@@ -1,4 +1,4 @@
-// Проекты расписаний и архив утвержденных расписаний.
+// Сохранённые версии расписаний и архив утверждённых расписаний.
 import { getDb, audit } from "../db/index.js";
 import { rebuildLocksForItem } from "../services/conflicts.js";
 
@@ -294,7 +294,7 @@ export default {
 
   "versions:get": (id) => {
     const v = getDb().prepare("SELECT * FROM schedule_versions WHERE id = ?").get(id);
-    if (!v) throw new Error("Проект или архивная запись не найдены");
+    if (!v) throw new Error("Сохранённая версия или архивная запись не найдены");
     return { ...v, snapshot: JSON.parse(v.snapshot_json) };
   },
 
@@ -302,7 +302,7 @@ export default {
   "versions:rename": ({ id, version_label, note }) => {
     const db = getDb();
     const v = db.prepare("SELECT * FROM schedule_versions WHERE id = ?").get(id);
-    if (!v) throw new Error("Проект или архивная запись не найдены");
+    if (!v) throw new Error("Сохранённая версия или архивная запись не найдены");
     db.prepare("UPDATE schedule_versions SET version_label = ?, note = ? WHERE id = ?").run(
       version_label ?? v.version_label,
       note !== undefined ? note : v.note,
@@ -311,21 +311,21 @@ export default {
     return { id };
   },
 
-  // Удалить сохраненный проект или архивную запись
+  // Удалить сохранённую версию или архивную запись
   "versions:delete": (id) => {
     getDb().prepare("DELETE FROM schedule_versions WHERE id = ?").run(id);
     return { id };
   },
 
-  // Открыть проект: восстановить сохраненный снимок в текущую программу.
+  // Восстановить сохранённую версию в текущую программу.
   "versions:restore": (id) => {
     const db = getDb();
     const version = db
       .prepare("SELECT * FROM schedule_versions WHERE id = ?")
       .get(id);
-    if (!version) throw new Error("Проект не найден");
+    if (!version) throw new Error("Сохранённая версия не найдена");
     if (version.status !== "draft" || version.archive_section) {
-      throw new Error("Можно открывать только сохраненные проекты");
+      throw new Error("Можно восстанавливать только сохранённые версии");
     }
     const snap = JSON.parse(version.snapshot_json);
     const tx = db.transaction(() => {
