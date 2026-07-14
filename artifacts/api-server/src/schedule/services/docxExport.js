@@ -231,6 +231,17 @@ function isSelfStudy(it) {
   return !it.topic_id && it.lesson_type === "self_study";
 }
 
+function assessmentLessonLabel(it) {
+  const normalized = String(it.lesson_type || "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е");
+  if (normalized === "экзамен") return "Экзамен";
+  if (normalized === "собеседование") return "Собеседование";
+  if (normalized === "зачет") return "Зачет";
+  return "";
+}
+
 function teacherLines(it, ctx) {
   const directoryTeachers = JSON.parse(it.teacher_ids || "[]")
     .map((id) => ctx.teachersById[id]?.fio)
@@ -389,12 +400,14 @@ function buildDataRows(templateRow, items, ctx, hasGroups) {
     lastTimeKey = timeKey;
 
     const teachers = teacherLines(it, ctx);
+    const teacherContent = teachers.length ? teachers : [""];
     const room = it.room_id ? ctx.roomsById[it.room_id]?.number || "" : "";
     const time = `${it.start_time}-${it.end_time}`;
     const topic = topicLabel(it);
     const lessonType = it.lesson_type === "self_study" ? "" : it.lesson_type || "";
     const wideEvent = isWideEvent(it);
     const selfStudy = isSelfStudy(it);
+    const assessmentLabel = assessmentLessonLabel(it);
 
     let colCells;
     if (hasGroups) {
@@ -408,12 +421,15 @@ function buildDataRows(templateRow, items, ctx, hasGroups) {
         buildCell(styles[1], isFirst ? weekdayRu(it.date) : "", vm, { vAlignCenter: true }),
         buildCell(styles[2], timeVm === "continue" ? "" : time, timeVm, { vAlignCenter: true }),
       ];
-      if (selfStudy) {
+      if (selfStudy || assessmentLabel) {
         colCells.push(
           buildCell(styles[3], groupText, null, { vAlignCenter: true }),
-          buildCell(styles[4], topic, null, { gridSpan: 2, vAlignCenter: true }),
-          buildCell(styles[6], ""),
-          buildCell(styles[7], ""),
+          buildCell(styles[4], assessmentLabel || topic, null, {
+            gridSpan: 2,
+            vAlignCenter: true,
+          }),
+          buildCell(styles[6], selfStudy ? "" : teacherContent),
+          buildCell(styles[7], selfStudy ? "" : room),
         );
       } else if (wideEvent) {
         colCells.push(buildCell(styles[3], topic, null, { gridSpan: 5, vAlignCenter: true }));
@@ -432,11 +448,14 @@ function buildDataRows(templateRow, items, ctx, hasGroups) {
         buildCell(styles[1], isFirst ? weekdayRu(it.date) : "", vm, { vAlignCenter: true }),
         buildCell(styles[2], time, null, { vAlignCenter: true }),
       ];
-      if (selfStudy) {
+      if (selfStudy || assessmentLabel) {
         colCells.push(
-          buildCell(styles[3], topic, null, { gridSpan: 2, vAlignCenter: true }),
-          buildCell(styles[5], ""),
-          buildCell(styles[6], ""),
+          buildCell(styles[3], assessmentLabel || topic, null, {
+            gridSpan: 2,
+            vAlignCenter: true,
+          }),
+          buildCell(styles[5], selfStudy ? "" : teacherContent),
+          buildCell(styles[6], selfStudy ? "" : room),
         );
       } else if (wideEvent) {
         colCells.push(buildCell(styles[3], topic, null, { gridSpan: 4, vAlignCenter: true }));
