@@ -76,6 +76,144 @@ function insertProjectBanner(xml) {
   return xml.slice(0, paragraphStart) + banner + xml.slice(paragraphStart);
 }
 
+function splitPositionLines(value, maxLength = 32) {
+  const explicit = String(value || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const sourceLines = explicit.length ? explicit : [String(value || "").trim()];
+  const result = [];
+  for (const source of sourceLines) {
+    if (!source) continue;
+    const rankMatch = source.match(
+      /((?:генерал(?:-майор|-лейтенант|-полковник)?|полковник|подполковник|майор|капитан|старший лейтенант|лейтенант)\s+(?:юстиции|милиции)(?:\s+\d+\s+класса)?)$/i,
+    );
+    const rank = rankMatch?.[1] || "";
+    const main = rank ? source.slice(0, rankMatch.index).trim() : source;
+    const words = main.split(/\s+/).filter(Boolean);
+    let line = "";
+    for (const word of words) {
+      const candidate = line ? `${line} ${word}` : word;
+      if (line && candidate.length > maxLength) {
+        result.push(line);
+        line = word;
+      } else {
+        line = candidate;
+      }
+    }
+    if (line) result.push(line);
+    if (rank) result.push(rank);
+  }
+  return result;
+}
+
+function textRunXml(text, size = 28) {
+  return [
+    "<w:r>",
+    "<w:rPr>",
+    '<w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:eastAsia="Times New Roman"/>',
+    `<w:sz w:val="${size}"/><w:szCs w:val="${size}"/>`,
+    "</w:rPr>",
+    `<w:t xml:space="preserve">${esc(text)}</w:t>`,
+    "</w:r>",
+  ].join("");
+}
+
+function approvalParagraphXml(content, options = {}) {
+  const tabs = options.rightTab
+    ? '<w:tabs><w:tab w:val="right" w:pos="13900"/></w:tabs>'
+    : "";
+  const alignment = options.align || "left";
+  const run = options.rightTab
+    ? `<w:r><w:tab/></w:r>${textRunXml(content, 28)}`
+    : textRunXml(content, 28);
+  return [
+    "<w:p>",
+    "<w:pPr>",
+    tabs,
+    '<w:spacing w:line="280" w:lineRule="exact"/>',
+    '<w:ind w:left="9072"/>',
+    `<w:jc w:val="${alignment}"/>`,
+    "</w:pPr>",
+    run,
+    "</w:p>",
+  ].join("");
+}
+
+function signatureParagraphXml(leftText, rightText = "", options = {}) {
+  const before = options.before
+    ? '<w:spacing w:before="60" w:line="280" w:lineRule="exact"/>'
+    : '<w:spacing w:line="280" w:lineRule="exact"/>';
+  const tabs = rightText
+    ? '<w:tabs><w:tab w:val="right" w:pos="13900"/></w:tabs>'
+    : "";
+  const rightRun = rightText
+    ? `<w:r><w:tab/></w:r>${textRunXml(rightText, 26)}`
+    : "";
+  return [
+    "<w:p>",
+    "<w:pPr>",
+    tabs,
+    '<w:autoSpaceDE w:val="0"/><w:autoSpaceDN w:val="0"/><w:adjustRightInd w:val="0"/>',
+    before,
+    '<w:jc w:val="left"/>',
+    "</w:pPr>",
+    textRunXml(leftText, 26),
+    rightRun,
+    "</w:p>",
+  ].join("");
+}
+
+function replaceMarkerParagraphs(xml, markers, replacement) {
+  const ranges = [];
+  const paragraphRe = /<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g;
+  let match;
+  while ((match = paragraphRe.exec(xml))) {
+    if (markers.some((marker) => match[0].includes(marker))) {
+      ranges.push({ start: match.index, end: match.index + match[0].length });
+    }
+  }
+  if (!ranges.length) return xml;
+  ranges.sort((a, b) => a.start - b.start);
+  let result = xml.slice(0, ranges[0].start) + replacement;
+  let cursor = ranges[0].end;
+  for (const range of ranges.slice(1)) {
+    result += xml.slice(cursor, range.start);
+    cursor = range.end;
+  }
+  return result + xml.slice(cursor);
+}
+
+function fillApprovalAndSignature(xml, program) {
+  const blankDate = "__.__.____";
+  const approverLines = splitPositionLines(program.approver_title);
+  const approvalXml = [
+    ...approverLines.map((line) => approvalParagraphXml(line)),
+    approvalParagraphXml(program.approver_name || "", { rightTab: true }),
+    approvalParagraphXml(fmtDate(program.approve_date) || blankDate),
+  ].join("");
+  xml = replaceMarkerParagraphs(
+    xml,
+    ["ApproverPosition", "ApproveDate"],
+    approvalXml,
+  );
+
+  const signerLines = splitPositionLines(program.signer_title);
+  const signerLastLine = signerLines.pop() || "";
+  const signatureXml = [
+    ...signerLines.map((line) => signatureParagraphXml(line)),
+    signatureParagraphXml(signerLastLine, program.signer_name || ""),
+    signatureParagraphXml(fmtDate(program.sign_date) || blankDate, "", {
+      before: true,
+    }),
+  ].join("");
+  return replaceMarkerParagraphs(
+    xml,
+    ["SignerPosition", "SignerName"],
+    signatureXml,
+  );
+}
+
 function topicLabel(it) {
   if (it.custom_title) return typography(it.custom_title);
   if (!it.topic_id && it.lesson_type === "self_study") return "Самоподготовка";
@@ -377,20 +515,15 @@ async function exportSchedule(data) {
   if (isProjectStatus(program.status)) {
     xml = insertProjectBanner(xml);
   }
+  xml = fillApprovalAndSignature(xml, program);
   // Шаблон содержит DateBegin + слово "по" + DateEnd; подставляем скобки и "с".
   const periodBegin = dateBegin ? `(с ${dateBegin}` : "";
   const periodEnd = dateEnd ? `${dateEnd})` : "";
-  // Заменяем 9 текстовых меток.
+  // Реквизиты утверждения и подписания заменяются отдельными абзацами выше.
   const markers = {
-    ApproverPosition: program.approver_title || "",
-    ApproverName: program.approver_name || "",
-    ApproveDate: fmtDate(program.approve_date) || "",
     ScheduleTitle: scheduleTitle,
     DateBegin: periodBegin,
     DateEnd: periodEnd,
-    SignerPosition: program.signer_title || "",
-    SignerName: program.signer_name || "",
-    SignDate: fmtDate(program.sign_date) || "",
   };
   for (const [key, value] of Object.entries(markers)) {
     xml = xml.replaceAll(key, esc(value));

@@ -52,6 +52,7 @@ const newNote = ref("");
 // --- Утверждение с выбором раздела архива ---
 const approveOpen = ref(false);
 const approveSection = ref("Повышение квалификации");
+const approveForm = ref({ approve_date: "", sign_date: "" });
 const exportPreview = ref(false);
 const exportProgram = ref(null);
 const ARCHIVE_SECTIONS = [
@@ -1350,14 +1351,38 @@ async function exportDocx() {
   }
 }
 
-function approve() {
+function todayRu() {
+  return new Date().toLocaleDateString("ru-RU");
+}
+
+async function approve() {
   if (hasConflicts.value) return;
-  approveSection.value = ARCHIVE_SECTIONS[0];
-  approveOpen.value = true;
+  error.value = "";
+  try {
+    const data = await api.programs.get(programId.value);
+    exportProgram.value = data.program;
+    approveForm.value = {
+      approve_date: data.program?.approve_date || todayRu(),
+      sign_date: data.program?.sign_date || todayRu(),
+    };
+    approveSection.value = ARCHIVE_SECTIONS[0];
+    approveOpen.value = true;
+  } catch (e) {
+    error.value = e.message;
+  }
 }
 async function doApprove() {
   error.value = "";
   try {
+    if (!approveForm.value.approve_date || !approveForm.value.sign_date) {
+      throw new Error("Укажите дату утверждения и дату подписания");
+    }
+    await api.programs.update({
+      ...exportProgram.value,
+      status: "approved",
+      approve_date: approveForm.value.approve_date,
+      sign_date: approveForm.value.sign_date,
+    });
     await api.versions.create({
       programId: programId.value,
       version_label: `Утверждено ${new Date().toLocaleString("ru-RU")}`,
@@ -2134,6 +2159,24 @@ onUnmounted(() => {
             placeholder="Ваше имя"
             @change="rememberAuthor"
           />
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="label">Дата утверждения</label>
+            <input
+              v-model="approveForm.approve_date"
+              class="input"
+              placeholder="напр. 14.07.2026"
+            />
+          </div>
+          <div>
+            <label class="label">Дата подписания</label>
+            <input
+              v-model="approveForm.sign_date"
+              class="input"
+              placeholder="напр. 14.07.2026"
+            />
+          </div>
         </div>
       </div>
       <template #footer>

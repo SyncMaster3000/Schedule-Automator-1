@@ -61,6 +61,8 @@ async function chooseWindowsPath(
   const filename64 = toBase64(filename);
   const script = `
 $ErrorActionPreference = 'Stop'
+$OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+[Console]::OutputEncoding = $OutputEncoding
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 $utf8 = [System.Text.Encoding]::UTF8
@@ -101,7 +103,14 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
   const result = stdout.trim().split(/\r?\n/).filter(Boolean).at(-1) || "";
   if (result === "CANCELLED") return null;
   if (!result) throw new Error("Окно сохранения не вернуло выбранный файл");
-  return fromBase64(result);
+  const selectedPath = fromBase64(result);
+  if (
+    !path.win32.isAbsolute(selectedPath) ||
+    !selectedPath.toLowerCase().endsWith(".docx")
+  ) {
+    throw new Error("Не удалось определить выбранный путь сохранения Word-файла");
+  }
+  return selectedPath;
 }
 
 export async function saveBufferWithDialog(
