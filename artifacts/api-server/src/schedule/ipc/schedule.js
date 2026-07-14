@@ -4,6 +4,63 @@ import { checkScheduleItem, rebuildLocksForItem } from "../services/conflicts.js
 import { buildCells, buildExtendedCells } from "./periods.js";
 const HOURS_PER_SLOT = 2;
 
+// Сформировать фактическую сетку периода с учетом отдельной сетки, назначенной
+// конкретному дню. Раньше операции перемещения использовали только общую сетку
+// периода, поэтому слоты первого дня (например, 08:30 вместо 08:40) считались
+// несуществующими.
+function buildConfiguredPeriodCells(db, period, { endDate, includeAllDays = false } = {}) {
+  const defaultGrid = JSON.parse(period.time_grid_json || "[]");
+  const dayGridIds = JSON.parse(period.day_grids_json || "{}");
+  const gridCache = new Map();
+  const dateCells = includeAllDays
+    ? buildExtendedCells(
+        period.start_date,
+        endDate || period.end_date,
+        [{ start: "00:00", end: "00:00" }]
+      )
+    : buildCells(
+        period.start_date,
+        endDate || period.end_date,
+        [{ start: "00:00", end: "00:00" }],
+        period.work_week || "mon-fri"
+      );
+
+  const cells = [];
+  for (const { date } of dateCells) {
+    const gridId = Number(dayGridIds[date] || 0);
+    let slots = defaultGrid;
+    if (gridId) {
+      if (!gridCache.has(gridId)) {
+        const row = db.prepare("SELECT slots_json FROM time_grids WHERE id = ?").get(gridId);
+        gridCache.set(gridId, row ? JSON.parse(row.slots_json || "[]") : defaultGrid);
+      }
+      slots = gridCache.get(gridId);
+    }
+    cells.push(
+      ...(includeAllDays
+        ? buildExtendedCells(date, date, slots)
+        : buildCells(date, date, slots, period.work_week || "mon-fri"))
+    );
+  }
+  return cells;
+}
+
+// Пустые строки сетки можно удалить и пересоздать при смещении. Строки с
+// пользовательским названием (регистрация, открытие и т.п.) являются реальными
+// мероприятиями и должны смещаться вместе с остальным расписанием.
+function isGridPlaceholder(it) {
+  if (it.topic_id) return false;
+  if (it.lesson_type === "empty" || it.lesson_type === "self_study") return true;
+  return (
+    !it.custom_title &&
+    !it.lesson_type &&
+    !it.room_id &&
+    !it.note &&
+    JSON.parse(it.teacher_ids || "[]").length === 0 &&
+    JSON.parse(it.group_ids || "[]").length === 0
+  );
+}
+
 // Синхронизировать очередь УТП с фактическими занятиями темы в расписании.
 // Удаление одного из нескольких слотов переводит тему в partial, последнего — в pending.
 function refreshTopicProgress(db, topicId) {
@@ -248,35 +305,7 @@ export default {
     const period = db.prepare("SELECT * FROM periods WHERE id = ?").get(periodId);
     if (!period) throw new Error("Период не найден");
 
-    const defaultGrid = JSON.parse(period.time_grid_json || "[]");
-    // Рабочие даты не должны зависеть от наполнения общей сетки. Иначе период
-    // с индивидуальными сетками по дням (или с временно пустой общей сеткой)
-    // вообще не обрабатывается, и после перехода Пн–Пт → Пн–Сб субботние
-    // слоты не создаются.
-    const workDateCells = buildCells(
-      period.start_date,
-      period.end_date,
-      [{ start: "00:00", end: "00:00" }],
-      period.work_week || "mon-fri"
-    );
-    const dates = workDateCells.map((cell) => cell.date);
-    const dayGridIds = JSON.parse(period.day_grids_json || "{}");
-    const gridCache = new Map();
-    const cells = [];
-    for (const date of dates) {
-      const gridId = Number(dayGridIds[date] || 0);
-      let slots = defaultGrid;
-      if (gridId) {
-        if (!gridCache.has(gridId)) {
-          const row = db.prepare("SELECT slots_json FROM time_grids WHERE id = ?").get(gridId);
-          gridCache.set(gridId, row ? JSON.parse(row.slots_json || "[]") : defaultGrid);
-        }
-        slots = gridCache.get(gridId);
-      }
-      cells.push(
-        ...buildCells(date, date, slots, period.work_week || "mon-fri")
-      );
-    }
+    const cells = buildConfiguredPeriodCells(db, period);
 
     const existing = db
       .prepare("SELECT date, start_time FROM schedule_items WHERE period_id = ?")
@@ -461,22 +490,25 @@ export default {
     if (!period) throw new Error("Период не найден");
     if (!n || n < 1) throw new Error("Число слотов должно быть не менее 1");
 
-    const timeGrid = JSON.parse(period.time_grid_json || "[]");
-
-    // Рабочие ячейки периода (только рабочие дни согласно учебной неделе)
-    const allCells = buildCells(
-      period.start_date,
-      period.end_date,
-      timeGrid,
-      period.work_week || "mon-fri"
-    );
+    // Рабочие ячейки периода с учетом отдельных сеток дней.
+    const allCells = buildConfiguredPeriodCells(db, period);
     // Множество ключей «рабочих» ячеек — нужно для определения флага is_outside_period
     const validCellKeys = new Set(allCells.map((c) => `${c.date} ${c.start}`));
 
     // Расширенные ячейки: все календарные дни (включая Сб/Вс) с запасом за конец периода.
     // Занятия, попавшие в ячейки вне validCellKeys, помечаются is_outside_period = 1.
-    const slotsPerDay = Math.max(timeGrid.filter((s) => !s.is_break).length, 1);
-    const extraDays = Math.ceil(n / slotsPerDay) + 7;
+    const cellCountsByDate = new Map();
+    for (const cell of allCells) {
+      cellCountsByDate.set(cell.date, (cellCountsByDate.get(cell.date) || 0) + 1);
+    }
+    const slotsPerDay = Math.max(...cellCountsByDate.values(), 1);
+
+    // Запас учитывает не только величину сдвига, но и закрепленные строки,
+    // которые должны оставаться на своих местах и обходиться при смещении.
+    const itemCount = db
+      .prepare("SELECT COUNT(*) AS c FROM schedule_items WHERE period_id = ?")
+      .get(periodId).c;
+    const extraDays = Math.ceil((n + itemCount) / slotsPerDay) + 7;
     const endD = new Date(period.end_date + "T00:00:00");
     endD.setDate(endD.getDate() + extraDays);
     const extEnd = [
@@ -484,7 +516,10 @@ export default {
       String(endD.getMonth() + 1).padStart(2, "0"),
       String(endD.getDate()).padStart(2, "0"),
     ].join("-");
-    const extCells = buildExtendedCells(period.start_date, extEnd, timeGrid);
+    const extCells = buildConfiguredPeriodCells(db, period, {
+      endDate: extEnd,
+      includeAllDays: true,
+    });
     const extCellIdx = new Map(extCells.map((c, i) => [`${c.date} ${c.start}`, i]));
 
     // Все занятия периода
@@ -509,34 +544,69 @@ export default {
       return true; // 'all'
     }
 
-    const isEmptySlot = (it) =>
-      it.lesson_type === "empty" || it.lesson_type === "self_study" || !it.topic_id;
-
     // Сдвигаем только реальные, незакрепленные, не «вне периода» занятия из scope
     const realToShift = allItems.filter(
-      (it) => inScope(it) && !it.is_pinned && !isEmptySlot(it) && !it.is_outside_period
+      (it) => inScope(it) && !it.is_pinned && !isGridPlaceholder(it) && !it.is_outside_period
     );
     if (!realToShift.length) return { shifted: 0 };
 
     const selfStudy = period.empty_slot_mode === "self_study";
 
+    // Закрепленные и не входящие в область операции реальные строки остаются на
+    // месте. При подсчете N слотов их позиции пропускаются, чтобы не создавать
+    // наложений.
+    const movingIds = new Set(realToShift.map((it) => it.id));
+    const fixedCellIndexes = new Set(
+      allItems
+        .filter((it) => !isGridPlaceholder(it) && !movingIds.has(it.id))
+        .map((it) => extCellIdx.get(`${it.date} ${it.start_time}`))
+        .filter((index) => index != null)
+    );
+
+    const destinationBySource = new Map();
+    const sourceKeys = [...new Set(realToShift.map((it) => `${it.date} ${it.start_time}`))]
+      .sort((a, b) => (extCellIdx.get(a) ?? Number.MAX_SAFE_INTEGER) - (extCellIdx.get(b) ?? Number.MAX_SAFE_INTEGER));
+    for (const sourceKey of sourceKeys) {
+      const sourceIndex = extCellIdx.get(sourceKey);
+      if (sourceIndex == null) {
+        throw new Error(`Слот ${sourceKey} не найден в назначенной сетке учебных часов`);
+      }
+      let remaining = n;
+      let targetIndex = sourceIndex;
+      while (remaining > 0 && targetIndex + 1 < extCells.length) {
+        targetIndex += 1;
+        if (!fixedCellIndexes.has(targetIndex)) remaining -= 1;
+      }
+      if (remaining > 0 || !extCells[targetIndex]) {
+        throw new Error("Недостаточно слотов для смещения расписания");
+      }
+      destinationBySource.set(sourceKey, extCells[targetIndex]);
+    }
+    const destinationKeys = new Set(
+      [...destinationBySource.values()].map((cell) => `${cell.date} ${cell.start}`)
+    );
+
     const tx = db.transaction(() => {
-      // Удалить пустые/самоподготовка занятия в scope — пересоздадутся после сдвига
-      const emptyInScope = allItems.filter((it) => inScope(it) && isEmptySlot(it));
-      if (emptyInScope.length) {
-        const ph = emptyInScope.map(() => "?").join(",");
+      // Удалить пустые/самоподготовка строки в области операции и в целевых
+      // ячейках. Рабочие пустые строки затем пересоздаются без дублей.
+      const placeholdersToDelete = allItems.filter(
+        (it) =>
+          isGridPlaceholder(it) &&
+          (inScope(it) || destinationKeys.has(`${it.date} ${it.start_time}`))
+      );
+      if (placeholdersToDelete.length) {
+        const ph = placeholdersToDelete.map(() => "?").join(",");
+        db.prepare(`DELETE FROM locks WHERE schedule_item_id IN (${ph})`).run(
+          ...placeholdersToDelete.map((it) => it.id)
+        );
         db.prepare(`DELETE FROM schedule_items WHERE id IN (${ph})`).run(
-          ...emptyInScope.map((it) => it.id)
+          ...placeholdersToDelete.map((it) => it.id)
         );
       }
 
       // Сместить реальные занятия в расширенной сетке (включая Сб/Вс за пределами периода)
-      const realAfterKeys = new Set();
       for (const it of realToShift) {
-        const extIdx = extCellIdx.get(`${it.date} ${it.start_time}`);
-        if (extIdx == null) continue;
-        const newCell = extCells[extIdx + n];
-        if (!newCell) continue; // даже расширенная сетка не покрывает — пропустить
+        const newCell = destinationBySource.get(`${it.date} ${it.start_time}`);
         const outside = validCellKeys.has(`${newCell.date} ${newCell.start}`) ? 0 : 1;
         db.prepare(
           `UPDATE schedule_items SET date = ?, start_time = ?, end_time = ?,
@@ -548,16 +618,22 @@ export default {
           outside,
           it.id
         );
-        realAfterKeys.add(`${newCell.date} ${newCell.start}`);
+        rebuildLocksForItem(db.prepare("SELECT * FROM schedule_items WHERE id = ?").get(it.id));
       }
 
       // Пересоздать пустые ячейки для рабочих слотов scope, не занятых реальными
+      const occupiedAfter = new Set(
+        db
+          .prepare("SELECT date, start_time FROM schedule_items WHERE period_id = ?")
+          .all(periodId)
+          .map((it) => `${it.date} ${it.start_time}`)
+      );
       let order =
         (db.prepare("SELECT MAX(sort_order) AS m FROM schedule_items WHERE period_id = ?")
           .get(periodId).m || 0) + 1;
       for (const c of allCells) {
         if (!inScope({ date: c.date })) continue;
-        if (realAfterKeys.has(`${c.date} ${c.start}`)) continue;
+        if (occupiedAfter.has(`${c.date} ${c.start}`)) continue;
         db.prepare(
           `INSERT INTO schedule_items
             (period_id, program_id, topic_id, date, start_time, end_time, start_dt, end_dt,
@@ -585,13 +661,7 @@ export default {
     if (!period) throw new Error("Период не найден");
     if (!itemIds || !itemIds.length) return { moved: 0 };
 
-    const timeGrid = JSON.parse(period.time_grid_json || "[]");
-    const cells = buildCells(
-      period.start_date,
-      period.end_date,
-      timeGrid,
-      period.work_week || "mon-fri"
-    );
+    const cells = buildConfiguredPeriodCells(db, period);
 
     // Все занятия периода, отсортированные по дате+времени
     const allItems = db

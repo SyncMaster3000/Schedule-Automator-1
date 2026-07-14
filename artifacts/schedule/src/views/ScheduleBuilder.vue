@@ -408,10 +408,17 @@ function isWorkDay(d) {
   return true;
 }
 
-// Сетка ячеек периода (дата × слот) — для пересчета по порядку
+function slotsForDate(date) {
+  const gridId = Number(dayGrid.value?.[date] || 0);
+  const configuredGrid = grids.value.find((grid) => Number(grid.id) === gridId);
+  const slots = configuredGrid?.slots || JSON.parse(period.value?.time_grid_json || "[]");
+  return slots.filter((slot) => !slot.is_break);
+}
+
+// Сетка ячеек периода (дата × слот) — для пересчета по порядку. Для каждого
+// дня учитывается назначенная ему отдельная сетка учебных часов.
 const gridCells = computed(() => {
   if (!period.value) return [];
-  const grid = JSON.parse(period.value.time_grid_json || "[]").filter((s) => !s.is_break);
   const days = eachDayOfInterval({
     start: parseISO(period.value.start_date),
     end: parseISO(period.value.end_date),
@@ -419,10 +426,14 @@ const gridCells = computed(() => {
   const cells = [];
   for (const d of days) {
     const date = format(d, "yyyy-MM-dd");
-    for (const s of grid) cells.push({ date, start: s.start, end: s.end });
+    for (const s of slotsForDate(date)) cells.push({ date, start: s.start, end: s.end });
   }
   return cells;
 });
+
+const moveTargetSlots = computed(() =>
+  gridCells.value.filter((cell) => cell.date === moveTarget.value.date)
+);
 
 async function load() {
   error.value = "";
@@ -2515,7 +2526,7 @@ onUnmounted(() => {
         <p class="text-slate-600">
           Выбрано <strong>{{ selected.length }}</strong> занятий. Они будут размещены подряд
           начиная с указанного слота, сохраняя взаимный порядок. Занятия на освободившихся
-          местах сдвигаются на vacated позиции.
+          местах сдвигаются на освободившиеся позиции.
         </p>
 
         <div>
@@ -2534,15 +2545,15 @@ onUnmounted(() => {
           <select v-model="moveTarget.start_time" class="input w-full">
             <option value="">Выберите время…</option>
             <option
-              v-for="it in items.filter(x => x.date === moveTarget.date)"
-              :key="it.id"
-              :value="it.start_time"
+              v-for="cell in moveTargetSlots"
+              :key="`${cell.date}-${cell.start}`"
+              :value="cell.start"
             >
-              {{ it.start_time }} — {{ it.end_time }} · {{ itemTitle(it) }}
+              {{ cell.start }} — {{ cell.end }}
             </option>
           </select>
           <p class="mt-1 text-xs text-slate-400">
-            Показаны только слоты этого дня, уже существующие в расписании
+            Показаны слоты назначенной этому дню сетки учебных часов
           </p>
         </div>
 
