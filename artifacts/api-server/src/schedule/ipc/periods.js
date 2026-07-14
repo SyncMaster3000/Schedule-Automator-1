@@ -52,6 +52,17 @@ function isWorkDay(d, workWeek) {
   return true;
 }
 
+// У недельного периода Пн–Пт конечная дата обычно приходится на пятницу.
+// При включении субботы продлеваем такую границу на один день, иначе смена
+// режима недели визуально сохранится, но суббота останется за пределами периода.
+function extendEndDateForSaturday(endDate, previousWorkWeek, nextWorkWeek) {
+  if (previousWorkWeek === "mon-sat" || nextWorkWeek !== "mon-sat") return endDate;
+  const end = parseISO(endDate);
+  if (end.getDay() !== 5) return endDate;
+  end.setDate(end.getDate() + 1);
+  return format(end, "yyyy-MM-dd");
+}
+
 // Сформировать список ячеек (дата × слот) в строгом порядке с учетом учебной недели
 function buildCells(startDate, endDate, timeGrid, workWeek = "mon-fri") {
   const days = eachDayOfInterval({
@@ -157,17 +168,20 @@ const handlers = {
     const db = getDb();
     const cur = db.prepare("SELECT * FROM periods WHERE id = ?").get(data.id);
     if (!cur) throw new Error("Период не найден");
+    const workWeek = data.work_week || cur.work_week || "mon-fri";
+    const endDate = extendEndDateForSaturday(cur.end_date, cur.work_week, workWeek);
     db.prepare(
-      `UPDATE periods SET work_week = ?, empty_slot_mode = ?,
+      `UPDATE periods SET end_date = ?, work_week = ?, empty_slot_mode = ?,
          group_mode = ?, separate_lectures = ? WHERE id = ?`
     ).run(
-      data.work_week || cur.work_week || "mon-fri",
+      endDate,
+      workWeek,
       data.empty_slot_mode || cur.empty_slot_mode || "empty",
       data.group_mode != null ? (data.group_mode ? 1 : 0) : cur.group_mode,
       data.separate_lectures != null ? (data.separate_lectures ? 1 : 0) : cur.separate_lectures,
       data.id
     );
-    return { id: data.id };
+    return { id: data.id, end_date: endDate };
   },
 
   // Сохранить выбор сетки учебных часов для конкретной даты периода.

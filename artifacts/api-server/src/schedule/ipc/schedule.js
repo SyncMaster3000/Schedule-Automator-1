@@ -249,13 +249,17 @@ export default {
     if (!period) throw new Error("Период не найден");
 
     const defaultGrid = JSON.parse(period.time_grid_json || "[]");
-    const defaultCells = buildCells(
+    // Рабочие даты не должны зависеть от наполнения общей сетки. Иначе период
+    // с индивидуальными сетками по дням (или с временно пустой общей сеткой)
+    // вообще не обрабатывается, и после перехода Пн–Пт → Пн–Сб субботние
+    // слоты не создаются.
+    const workDateCells = buildCells(
       period.start_date,
       period.end_date,
-      defaultGrid,
+      [{ start: "00:00", end: "00:00" }],
       period.work_week || "mon-fri"
     );
-    const dates = [...new Set(defaultCells.map((cell) => cell.date))];
+    const dates = workDateCells.map((cell) => cell.date);
     const dayGridIds = JSON.parse(period.day_grids_json || "{}");
     const gridCache = new Map();
     const cells = [];
