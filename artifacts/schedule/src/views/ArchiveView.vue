@@ -102,7 +102,11 @@ async function openWord(v) {
   error.value = "";
   info.value = "";
   try {
-    const res = await api.exportDocx({ versionId: v.id });
+    const res = await api.exportDocx({
+      versionId: v.id,
+      suggestedName: `Расписание_${v.version_label || v.program_title || "архив"}.docx`,
+    });
+    if (res.canceled) return;
     info.value = `Word-файл подготовлен: ${res.filePath}`;
   } catch (e) {
     error.value = e.message;

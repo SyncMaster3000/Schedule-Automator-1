@@ -73,12 +73,60 @@ async function importUtp() {
   return body.data;
 }
 
-// Экспорт в .docx: получаем файл и инициируем скачивание в браузере.
+const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+function safeDocxName(value) {
+  const name = String(value || "Расписание.docx")
+    .replace(/[\\/:*?"<>|]/g, "_")
+    .replace(/[. ]+$/g, "") || "Расписание";
+  return name.toLowerCase().endsWith(".docx") ? name : `${name}.docx`;
+}
+
+// Открываем системное окно сохранения непосредственно по нажатию кнопки.
+// Браузер запоминает последнюю папку для постоянного id, а при первом экспорте
+// начинает с папки «Загрузки». В браузерах без File System Access API остается
+// штатное скачивание файла.
+async function pickDocxSaveHandle(suggestedName) {
+  if (typeof window.showSaveFilePicker !== "function") return null;
+  try {
+    return await window.showSaveFilePicker({
+      id: "schedule-word-export",
+      startIn: "downloads",
+      suggestedName: safeDocxName(suggestedName),
+      types: [
+        {
+          description: "Документ Microsoft Word",
+          accept: { [DOCX_MIME]: [".docx"] },
+        },
+      ],
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") return false;
+    throw error;
+  }
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// Экспорт в .docx: сначала выбираем место сохранения, затем получаем и записываем файл.
 async function exportDocx(payload) {
+  const { suggestedName, ...requestPayload } = payload || {};
+  const saveHandle = await pickDocxSaveHandle(suggestedName);
+  if (saveHandle === false) return { canceled: true };
+
   const res = await fetch(`${BASE}/export-docx`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload || {}),
+    body: JSON.stringify(requestPayload),
   });
   if (!res.ok) {
     let msg = `Ошибка экспорта (${res.status})`;
@@ -102,14 +150,14 @@ async function exportDocx(payload) {
     }
   }
   const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  if (saveHandle) {
+    const writable = await saveHandle.createWritable();
+    await writable.write(blob);
+    await writable.close();
+    return { canceled: false, count, filePath: saveHandle.name || filename };
+  }
+
+  downloadBlob(blob, filename);
   return { canceled: false, count, filePath: filename };
 }
 

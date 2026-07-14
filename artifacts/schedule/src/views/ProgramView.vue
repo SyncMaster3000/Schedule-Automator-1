@@ -298,7 +298,11 @@ async function saveProject() {
 async function exportDocx(periodId = null) {
   error.value = "";
   try {
-    const res = await api.exportDocx({ programId: programId.value, periodId });
+    const res = await api.exportDocx({
+      programId: programId.value,
+      periodId,
+      suggestedName: `Расписание_${program.value?.title || "программы"}.docx`,
+    });
     if (res.canceled) return;
     exportPreview.value = null;
     info.value = `Экспортировано занятий: ${res.count}. Файл: ${res.filePath}`;
