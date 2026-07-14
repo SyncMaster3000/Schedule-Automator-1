@@ -18,6 +18,10 @@ const topics = ref([]);
 const periods = ref([]);
 const queue = ref({ total: 0, scheduled: 0, partial: 0, pending: 0, remaining: 0 });
 const versions = ref([]);
+const projectEditor = ref(null); // { mode: "create" | "rename", versionId? }
+const projectLabel = ref("");
+const projectEditorError = ref("");
+const projectSaving = ref(false);
 const exportPreview = ref(null);
 const exportPreviewPeriod = computed(() =>
   exportPreview.value?.periodId
@@ -212,16 +216,59 @@ async function savePeriod() {
   }
 }
 
-async function renameProject(v) {
-  const label = prompt("Новое название проекта:", v.version_label);
-  if (!label || label === v.version_label) return;
+function openProjectEditor(version = null) {
+  projectEditor.value = version
+    ? { mode: "rename", versionId: version.id, originalLabel: version.version_label }
+    : { mode: "create" };
+  projectLabel.value = version
+    ? version.version_label
+    : `Проект от ${new Date().toLocaleDateString("ru-RU")}`;
+  projectEditorError.value = "";
+  error.value = "";
+}
+
+function closeProjectEditor() {
+  if (projectSaving.value) return;
+  projectEditor.value = null;
+  projectEditorError.value = "";
+}
+
+async function submitProjectEditor() {
+  const label = projectLabel.value.trim();
+  if (!label) {
+    projectEditorError.value = "Введите название проекта";
+    return;
+  }
+  if (!projectEditor.value || projectSaving.value) return;
+
+  projectSaving.value = true;
+  projectEditorError.value = "";
   error.value = "";
   try {
-    await api.versions.rename({ id: v.id, version_label: label });
-    v.version_label = label;
-    info.value = "Проект переименован";
+    if (projectEditor.value.mode === "rename") {
+      if (label === projectEditor.value.originalLabel) {
+        projectEditor.value = null;
+        return;
+      }
+      await api.versions.rename({
+        id: projectEditor.value.versionId,
+        version_label: label,
+      });
+      info.value = "Проект переименован";
+    } else {
+      await api.versions.create({
+        programId: programId.value,
+        version_label: label,
+        status: "draft",
+      });
+      info.value = "Проект сохранен";
+    }
+    projectEditor.value = null;
+    await loadAll();
   } catch (e) {
-    error.value = e.message;
+    projectEditorError.value = e.message || "Не удалось сохранить проект";
+  } finally {
+    projectSaving.value = false;
   }
 }
 
@@ -283,18 +330,6 @@ async function confirmApprove() {
   }
 }
 
-async function saveProject() {
-  const label = prompt("Название проекта:", `Проект от ${new Date().toLocaleDateString("ru-RU")}`);
-  if (!label) return;
-  await api.versions.create({
-    programId: programId.value,
-    version_label: label,
-    status: "draft",
-  });
-  info.value = "Проект сохранен";
-  await loadAll();
-}
-
 async function exportDocx(periodId = null) {
   error.value = "";
   try {
@@ -336,7 +371,7 @@ onMounted(async () => {
         <p class="text-sm text-slate-500">{{ program.description || "Без описания" }}</p>
       </div>
       <div class="flex gap-2">
-        <button class="btn-secondary" @click="saveProject">Сохранить проект</button>
+        <button class="btn-secondary" @click="openProjectEditor()">Сохранить проект</button>
         <button class="btn-secondary" @click="openExportPreview()">Экспорт в .docx</button>
         <button class="btn-primary" @click="approve">Утвердить</button>
       </div>
@@ -497,7 +532,7 @@ onMounted(async () => {
     <div v-if="tab === 'versions'">
       <div class="mb-4 flex justify-between">
         <p class="text-sm text-slate-500">Проекты — сохраненные снимки текущего расписания. Их можно открыть, переименовать или удалить.</p>
-        <button class="btn-secondary" @click="saveProject">+ Сохранить проект</button>
+        <button class="btn-secondary" @click="openProjectEditor()">+ Сохранить проект</button>
       </div>
       <div v-if="!versions.length" class="card p-10 text-center text-slate-400">
         Проектов пока нет. Нажмите «Сохранить проект».
@@ -520,7 +555,7 @@ onMounted(async () => {
             <button
               class="btn-secondary py-1 px-2 text-xs"
               title="Переименовать"
-              @click="renameProject(v)"
+              @click="openProjectEditor(v)"
             >✏️ Переименовать</button>
             <button
               class="btn-ghost py-1 px-2 text-xs text-red-500"
@@ -531,6 +566,38 @@ onMounted(async () => {
         </div>
       </div>
     </div>
+
+    <!-- Сохранение нового проекта / переименование сохраненного -->
+    <AppModal
+      v-if="projectEditor"
+      :title="projectEditor.mode === 'rename' ? 'Переименовать проект' : 'Сохранить проект'"
+      @close="closeProjectEditor"
+    >
+      <div class="space-y-3">
+        <p class="text-sm text-slate-500">
+          Сохранится полный снимок программы, периодов и занятий. Его можно будет открыть на вкладке «Проекты».
+        </p>
+        <div>
+          <label class="label">Название проекта</label>
+          <input
+            v-model="projectLabel"
+            class="input"
+            maxlength="200"
+            autofocus
+            @keyup.enter="submitProjectEditor"
+          />
+        </div>
+        <div v-if="projectEditorError" class="rounded bg-red-50 px-3 py-2 text-sm text-red-700">
+          {{ projectEditorError }}
+        </div>
+      </div>
+      <template #footer>
+        <button class="btn-secondary" :disabled="projectSaving" @click="closeProjectEditor">Отмена</button>
+        <button class="btn-primary" :disabled="projectSaving" @click="submitProjectEditor">
+          {{ projectSaving ? 'Сохранение…' : projectEditor.mode === 'rename' ? 'Переименовать' : 'Сохранить' }}
+        </button>
+      </template>
+    </AppModal>
 
     <!-- Предпросмотр импорта -->
     <AppModal
