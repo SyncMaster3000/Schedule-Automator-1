@@ -362,6 +362,7 @@ const groupedRows = computed(() => {
         start_time: it.start_time,
         end_time: it.end_time,
         common: [],
+        hasCommonLesson: false,
         groups: [],
         groupMap: new Map(),
       };
@@ -380,6 +381,7 @@ const groupedRows = computed(() => {
       bucket.items.push(it);
     } else {
       row.common.push(it);
+      if (!isEmptyItem(it)) row.hasCommonLesson = true;
     }
   }
   const order = new Map(activeGroups.value.map((group, idx) => [group.name, idx]));
@@ -1717,7 +1719,7 @@ onUnmounted(() => {
             />
             <!-- Группы периода — отдельными колонками -->
             <div
-              v-if="row.groups.length"
+              v-if="row.groups.length && !row.hasCommonLesson"
               class="grid grid-flow-row gap-3 xl:grid-flow-col xl:auto-cols-fr"
             >
               <div v-for="group in row.groups" :key="group.name" class="space-y-2">
