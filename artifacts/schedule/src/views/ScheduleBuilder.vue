@@ -867,7 +867,9 @@ async function deleteItem() {
 const dragSlots = ref([]);
 const dragOrder = ref([]);
 const groupDragBusy = ref(false);
-const groupRowDragOrder = ref([]);
+const commonRowDrag = ref(null);
+const commonRowDragTargetKey = ref("");
+const commonRowPointerStart = ref(null);
 
 function groupDragName(groupName) {
   const group = groups.value.find((candidate) => candidate.name === groupName);
@@ -968,27 +970,84 @@ function groupedRowSlot(row) {
   };
 }
 
-// Общая лекция занимает весь ряд, поэтому при перетаскивании сохраняем порядок
-// временных рядов целиком. Целевой ряд может содержать как другую общую лекцию,
-// так и отдельные занятия двух групп.
-function onGroupedRowDragStart() {
-  groupRowDragOrder.value = groupedRows.value.map((row) => ({
-    key: row.key,
-    slot: groupedRowSlot(row),
-    hasCommonLesson: row.hasCommonLesson,
-  }));
+// Внешний VueDraggable для вычисляемого списка строк не всегда начинал жест:
+// ручка отображалась, но событие перестановки не возникало. Для общей лекции
+// используем явное pointer-перетаскивание. Целью остаётся весь временной ряд:
+// другая общая лекция либо пара занятий двух групп.
+function resetCommonRowDrag() {
+  commonRowDrag.value = null;
+  commonRowDragTargetKey.value = "";
+  commonRowPointerStart.value = null;
 }
 
-async function onGroupedRowDragEnd(evt) {
-  const oldIndex = evt?.oldIndex;
-  const newIndex = evt?.newIndex;
-  const order = groupRowDragOrder.value;
-  if (oldIndex == null || newIndex == null || oldIndex === newIndex) {
-    groupRowDragOrder.value = [];
-    return;
+function stopCommonRowPointerTracking() {
+  window.removeEventListener("pointermove", onCommonRowPointerMove);
+  window.removeEventListener("pointerup", onCommonRowPointerUp);
+  window.removeEventListener("pointercancel", onCommonRowPointerCancel);
+}
+
+function groupedRowAtPoint(clientX, clientY) {
+  const element = document
+    .elementFromPoint(clientX, clientY)
+    ?.closest?.("[data-group-row-key]");
+  const key = element?.dataset?.groupRowKey;
+  return key ? groupedRows.value.find((row) => row.key === key) || null : null;
+}
+
+function onCommonRowPointerDown(evt, row) {
+  if (evt.button !== 0 || !row.hasCommonLesson || groupDragBusy.value) return;
+  commonRowDrag.value = {
+    key: row.key,
+    slot: groupedRowSlot(row),
+    hasCommonLesson: true,
+  };
+  commonRowPointerStart.value = { x: evt.clientX, y: evt.clientY };
+  window.addEventListener("pointermove", onCommonRowPointerMove);
+  window.addEventListener("pointerup", onCommonRowPointerUp);
+  window.addEventListener("pointercancel", onCommonRowPointerCancel);
+  evt.preventDefault();
+}
+
+function onCommonRowPointerMove(evt) {
+  const source = commonRowDrag.value;
+  const start = commonRowPointerStart.value;
+  if (!source || !start) return;
+  if (Math.hypot(evt.clientX - start.x, evt.clientY - start.y) < 5) return;
+  const edge = 70;
+  if (evt.clientY < edge) window.scrollBy(0, -24);
+  else if (evt.clientY > window.innerHeight - edge) window.scrollBy(0, 24);
+  const target = groupedRowAtPoint(evt.clientX, evt.clientY);
+  commonRowDragTargetKey.value = target && target.key !== source.key ? target.key : "";
+  evt.preventDefault();
+}
+
+async function onCommonRowPointerUp(evt) {
+  const target = groupedRowAtPoint(evt.clientX, evt.clientY);
+  stopCommonRowPointerTracking();
+  if (target && commonRowDrag.value && target.key !== commonRowDrag.value.key) {
+    await onCommonRowDrop(target);
+  } else {
+    resetCommonRowDrag();
   }
-  const source = order[oldIndex];
-  const target = order[newIndex];
+}
+
+function onCommonRowPointerCancel() {
+  stopCommonRowPointerTracking();
+  resetCommonRowDrag();
+}
+
+async function onCommonRowDrop(targetRow) {
+  const source = commonRowDrag.value;
+  const target = targetRow
+    ? {
+        key: targetRow.key,
+        slot: groupedRowSlot(targetRow),
+        hasCommonLesson: targetRow.hasCommonLesson,
+      }
+    : null;
+  resetCommonRowDrag();
+  if (!source || !target || source.key === target.key) return;
+
   let failMsg = "";
   groupDragBusy.value = true;
   error.value = "";
@@ -1008,7 +1067,6 @@ async function onGroupedRowDragEnd(evt) {
   } catch (e) {
     failMsg = e.message;
   } finally {
-    groupRowDragOrder.value = [];
     try {
       await load();
       if (failMsg) error.value = failMsg;
@@ -1599,6 +1657,7 @@ onMounted(() => {
 });
 onUnmounted(() => {
   window.removeEventListener("keydown", handleUndoKey);
+  stopCommonRowPointerTracking();
 });
 </script>
 
@@ -1726,18 +1785,17 @@ onUnmounted(() => {
     </div>
 
     <!-- Групповой режим: занятия одного слота в одном ряду, группы — отдельными колонками -->
-    <VueDraggableNext
+    <div
       v-else-if="period && period.group_mode"
-      :list="groupedRows"
-      :disabled="groupDragBusy"
-      item-key="key"
-      handle=".group-row-drag-handle"
-      ghost-class="opacity-40"
       class="space-y-2"
-      @start="onGroupedRowDragStart"
-      @end="onGroupedRowDragEnd"
     >
-      <div v-for="(row, ridx) in groupedRows" :key="row.key">
+      <div
+        v-for="(row, ridx) in groupedRows"
+        :key="row.key"
+        :data-group-row-key="row.key"
+        class="rounded-xl transition"
+        :class="commonRowDragTargetKey === row.key ? 'bg-brand-50/60 ring-2 ring-brand-300' : ''"
+      >
         <!-- Заголовок дня -->
         <div
           v-if="ridx === 0 || groupedRows[ridx - 1].date !== row.date"
@@ -1767,15 +1825,19 @@ onUnmounted(() => {
         <!-- Ряд одного таймслота -->
         <div class="flex items-start gap-3">
           <div class="flex w-24 shrink-0 items-start gap-1 pt-3 text-sm text-slate-400">
-            <button
-              v-if="row.hasCommonLesson"
-              type="button"
-              class="group-row-drag-handle cursor-grab select-none text-slate-300 hover:text-brand-500"
-              title="Перетащить общую лекцию на другое время"
-            >⋮⋮</button>
             <span>{{ row.start_time }}–{{ row.end_time }}</span>
           </div>
           <div class="min-w-0 flex-1 space-y-2">
+            <button
+              v-if="row.hasCommonLesson"
+              type="button"
+              class="group-row-drag-handle flex w-full touch-none cursor-grab select-none items-center justify-center gap-2 rounded-lg border border-brand-200 bg-brand-50 px-3 py-1.5 text-xs font-semibold text-brand-700 shadow-sm transition hover:border-brand-400 hover:bg-brand-100 active:cursor-grabbing"
+              title="Перетащить общую лекцию на другое время или на место занятий двух групп"
+              @pointerdown.stop="onCommonRowPointerDown($event, row)"
+            >
+              <span aria-hidden="true">⋮⋮</span>
+              Перетащить общую лекцию
+            </button>
             <!-- Общие занятия — на всю ширину -->
             <LessonCard
               v-for="it in row.common"
@@ -1842,7 +1904,7 @@ onUnmounted(() => {
           </div>
         </div>
       </div>
-    </VueDraggableNext>
+    </div>
 
     <!-- Список занятий с drag-and-drop -->
     <VueDraggableNext
