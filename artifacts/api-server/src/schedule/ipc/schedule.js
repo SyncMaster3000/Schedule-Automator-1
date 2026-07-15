@@ -126,7 +126,7 @@ function listByPeriod(periodId, crossPeriod = false) {
   return { period, items };
 }
 
-export default {
+const handlers = {
   // payload: либо periodId (число), либо { periodId, crossPeriod }
   "schedule:listByPeriod": (payload) => {
     if (payload && typeof payload === "object") {
@@ -683,6 +683,35 @@ export default {
     const targetCellIdx = cells.findIndex((c) => `${c.date} ${c.start}` === targetKey);
     if (targetCellIdx < 0) throw new Error("Целевой слот не найден в сетке периода");
 
+    // Если выбраны все реальные занятия, пользователь фактически задает новое
+    // начало всего расписания. Обычная перестановка относительно невыбранных
+    // строк здесь не работает: таких строк нет, поэтому целевая позиция раньше
+    // терялась. Переиспользуем массовый сдвиг — он корректно оставляет пустые
+    // слоты сверху, учитывает закрепленные строки и допускает выход за период.
+    const movableRealItems = allItems.filter(
+      (it) => !it.is_pinned && !it.is_outside_period && !isGridPlaceholder(it)
+    );
+    const allRealItemsSelected =
+      movableRealItems.length > 0 && movableRealItems.every((it) => idSet.has(it.id));
+    if (allRealItemsSelected) {
+      const sourceIndexes = movableRealItems
+        .map((it) =>
+          cells.findIndex((cell) => cell.date === it.date && cell.start === it.start_time)
+        )
+        .filter((index) => index >= 0);
+      const firstSourceIndex = sourceIndexes.length ? Math.min(...sourceIndexes) : -1;
+      const shiftBy = firstSourceIndex >= 0 ? targetCellIdx - firstSourceIndex : 0;
+      if (shiftBy > 0) {
+        const result = handlers["schedule:bulkShift"]({
+          periodId,
+          scope: "all",
+          n: shiftBy,
+        });
+        return { moved: result.shifted, skippedPinned, shiftedAll: true };
+      }
+      if (shiftBy === 0) return { moved: 0, skippedPinned, shiftedAll: true };
+    }
+
     const pinnedCellIndexes = new Set(
       pinned
         .map((it) => cells.findIndex((cell) => cell.date === it.date && cell.start === it.start_time))
@@ -923,4 +952,6 @@ export default {
     return { conflicts };
   },
 };
+
+export default handlers;
 
