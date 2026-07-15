@@ -242,6 +242,10 @@ function assessmentLessonLabel(it) {
   return "";
 }
 
+function assessmentDisciplineLabel(it) {
+  return typography(it.discipline_name || "");
+}
+
 function teacherLines(it, ctx) {
   const directoryTeachers = JSON.parse(it.teacher_ids || "[]")
     .map((id) => ctx.teachersById[id]?.fio)
@@ -449,8 +453,11 @@ function groupTextForItem(it, ctx) {
 function estimateRowHeight(it, ctx, hasGroups) {
   const selfStudy = isSelfStudy(it);
   const assessmentLabel = assessmentLessonLabel(it);
-  const topic = assessmentLabel || topicLabel(it);
-  const topicChars = selfStudy || assessmentLabel ? 72 : hasGroups ? 58 : 52;
+  const assessmentDiscipline = assessmentDisciplineLabel(it);
+  const topic = assessmentLabel && hasGroups
+    ? assessmentDiscipline || topicLabel(it)
+    : assessmentLabel || topicLabel(it);
+  const topicChars = selfStudy || (assessmentLabel && !hasGroups) ? 72 : hasGroups ? 58 : 52;
   const topicLines = wrappedLineCount(topic, topicChars);
   const lessonLines = selfStudy
     ? 1
@@ -536,6 +543,7 @@ function buildDataRows(templateRow, items, ctx, hasGroups) {
     const wideEvent = isWideEvent(it);
     const selfStudy = isSelfStudy(it);
     const assessmentLabel = assessmentLessonLabel(it);
+    const assessmentDiscipline = assessmentDisciplineLabel(it);
 
     let colCells;
     if (hasGroups) {
@@ -548,15 +556,23 @@ function buildDataRows(templateRow, items, ctx, hasGroups) {
           symmetricHorizontalIndent: true,
         }),
       ];
-      if (selfStudy || assessmentLabel) {
+      if (selfStudy) {
         colCells.push(
           buildCell(rowStyles[3], groupText, null, { vAlignCenter: true }),
-          buildCell(rowStyles[4], assessmentLabel || topic, null, {
+          buildCell(rowStyles[4], topic, null, {
             gridSpan: 2,
             vAlignCenter: true,
           }),
-          buildCell(rowStyles[6], selfStudy ? "" : teacherContent),
-          buildCell(rowStyles[7], selfStudy ? "" : room, null, { vAlignCenter: true }),
+          buildCell(rowStyles[6], ""),
+          buildCell(rowStyles[7], "", null, { vAlignCenter: true }),
+        );
+      } else if (assessmentLabel) {
+        colCells.push(
+          buildCell(rowStyles[3], groupText, null, { vAlignCenter: true }),
+          buildCell(rowStyles[4], assessmentDiscipline || topic),
+          buildCell(rowStyles[5], assessmentLabel),
+          buildCell(rowStyles[6], teacherContent),
+          buildCell(rowStyles[7], room, null, { vAlignCenter: true }),
         );
       } else if (wideEvent) {
         colCells.push(buildCell(rowStyles[3], topic, null, { gridSpan: 5, vAlignCenter: true }));

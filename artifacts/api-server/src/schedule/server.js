@@ -102,6 +102,37 @@ function mapById(rows) {
   return result;
 }
 
+function isAssessmentType(value) {
+  const normalized = String(value || "").trim().toLowerCase().replace(/ё/g, "е");
+  return ["зачет", "экзамен", "собеседование"].includes(normalized);
+}
+
+// В новых импортированных УТП дисциплина хранится у каждой темы. Для старых
+// тестовых программ поле может быть пустым: тогда для итоговой аттестации берём
+// последний предшествующий раздел УТП (или последнее явно заданное название).
+function enrichAssessmentDisciplines(items, topics) {
+  const inferredByTopicId = new Map();
+  let currentDiscipline = "";
+  const sortedTopics = [...(topics || [])].sort(
+    (a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0),
+  );
+  for (const topic of sortedTopics) {
+    const explicit = String(topic.discipline_name || "").trim();
+    if (explicit) currentDiscipline = explicit;
+    else if (topic.is_section && topic.title) currentDiscipline = String(topic.title).trim();
+    if (isAssessmentType(topic.default_lesson_type || topic.title) && currentDiscipline) {
+      inferredByTopicId.set(Number(topic.id), currentDiscipline);
+    }
+  }
+  return (items || []).map((item) => {
+    if (!isAssessmentType(item.lesson_type) || String(item.discipline_name || "").trim()) {
+      return item;
+    }
+    const discipline = inferredByTopicId.get(Number(item.topic_id));
+    return discipline ? { ...item, discipline_name: discipline } : item;
+  });
+}
+
 async function exportVersionDocxBuffer(db, data) {
   const version = db
     .prepare("SELECT * FROM schedule_versions WHERE id = ?")
@@ -109,7 +140,8 @@ async function exportVersionDocxBuffer(db, data) {
   if (!version) throw new Error("Архивная запись не найдена");
 
   const snapshot = JSON.parse(version.snapshot_json || "{}");
-  const topicById = mapById(snapshot.topics || []);
+  const snapshotTopics = snapshot.topics || [];
+  const topicById = mapById(snapshotTopics);
   const program = {
     ...(snapshot.program || {}),
     status: version.archive_section && ["approved", "archived"].includes(version.status)
@@ -133,6 +165,7 @@ async function exportVersionDocxBuffer(db, data) {
         ...it,
         utp_number: it.utp_number ?? topic.utp_number,
         topic_title: it.topic_title ?? topic.title,
+        discipline_name: it.discipline_name ?? topic.discipline_name,
         is_section: it.is_section ?? topic.is_section,
       };
     })
@@ -141,6 +174,7 @@ async function exportVersionDocxBuffer(db, data) {
       String(a.start_time || "").localeCompare(String(b.start_time || "")) ||
       (a.sort_order || 0) - (b.sort_order || 0)
     );
+  items = enrichAssessmentDisciplines(items, snapshotTopics);
 
   if (data.groupId) {
     items = items.filter((it) => {
@@ -198,6 +232,10 @@ export async function exportDocxBuffer(data) {
        ORDER BY si.date, si.start_time, si.sort_order`
     )
     .all(...periodIds);
+  const topics = db
+    .prepare("SELECT * FROM program_topics WHERE program_id = ? ORDER BY sort_order")
+    .all(data.programId);
+  items = enrichAssessmentDisciplines(items, topics);
 
   if (data.groupId) {
     items = items.filter((it) => {
