@@ -1716,6 +1716,7 @@ onUnmounted(() => {
               @delete-empty="deleteEmpty"
               @assign-topic="assignTopic"
               @toggle-select="toggleSelect"
+              @toggle-pin="togglePin"
             />
             <!-- Группы периода — отдельными колонками -->
             <div
@@ -1750,6 +1751,7 @@ onUnmounted(() => {
                       @delete-empty="deleteEmpty"
                       @assign-topic="assignTopic"
                       @toggle-select="toggleSelect"
+                      @toggle-pin="togglePin"
                     />
                   </VueDraggableNext>
                   <div

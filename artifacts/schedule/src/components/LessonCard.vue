@@ -12,9 +12,16 @@ const props = defineProps({
   showDrag: { type: Boolean, default: true },
   showTime: { type: Boolean, default: true },
   showSelect: { type: Boolean, default: true },
+  showPin: { type: Boolean, default: true },
   showGroupBadge: { type: Boolean, default: true },
 });
-const emit = defineEmits(["edit", "delete-empty", "assign-topic", "toggle-select"]);
+const emit = defineEmits([
+  "edit",
+  "delete-empty",
+  "assign-topic",
+  "toggle-select",
+  "toggle-pin",
+]);
 
 function isSelfStudy(it) {
   return !it.topic_id && it.lesson_type === "self_study";
@@ -113,6 +120,13 @@ function conflictTitle(it) {
       :checked="selected"
       @change="emit('toggle-select', item.id)"
     />
+    <button
+      v-if="showPin"
+      class="shrink-0 text-base leading-none transition"
+      :class="item.is_pinned ? 'text-brand-500' : 'text-slate-200 hover:text-slate-400'"
+      :title="item.is_pinned ? 'Открепить занятие' : 'Закрепить занятие (не смещать при авто-операциях)'"
+      @click.stop="emit('toggle-pin', item)"
+    >📌</button>
     <span v-if="showDrag" class="drag-handle cursor-grab select-none text-slate-300">⋮⋮</span>
     <div v-if="showTime" class="w-24 shrink-0 text-sm">
       <div class="text-slate-400">{{ item.start_time }}–{{ item.end_time }}</div>
