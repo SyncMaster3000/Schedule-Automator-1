@@ -863,6 +863,98 @@ async function deleteItem() {
 // «Сместить весь ряд» (shift — все занятия сдвигаются по позициям).
 const dragSlots = ref([]);
 const dragOrder = ref([]);
+const groupDragBusy = ref(false);
+
+function groupDragName(groupName) {
+  const group = groups.value.find((candidate) => candidate.name === groupName);
+  return `schedule-group-${group?.id ?? groupName}`;
+}
+
+function itemSlot(it) {
+  return {
+    date: it.date,
+    start_time: it.start_time,
+    end_time: it.end_time,
+  };
+}
+
+async function saveItemInSlot(it, slot) {
+  await api.schedule.saveItem({
+    ...it,
+    date: slot.date,
+    start_time: slot.start_time,
+    end_time: slot.end_time,
+    crossPeriod: crossPeriod.value,
+  });
+}
+
+async function swapItemSlots(first, second, firstSlot, secondSlot) {
+  if (first.is_pinned || second.is_pinned) {
+    throw new Error(
+      "Нельзя переставить закрепленное занятие. Открепите его (📌) и попробуйте снова."
+    );
+  }
+  await saveItemInSlot(first, secondSlot);
+  await saveItemInSlot(second, firstSlot);
+}
+
+// Групповое представление состоит из отдельных drag-and-drop-контейнеров для
+// каждого временного слота. Контейнеры одной группы имеют общее имя, поэтому
+// карточку можно переносить только между слотами этой же группы.
+async function onGroupDragChange(evt, targetRow, targetGroup) {
+  const moved = evt?.added?.element;
+  if (!moved) return;
+
+  let failMsg = "";
+  groupDragBusy.value = true;
+  error.value = "";
+  try {
+    const movedGroups = itemGroupNames(moved);
+    if (movedGroups.length !== 1 || movedGroups[0] !== targetGroup.name) {
+      throw new Error("Занятия можно менять местами только внутри одной группы");
+    }
+
+    const movedIndex = targetGroup.items.findIndex(
+      (candidate) => Number(candidate.id) === Number(moved.id)
+    );
+    const target =
+      targetGroup.items[movedIndex + 1] ||
+      targetGroup.items[movedIndex - 1] ||
+      null;
+    const sourceSlot = itemSlot(moved);
+    const destinationSlot = {
+      date: targetRow.date,
+      start_time: targetRow.start_time,
+      end_time: targetRow.end_time,
+    };
+
+    if (target) {
+      const targetGroups = itemGroupNames(target);
+      if (targetGroups.length !== 1 || targetGroups[0] !== targetGroup.name) {
+        throw new Error("Занятия можно менять местами только внутри одной группы");
+      }
+      pushUndo(`перестановка занятий группы ${targetGroup.name}`);
+      await swapItemSlots(moved, target, sourceSlot, itemSlot(target));
+      info.value = `Занятия группы ${targetGroup.name} поменялись местами`;
+    } else {
+      if (moved.is_pinned) {
+        throw new Error("Закрепленное занятие нельзя перетаскивать");
+      }
+      pushUndo(`перемещение занятия группы ${targetGroup.name}`);
+      await saveItemInSlot(moved, destinationSlot);
+      info.value = `Занятие группы ${targetGroup.name} перемещено`;
+    }
+  } catch (e) {
+    failMsg = e.message;
+  } finally {
+    try {
+      await load();
+      if (failMsg) error.value = failMsg;
+    } finally {
+      groupDragBusy.value = false;
+    }
+  }
+}
 
 function onDragStart() {
   // Снимок текущих слотов и порядка занятий — до изменения порядка.
@@ -932,26 +1024,7 @@ async function swapItems(evt) {
   const moved = order[oldIndex];
   const target = order[newIndex];
   if (!moved || !target || moved === target) return;
-  // Закрепленные занятия нельзя перетаскивать в режиме «поменять местами»
-  if (moved.is_pinned || target.is_pinned) {
-    throw new Error(
-      "Нельзя переставить закрепленное занятие. Открепите его (📌) и попробуйте снова."
-    );
-  }
-  await api.schedule.saveItem({
-    ...moved,
-    date: slots[newIndex].date,
-    start_time: slots[newIndex].start_time,
-    end_time: slots[newIndex].end_time,
-    crossPeriod: crossPeriod.value,
-  });
-  await api.schedule.saveItem({
-    ...target,
-    date: slots[oldIndex].date,
-    start_time: slots[oldIndex].start_time,
-    end_time: slots[oldIndex].end_time,
-    crossPeriod: crossPeriod.value,
-  });
+  await swapItemSlots(moved, target, slots[oldIndex], slots[newIndex]);
   info.value = "Занятия поменялись местами";
 }
 
@@ -1650,25 +1723,40 @@ onUnmounted(() => {
             >
               <div v-for="group in row.groups" :key="group.name" class="space-y-2">
                 <div class="px-1 text-xs font-semibold text-brand-700">Группа {{ group.name }}</div>
-                <LessonCard
-                  v-for="it in group.items"
-                  :key="it.id"
-                  :item="it"
-                  :selected="isSelected(it.id)"
-                  :unallocated-topics="unallocatedTopics"
-                  :unallocated-topic-groups="unallocatedTopicGroups"
-                  :teachers="teachers"
-                  :rooms="rooms"
-                  :show-drag="false"
-                  :show-time="false"
-                  :show-group-badge="false"
-                  @edit="openEditor"
-                  @delete-empty="deleteEmpty"
-                  @assign-topic="assignTopic"
-                  @toggle-select="toggleSelect"
-                />
-                <div v-if="!group.items.length" class="px-1 text-xs italic text-slate-300">
-                  нет занятия
+                <div class="relative">
+                  <VueDraggableNext
+                    :list="group.items"
+                    :group="groupDragName(group.name)"
+                    :disabled="groupDragBusy"
+                    handle=".drag-handle"
+                    ghost-class="opacity-40"
+                    class="min-h-14 space-y-2 rounded-lg"
+                    @change="onGroupDragChange($event, row, group)"
+                  >
+                    <LessonCard
+                      v-for="it in group.items"
+                      :key="it.id"
+                      :item="it"
+                      :selected="isSelected(it.id)"
+                      :unallocated-topics="unallocatedTopics"
+                      :unallocated-topic-groups="unallocatedTopicGroups"
+                      :teachers="teachers"
+                      :rooms="rooms"
+                      :show-drag="true"
+                      :show-time="false"
+                      :show-group-badge="false"
+                      @edit="openEditor"
+                      @delete-empty="deleteEmpty"
+                      @assign-topic="assignTopic"
+                      @toggle-select="toggleSelect"
+                    />
+                  </VueDraggableNext>
+                  <div
+                    v-if="!group.items.length"
+                    class="pointer-events-none absolute inset-0 flex items-center px-1 text-xs italic text-slate-300"
+                  >
+                    нет занятия
+                  </div>
                 </div>
               </div>
             </div>
