@@ -1,6 +1,6 @@
 <script setup>
 // Список учебных программ + создание новой
-import { ref, onMounted } from "vue";
+import { computed, ref, onMounted, watch } from "vue";
 import { useRouter } from "vue-router";
 import api from "../api";
 import AppModal from "../components/AppModal.vue";
@@ -12,6 +12,43 @@ const error = ref("");
 const showCreate = ref(false);
 const editingId = ref(null); // null = новое, число = редактирование
 const form = ref(blankForm());
+const query = ref("");
+const activeFolder = ref("all");
+const PAGE_SIZE = 12;
+const visibleLimit = ref(PAGE_SIZE);
+
+const PROGRAM_FOLDERS = [
+  { key: "all", label: "Все расписания" },
+  { key: "draft", label: "Проекты" },
+  { key: "approved", label: "Утверждённые" },
+  { key: "archived", label: "В архиве" },
+];
+
+const folderCounts = computed(() => ({
+  all: programs.value.length,
+  draft: programs.value.filter((program) => program.status === "draft").length,
+  approved: programs.value.filter((program) => program.status === "approved").length,
+  archived: programs.value.filter((program) => program.status === "archived").length,
+}));
+
+const filteredPrograms = computed(() => {
+  const needle = query.value.trim().toLowerCase();
+  return programs.value.filter((program) => {
+    if (activeFolder.value !== "all" && program.status !== activeFolder.value) return false;
+    if (!needle) return true;
+    return [program.title, program.description]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(needle));
+  });
+});
+
+const visiblePrograms = computed(() =>
+  filteredPrograms.value.slice(0, visibleLimit.value),
+);
+
+watch([query, activeFolder], () => {
+  visibleLimit.value = PAGE_SIZE;
+});
 
 function blankForm() {
   return {
@@ -107,6 +144,12 @@ const statusLabel = {
   archived: "В архиве",
 };
 
+function formatUpdatedAt(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString("ru-RU");
+}
+
 onMounted(load);
 </script>
 
@@ -132,36 +175,93 @@ onMounted(load);
       Пока нет расписаний. Создайте первое, чтобы начать.
     </div>
 
-    <div v-else class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-      <div
-        v-for="p in programs"
-        :key="p.id"
-        class="card flex flex-col p-5 transition hover:shadow-md"
-      >
-        <div class="flex items-start justify-between">
-          <h3 class="text-lg font-semibold text-slate-800">{{ p.title }}</h3>
-          <span
-            class="badge"
-            :class="{
-              'bg-slate-100 text-slate-600': p.status === 'draft',
-              'bg-green-100 text-green-700': p.status === 'approved',
-              'bg-amber-100 text-amber-700': p.status === 'archived',
-            }"
-          >
-            {{ statusLabel[p.status] || p.status }}
-          </span>
+    <div v-else>
+      <div class="card mb-5 p-4">
+        <div class="flex flex-col gap-3 lg:flex-row lg:items-center">
+          <div class="relative min-w-0 flex-1">
+            <input
+              v-model="query"
+              class="input pr-10"
+              placeholder="Поиск по названию или описанию…"
+            />
+            <button
+              v-if="query"
+              class="absolute right-2 top-1/2 -translate-y-1/2 rounded px-2 py-1 text-slate-400 hover:bg-slate-100"
+              title="Очистить поиск"
+              @click="query = ''"
+            >✕</button>
+          </div>
+          <div class="text-sm text-slate-500">
+            Найдено: {{ filteredPrograms.length }} из {{ programs.length }}
+          </div>
         </div>
-        <p class="mt-1 line-clamp-2 flex-1 text-sm text-slate-500">
-          {{ p.description || "Без описания" }}
-        </p>
-        <div class="mt-4 flex flex-wrap gap-2">
-          <button class="btn-primary flex-1" @click="router.push(`/programs/${p.id}`)">
-            Открыть
+        <div class="mt-3 flex gap-2 overflow-x-auto border-t border-slate-100 pt-3">
+          <button
+            v-for="folder in PROGRAM_FOLDERS"
+            :key="folder.key"
+            class="shrink-0 rounded-lg px-3 py-2 text-sm font-medium transition"
+            :class="activeFolder === folder.key
+              ? 'bg-brand-600 text-white shadow-sm'
+              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'"
+            @click="activeFolder = folder.key"
+          >
+            {{ folder.label }} ({{ folderCounts[folder.key] }})
           </button>
-          <button class="btn-secondary" title="Редактировать название и реквизиты" @click="openEdit(p)">✏️</button>
-          <button class="btn-ghost text-red-500" @click="remove(p.id)">Удалить</button>
         </div>
       </div>
+
+      <div v-if="!filteredPrograms.length" class="card p-10 text-center text-slate-400">
+        По выбранной папке и строке поиска расписаний не найдено.
+      </div>
+
+      <template v-else>
+        <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+          <div
+            v-for="p in visiblePrograms"
+            :key="p.id"
+            class="card flex flex-col p-5 transition hover:shadow-md"
+          >
+            <div class="flex items-start justify-between gap-3">
+              <h3 class="min-w-0 text-lg font-semibold text-slate-800">{{ p.title }}</h3>
+              <span
+                class="badge shrink-0"
+                :class="{
+                  'bg-slate-100 text-slate-600': p.status === 'draft',
+                  'bg-green-100 text-green-700': p.status === 'approved',
+                  'bg-amber-100 text-amber-700': p.status === 'archived',
+                }"
+              >
+                {{ statusLabel[p.status] || p.status }}
+              </span>
+            </div>
+            <p class="mt-1 line-clamp-2 flex-1 text-sm text-slate-500">
+              {{ p.description || "Без описания" }}
+            </p>
+            <div class="mt-3 text-xs text-slate-400">
+              Тем: {{ p.topic_count || 0 }} · периодов: {{ p.period_count || 0 }}
+              <template v-if="formatUpdatedAt(p.updated_at)">
+                · обновлено {{ formatUpdatedAt(p.updated_at) }}
+              </template>
+            </div>
+            <div class="mt-4 flex flex-wrap gap-2">
+              <button class="btn-primary flex-1" @click="router.push(`/programs/${p.id}`)">
+                Открыть
+              </button>
+              <button class="btn-secondary" title="Редактировать название и реквизиты" @click="openEdit(p)">✏️</button>
+              <button class="btn-ghost text-red-500" @click="remove(p.id)">Удалить</button>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="visiblePrograms.length < filteredPrograms.length" class="mt-5 text-center">
+          <button
+            class="btn-secondary"
+            @click="visibleLimit += PAGE_SIZE"
+          >
+            Показать ещё {{ Math.min(PAGE_SIZE, filteredPrograms.length - visiblePrograms.length) }}
+          </button>
+        </div>
+      </template>
     </div>
 
     <AppModal
