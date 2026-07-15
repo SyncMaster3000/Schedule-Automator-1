@@ -41,7 +41,6 @@ function isEmptyItem(it) {
     !it.room_id &&
     !(it.teacher_ids && it.teacher_ids.length) &&
     !(it.custom_teachers && it.custom_teachers.length) &&
-    !(it.group_ids && it.group_ids.length) &&
     !it.note
   );
 }

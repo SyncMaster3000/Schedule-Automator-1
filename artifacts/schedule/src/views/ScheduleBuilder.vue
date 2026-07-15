@@ -123,9 +123,9 @@ function isSelfStudy(it) {
   return !it.topic_id && it.lesson_type === "self_study";
 }
 
-// Пустое «окошко» в расписании: незаполненный слот (без темы, преподавателей,
-// аудитории, групп). Помечается lesson_type 'empty' (заполнение сетки) либо
-// вовсе без вида (смещение ряда). «Самоподготовка» сюда не относится.
+// Пустое «окошко» в расписании: незаполненный слот без темы, преподавателей и
+// аудитории. В групповом режиме оно сохраняет group_ids, чтобы отображаться в
+// колонке своей группы. «Самоподготовка» сюда не относится.
 function isEmptyItem(it) {
   if (isSelfStudy(it)) return false;
   return (
@@ -135,7 +135,6 @@ function isEmptyItem(it) {
     !it.room_id &&
     !(it.teacher_ids && it.teacher_ids.length) &&
     !(it.custom_teachers && it.custom_teachers.length) &&
-    !(it.group_ids && it.group_ids.length) &&
     !it.note
   );
 }

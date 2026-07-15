@@ -295,10 +295,10 @@ const handlers = {
     tx();
     return { deleted, skipped };
   },
-  // Заполнить сетку периода: создать пустые занятия для всех ячеек (дата × слот),
-  // где еще ничего не стоит. Режим period.empty_slot_mode задает подпись пустых
-  // ячеек ('self_study' → «Самоподготовка», иначе остаются пустыми блоками).
-  // Существующие занятия (в т.ч. из УТП) не трогаются.
+  // Заполнить сетку периода: в обычном режиме создать один пустой слот на время,
+  // в групповом — отдельный слот каждой активной группы. Общая лекция или другое
+  // общее занятие занимает всю строку, поэтому дополнительные групповые слоты
+  // рядом с ним не создаются. Существующие реальные занятия не трогаются.
   "schedule:fillGrid": (payload) => {
     const db = getDb();
     const periodId = typeof payload === "object" ? payload.periodId : payload;
@@ -308,42 +308,125 @@ const handlers = {
     const cells = buildConfiguredPeriodCells(db, period);
 
     const existing = db
-      .prepare("SELECT date, start_time FROM schedule_items WHERE period_id = ?")
+      .prepare("SELECT * FROM schedule_items WHERE period_id = ?")
       .all(periodId);
-    const taken = new Set(existing.map((e) => `${e.date} ${e.start_time}`));
+    const existingByCell = new Map();
+    for (const item of existing) {
+      const key = `${item.date} ${item.start_time}`;
+      if (!existingByCell.has(key)) existingByCell.set(key, []);
+      existingByCell.get(key).push(item);
+    }
+
+    const activeGroups = period.group_mode
+      ? db
+          .prepare(
+            "SELECT id, name FROM groups WHERE period_id = ? AND is_active = 1 ORDER BY id",
+          )
+          .all(periodId)
+          .slice(0, 2)
+      : [];
+    const activeGroupIds = activeGroups.map((group) => Number(group.id));
+    const groupIdByName = new Map(
+      activeGroups.map((group) => [String(group.name).trim(), Number(group.id)]),
+    );
+    const itemGroupIds = (item) => {
+      const ids = JSON.parse(item.group_ids || "[]")
+        .map(Number)
+        .filter((id) => activeGroupIds.includes(id));
+      if (ids.length) return [...new Set(ids)];
+      return String(item.group_label || "")
+        .split(";")
+        .map((name) => groupIdByName.get(name.trim()))
+        .filter(Boolean);
+    };
 
     const selfStudy = period.empty_slot_mode === "self_study";
     const insert = db.prepare(
       `INSERT INTO schedule_items
         (period_id, program_id, topic_id, date, start_time, end_time, start_dt, end_dt,
          lesson_type, custom_title, teacher_ids, room_id, group_ids, group_label, note, sort_order)
-       VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, '[]', NULL, '[]', NULL, NULL, ?)`
+       VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, '[]', NULL, ?, ?, NULL, ?)`
     );
     let order =
       (db
         .prepare("SELECT MAX(sort_order) AS m FROM schedule_items WHERE period_id = ?")
         .get(periodId).m || 0) + 1;
     let created = 0;
+    let removedLegacy = 0;
+    const deletePlaceholder = db.prepare(
+      "DELETE FROM schedule_items WHERE id = ?",
+    );
+    const insertPlaceholder = (cell, group = null) => {
+      insert.run(
+        periodId,
+        period.program_id,
+        cell.date,
+        cell.start,
+        cell.end,
+        `${cell.date}T${cell.start}:00`,
+        `${cell.date}T${cell.end}:00`,
+        selfStudy ? "self_study" : "empty",
+        selfStudy ? "Самоподготовка" : null,
+        JSON.stringify(group ? [group.id] : []),
+        group?.name || null,
+        order++,
+      );
+      created += 1;
+    };
     const tx = db.transaction(() => {
       for (const c of cells) {
-        if (taken.has(`${c.date} ${c.start}`)) continue;
-        insert.run(
-          periodId,
-          period.program_id,
-          c.date,
-          c.start,
-          c.end,
-          `${c.date}T${c.start}:00`,
-          `${c.date}T${c.end}:00`,
-          selfStudy ? "self_study" : "empty",
-          selfStudy ? "Самоподготовка" : null,
-          order++
-        );
-        created++;
+        const key = `${c.date} ${c.start}`;
+        const rowItems = existingByCell.get(key) || [];
+        if (!period.group_mode || !activeGroups.length) {
+          if (!rowItems.length) insertPlaceholder(c);
+          continue;
+        }
+
+        const placeholders = rowItems.filter(isGridPlaceholder);
+        const realItems = rowItems.filter((item) => !isGridPlaceholder(item));
+        const coveredGroups = new Set();
+        let commonOccupied = false;
+        for (const item of realItems) {
+          const ids = itemGroupIds(item);
+          if (ids.length === 0 || ids.length === activeGroups.length) {
+            commonOccupied = true;
+            break;
+          }
+          for (const id of ids) coveredGroups.add(id);
+        }
+
+        const placeholderGroups = new Set();
+        for (const placeholder of placeholders) {
+          const ids = itemGroupIds(placeholder);
+          const groupId = ids.length === 1 ? ids[0] : null;
+          const redundant =
+            commonOccupied ||
+            !groupId ||
+            coveredGroups.has(groupId) ||
+            placeholderGroups.has(groupId);
+          if (redundant) {
+            deletePlaceholder.run(placeholder.id);
+            removedLegacy += 1;
+          } else {
+            placeholderGroups.add(groupId);
+          }
+        }
+
+        if (commonOccupied) continue;
+        for (const group of activeGroups) {
+          const groupId = Number(group.id);
+          if (coveredGroups.has(groupId) || placeholderGroups.has(groupId)) continue;
+          insertPlaceholder(c, group);
+        }
       }
     });
     tx();
-    return { created };
+    return {
+      created,
+      removedLegacy,
+      groupMode: !!period.group_mode,
+      groupCount: activeGroups.length,
+    };
   },
 
   // Назначить тему из очереди нераспределенных на занятие (замена содержимого
