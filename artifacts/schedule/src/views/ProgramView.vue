@@ -558,7 +558,7 @@ async function exportDocx(periodId = null) {
 
 const statusLabel = {
   pending: "В очереди",
-  partial: "Нераспределенные",
+  partial: "Частично",
   scheduled: "Распределено",
   completed: "Завершено",
 };
@@ -805,7 +805,16 @@ onMounted(async () => {
                       t.title
                     }}</span>
                   </td>
-                  <td class="table-cell">{{ t.total_hours }}</td>
+                  <td class="table-cell">
+                    <div>{{ t.total_hours }}</div>
+                    <div
+                      v-if="Number(t.scheduled_hours || 0) > 0"
+                      class="mt-0.5 whitespace-nowrap text-xs text-slate-400"
+                    >
+                      {{ t.scheduled_hours }} ч. распределено ·
+                      {{ Math.max(0, Number(t.total_hours || 0) - Number(t.scheduled_hours || 0)) }} ч. осталось
+                    </div>
+                  </td>
                   <td class="table-cell text-slate-500">
                     {{ t.default_lesson_type || "Раздел / не указан" }}
                   </td>

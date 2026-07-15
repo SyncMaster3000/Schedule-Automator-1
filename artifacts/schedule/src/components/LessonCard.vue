@@ -19,6 +19,13 @@ const emit = defineEmits(["edit", "delete-empty", "assign-topic", "toggle-select
 function isSelfStudy(it) {
   return !it.topic_id && it.lesson_type === "self_study";
 }
+
+function topicRemainingHours(topic) {
+  return Math.max(
+    0,
+    Number(topic?.total_hours || 0) - Number(topic?.scheduled_hours || 0),
+  );
+}
 function itemTitle(it) {
   if (isSelfStudy(it)) return "Самоподготовка";
   if (it.custom_title) return it.custom_title;
@@ -82,7 +89,7 @@ function conflictTitle(it) {
         :label="group.name"
       >
         <option v-for="t in group.topics" :key="t.id" :value="t.id">
-          {{ t.utp_number }}. {{ t.title }} · {{ t.default_lesson_type || "вид не указан" }}
+          {{ t.utp_number }}. {{ t.title }} · {{ t.default_lesson_type || "вид не указан" }} · осталось {{ topicRemainingHours(t) }} ч. из {{ t.total_hours }}
         </option>
       </optgroup>
     </select>

@@ -481,25 +481,42 @@ async function load() {
   }
 }
 
-// Темы, еще не распределенные в расписание (для замены из нераспределенных).
+function topicRemainingHours(topic) {
+  return Math.max(
+    0,
+    Number(topic?.total_hours || 0) - Number(topic?.scheduled_hours || 0),
+  );
+}
+
+// Темы, еще не полностью распределенные в расписании. После каждого ручного
+// добавления сервер пересчитывает scheduled_hours, поэтому полностью закрытая
+// тема исчезает, а частично закрытая остается с уменьшенным остатком.
 const unallocatedTopics = computed(() => {
   return topics.value.filter(
     (t) =>
       !t.excluded &&
       !t.is_section &&
-      (t.status === "pending" || t.status === "partial" || Number(t.scheduled_hours) < Number(t.total_hours))
+      topicRemainingHours(t) > 0,
   );
 });
-// В редакторе показываем только строки, которые действительно можно поставить
-// в расписание. Разделы-суммы не имеют вида занятия и раньше легко выбирались
-// вместо одноимённой лекции/практического занятия.
-const selectableTopicGroups = computed(() =>
-  groupTopicsByDiscipline(
-    topics.value.filter((topic) => !topic.excluded && !topic.is_section),
-  ),
-);
+// При редактировании уже существующего занятия сохраняем его текущую тему в
+// списке, даже если все часы по ней распределены. Для нового занятия предлагаем
+// только темы с остатком часов.
+const editorTopicGroups = computed(() => {
+  const currentTopicId = Number(editing.value?.topic_id || 0);
+  return groupTopicsByDiscipline(
+    topics.value.filter(
+      (topic) =>
+        !topic.excluded &&
+        !topic.is_section &&
+        (topicRemainingHours(topic) > 0 || Number(topic.id) === currentTopicId),
+    ),
+  );
+});
 const unallocatedTopicGroups = computed(() =>
-  groupTopicsByDiscipline(unallocatedTopics.value),
+  groupTopicsByDiscipline(
+    unallocatedTopics.value,
+  ),
 );
 
 // --- Заполнение полной сетки таймслотов ---
@@ -1722,7 +1739,7 @@ onUnmounted(() => {
             </option>
             <optgroup v-for="group in unallocatedTopicGroups" :key="group.key" :label="group.name">
               <option v-for="t in group.topics" :key="t.id" :value="t.id">
-                {{ t.utp_number }}. {{ t.title }} · {{ t.default_lesson_type || "вид не указан" }}
+                {{ t.utp_number }}. {{ t.title }} · {{ t.default_lesson_type || "вид не указан" }} · осталось {{ topicRemainingHours(t) }} ч. из {{ t.total_hours }}
               </option>
             </optgroup>
           </select>
@@ -1827,9 +1844,9 @@ onUnmounted(() => {
           <label class="label">Тема</label>
           <select v-model.number="editing.topic_id" class="input" @change="onTopicChange">
             <option :value="null">— Произвольное занятие —</option>
-            <optgroup v-for="group in selectableTopicGroups" :key="group.key" :label="group.name">
+            <optgroup v-for="group in editorTopicGroups" :key="group.key" :label="group.name">
               <option v-for="t in group.topics" :key="t.id" :value="t.id">
-                {{ t.utp_number }}. {{ t.title }} · {{ t.default_lesson_type || "вид не указан" }}
+                {{ t.utp_number }}. {{ t.title }} · {{ t.default_lesson_type || "вид не указан" }} · осталось {{ topicRemainingHours(t) }} ч. из {{ t.total_hours }}
               </option>
             </optgroup>
           </select>

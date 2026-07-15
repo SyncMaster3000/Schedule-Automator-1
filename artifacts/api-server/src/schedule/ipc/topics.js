@@ -1,6 +1,37 @@
 // Темы УТП (строгая очередь по sort_order)
 import { getDb, audit } from "../db/index.js";
 
+const HOURS_PER_SLOT = 2;
+
+// Счётчики в program_topics могли остаться устаревшими после удаления периода
+// или работы со старыми версиями приложения. Для очереди всегда считаем
+// распределённые часы по фактическим занятиям, чтобы пользователю предлагался
+// только реальный остаток темы.
+function listTopicsWithActualProgress(db, programId, { onlyIncluded = false } = {}) {
+  return db
+    .prepare(
+      `SELECT pt.*,
+        CASE
+          WHEN COUNT(si.id) = 0 THEN 'pending'
+          WHEN COALESCE(pt.total_hours, 0) <= 0
+            OR COUNT(si.id) * ${HOURS_PER_SLOT} >= COALESCE(pt.total_hours, 0)
+            THEN 'scheduled'
+          ELSE 'partial'
+        END AS status,
+        MAX(
+          0,
+          MIN(COALESCE(pt.total_hours, 0), COUNT(si.id) * ${HOURS_PER_SLOT})
+        ) AS scheduled_hours,
+        CASE WHEN COUNT(si.id) > 0 THEN MIN(si.period_id) ELSE NULL END AS assigned_period_id
+       FROM program_topics pt
+       LEFT JOIN schedule_items si ON si.topic_id = pt.id
+       WHERE pt.program_id = ? ${onlyIncluded ? "AND pt.excluded = 0" : ""}
+       GROUP BY pt.id
+       ORDER BY pt.sort_order`,
+    )
+    .all(programId);
+}
+
 function normalizeTopicIds(values) {
   return [
     ...new Set(
@@ -88,9 +119,7 @@ function deleteTopics(db, programId, requestedIds) {
 export default {
   "topics:list": (programId) => {
     const db = getDb();
-    return db
-      .prepare("SELECT * FROM program_topics WHERE program_id = ? ORDER BY sort_order")
-      .all(programId);
+    return listTopicsWithActualProgress(db, programId);
   },
 
   // Полная замена тем программы (после импорта УТП и подтверждения превью)
@@ -225,11 +254,9 @@ export default {
   // Прогресс распределения тем: всего / распределено / осталось
   "topics:queueStatus": (programId) => {
     const db = getDb();
-    const rows = db
-      .prepare(
-        "SELECT status, total_hours, scheduled_hours FROM program_topics WHERE program_id = ? AND excluded = 0"
-      )
-      .all(programId);
+    const rows = listTopicsWithActualProgress(db, programId, {
+      onlyIncluded: true,
+    });
     const total = rows.length;
     const scheduled = rows.filter((r) => r.status === "scheduled" || r.status === "completed").length;
     const partial = rows.filter((r) => r.status === "partial").length;
