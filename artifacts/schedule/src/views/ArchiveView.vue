@@ -134,13 +134,13 @@ onMounted(search);
 </script>
 
 <template>
-  <div class="mx-auto max-w-5xl px-8 py-8">
+  <div class="page-shell">
     <h1 class="mb-1 text-2xl font-bold text-slate-800">Архив расписаний</h1>
     <p class="mb-6 text-sm text-slate-500">
       Утвержденные расписания по разделам обучения.
     </p>
 
-    <div class="mb-4 flex gap-2">
+    <div class="mb-4 flex flex-col gap-2 sm:flex-row">
       <input
         v-model="query"
         class="input flex-1"
@@ -192,7 +192,7 @@ onMounted(search);
             <div
               v-for="v in m.items"
               :key="v.id"
-              class="flex items-center justify-between px-5 py-4"
+              class="flex flex-col gap-3 px-5 py-4 lg:flex-row lg:items-center lg:justify-between"
             >
               <div>
                 <div class="font-medium text-slate-800">
@@ -205,7 +205,7 @@ onMounted(search);
                   <template v-if="v.note"> · {{ v.note }}</template>
                 </div>
               </div>
-              <div class="flex shrink-0 flex-wrap justify-end gap-2">
+              <div class="flex w-full shrink-0 flex-wrap gap-2 lg:w-auto lg:justify-end">
                 <button class="btn-secondary" @click="openWord(v)">
                   Открыть Word
                 </button>

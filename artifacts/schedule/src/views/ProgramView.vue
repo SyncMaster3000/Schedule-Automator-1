@@ -580,19 +580,19 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="mx-auto max-w-6xl px-8 py-8">
+  <div class="page-shell">
     <button class="btn-ghost mb-3 px-0" @click="router.push('/')">
       ← Назад
     </button>
 
-    <div v-if="program" class="mb-6 flex items-start justify-between">
-      <div>
+    <div v-if="program" class="mb-6 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <div class="min-w-0">
         <h1 class="text-2xl font-bold text-slate-800">{{ program.title }}</h1>
         <p class="text-sm text-slate-500">
           {{ program.description || "Без описания" }}
         </p>
       </div>
-      <div class="flex gap-2">
+      <div class="flex flex-wrap gap-2">
         <button class="btn-secondary" @click="openProjectEditor()">
           Сохранить версию
         </button>
@@ -644,7 +644,7 @@ onMounted(async () => {
           {{ queue.remaining }}
         </div>
       </div>
-      <div class="ml-auto w-56">
+      <div class="w-full sm:ml-auto sm:w-56">
         <div
           class="mb-1.5 flex items-center justify-between text-xs text-slate-400"
         >
@@ -672,7 +672,7 @@ onMounted(async () => {
       </div>
     </div>
 
-    <div class="mb-5 flex gap-2 border-b border-slate-200">
+    <div class="mb-5 flex gap-2 overflow-x-auto border-b border-slate-200">
       <button
         class="tab"
         :class="{ 'tab-active': tab === 'topics' }"
@@ -698,7 +698,7 @@ onMounted(async () => {
 
     <!-- Темы -->
     <div v-if="tab === 'topics'">
-      <div class="mb-4 flex items-center justify-between gap-2">
+      <div class="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <p class="text-sm text-slate-500">
           Очередь тем (FIFO). Распределяются в порядке следования.
         </p>
@@ -736,8 +736,8 @@ onMounted(async () => {
           автозаполнения и экспорта (например, итоговый раздел-сумму). Каждый
           вид занятия показан отдельной строкой.
         </p>
-        <div class="card overflow-hidden">
-          <table class="w-full">
+        <div class="card responsive-table">
+          <table class="w-full min-w-[900px]">
             <thead>
               <tr class="text-left text-xs uppercase text-slate-400">
                 <th class="table-cell w-12 text-center">
@@ -861,7 +861,7 @@ onMounted(async () => {
 
     <!-- Периоды -->
     <div v-if="tab === 'periods'">
-      <div class="mb-4 flex justify-between">
+      <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p class="text-sm text-slate-500">
           Блоки дат. Автозаполнение берет темы из очереди по порядку.
         </p>
@@ -870,7 +870,7 @@ onMounted(async () => {
       <div v-if="!periods.length" class="card p-10 text-center text-slate-400">
         Нет периодов.
       </div>
-      <div v-else class="grid gap-3 sm:grid-cols-2">
+      <div v-else class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
         <div v-for="p in periods" :key="p.id" class="card p-5">
           <div class="flex items-start justify-between">
             <h3 class="font-semibold text-slate-800">{{ p.name }}</h3>
@@ -912,7 +912,7 @@ onMounted(async () => {
 
     <!-- Сохранённые версии -->
     <div v-if="tab === 'versions'">
-      <div class="mb-4 flex justify-between">
+      <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p class="text-sm text-slate-500">
           Сохранённые версии — резервные снимки текущего расписания. Их можно
           восстановить, переименовать или удалить.
@@ -928,7 +928,7 @@ onMounted(async () => {
         <div
           v-for="v in versions"
           :key="v.id"
-          class="flex items-center justify-between px-5 py-4"
+          class="flex flex-col gap-3 px-5 py-4 lg:flex-row lg:items-center lg:justify-between"
         >
           <div class="min-w-0 flex-1">
             <div class="font-medium text-slate-800">{{ v.version_label }}</div>
@@ -937,7 +937,7 @@ onMounted(async () => {
               <span v-if="v.note" class="ml-1 italic">· {{ v.note }}</span>
             </div>
           </div>
-          <div class="ml-4 flex shrink-0 gap-2">
+          <div class="flex w-full shrink-0 flex-wrap gap-2 lg:ml-4 lg:w-auto">
             <button
               class="btn-secondary py-1 px-2 text-xs"
               title="Восстановить сохранённую версию"
@@ -1093,7 +1093,7 @@ onMounted(async () => {
       @close="importPreview = null"
     >
       <div class="mb-4 rounded-lg border border-brand-100 bg-brand-50/60 p-3">
-        <div class="mb-2 flex items-center justify-between gap-3">
+        <div class="mb-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <span class="label mb-0">Найденные дисциплины</span>
           <span class="badge bg-brand-100 text-brand-700">
             {{ importPreview.disciplines.length }}
@@ -1205,7 +1205,7 @@ onMounted(async () => {
             placeholder="Напр.: Семестр 1"
           />
         </div>
-        <div class="grid grid-cols-2 gap-3">
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label class="label">Дата начала *</label>
             <input v-model="periodForm.start_date" type="date" class="input" />
@@ -1292,7 +1292,7 @@ onMounted(async () => {
           Укажите даты — они попадут в шапку и подписи экспортируемого файла
           .docx.
         </p>
-        <div class="grid grid-cols-2 gap-3">
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label class="label">Дата утверждения</label>
             <input

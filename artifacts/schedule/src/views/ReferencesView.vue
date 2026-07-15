@@ -178,13 +178,13 @@ onMounted(loadAll);
 </script>
 
 <template>
-  <div class="mx-auto max-w-5xl px-8 py-8">
+  <div class="page-shell">
     <h1 class="mb-6 text-2xl font-bold text-slate-800">Справочники</h1>
 
     <div v-if="error" class="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{{ error }}</div>
     <div v-if="info" class="mb-4 rounded-lg bg-green-50 px-4 py-3 text-sm text-green-700">{{ info }}</div>
 
-    <div class="mb-5 flex gap-2 border-b border-slate-200">
+    <div class="mb-5 flex gap-2 overflow-x-auto border-b border-slate-200">
       <button class="tab" :class="{ 'tab-active': tab === 'teachers' }" @click="tab = 'teachers'">
         Преподаватели ({{ teachers.length }})
       </button>
@@ -197,13 +197,13 @@ onMounted(loadAll);
     </div>
 
     <!-- Преподаватели -->
-    <div v-if="tab === 'teachers'" class="card p-5">
-      <div class="mb-2 flex gap-2">
+    <div v-if="tab === 'teachers'" class="card responsive-table p-5">
+      <div class="mb-2 flex flex-col gap-2 lg:flex-row">
         <input v-model="newTeacher.fio" class="input flex-1" placeholder="ФИО преподавателя" @keyup.enter="addTeacher" />
         <input v-model="newTeacher.department" class="input flex-1" placeholder="Кафедра / отдел" @keyup.enter="addTeacher" />
         <button class="btn-primary" @click="addTeacher">Добавить</button>
       </div>
-      <table class="w-full">
+      <table class="w-full min-w-[640px]">
         <thead>
           <tr class="text-left text-xs uppercase text-slate-400">
             <th class="table-cell">ФИО</th>
@@ -228,13 +228,13 @@ onMounted(loadAll);
     </div>
 
     <!-- Аудитории -->
-    <div v-if="tab === 'rooms'" class="card p-5">
-      <div class="mb-4 flex gap-2">
+    <div v-if="tab === 'rooms'" class="card responsive-table p-5">
+      <div class="mb-4 flex flex-col gap-2 lg:flex-row">
         <input v-model="newRoom.number" class="input flex-1" placeholder="Номер / название" @keyup.enter="addRoom" />
         <input v-model="newRoom.type" class="input flex-1" placeholder="Тип (лекционная…)" @keyup.enter="addRoom" />
         <button class="btn-primary" @click="addRoom">Добавить</button>
       </div>
-      <table class="w-full">
+      <table class="w-full min-w-[640px]">
         <thead>
           <tr class="text-left text-xs uppercase text-slate-400">
             <th class="table-cell">Номер</th>
@@ -260,7 +260,7 @@ onMounted(loadAll);
 
     <!-- Сетки учебных часов -->
     <div v-if="tab === 'slots'" class="card p-5">
-      <div class="mb-4 flex items-center justify-between">
+      <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p class="text-sm text-slate-500">
           Сетки учебных часов. Создавайте несколько вариантов — их можно выбирать
           при создании расписания и для отдельного дня в конструкторе.
@@ -270,7 +270,7 @@ onMounted(loadAll);
       <div v-if="!grids.length" class="text-sm text-slate-400">
         Сеток пока нет. Создайте первую, чтобы планировать занятия.
       </div>
-      <div v-else class="grid gap-3 sm:grid-cols-2">
+      <div v-else class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
         <div v-for="g in grids" :key="g.id" class="rounded-lg border border-slate-200 p-4">
           <div class="flex items-start justify-between">
             <h3 class="font-semibold text-slate-800">{{ g.name }}</h3>
@@ -347,7 +347,7 @@ onMounted(loadAll);
           Отметьте перерывы — они не заполняются занятиями автоматически.
         </p>
         <div class="space-y-2">
-          <div v-for="(s, i) in editGrid.slots" :key="i" class="flex items-center gap-2">
+          <div v-for="(s, i) in editGrid.slots" :key="i" class="flex flex-wrap items-center gap-2">
             <input v-model="s.start" type="time" class="input w-32" />
             <span class="text-slate-400">—</span>
             <input v-model="s.end" type="time" class="input w-32" />

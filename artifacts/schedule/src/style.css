@@ -84,9 +84,25 @@ body {
   .table-cell {
     @apply px-3 py-2.5 text-sm border-b border-slate-100 [font-variant-numeric:tabular-nums];
   }
+  /* Общая рабочая область без фиксированного max-width: на широком окне
+     занимает все доступное место, а поля плавно уменьшаются вместе с окном. */
+  .page-shell {
+    width: 100%;
+    min-width: 0;
+    padding: clamp(1rem, 2vw, 2.5rem);
+  }
+  .responsive-table {
+    @apply w-full overflow-x-auto;
+  }
   /* Мелкий текстовый ярлык-«надзаголовок» над блоками (единый прием). */
   .eyebrow {
     @apply text-xs font-semibold uppercase tracking-wide text-slate-400;
+  }
+}
+
+@media (max-width: 767px) {
+  .btn {
+    @apply px-3 py-2;
   }
 }
 

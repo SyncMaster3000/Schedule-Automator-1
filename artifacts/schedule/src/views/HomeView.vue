@@ -111,8 +111,8 @@ onMounted(load);
 </script>
 
 <template>
-  <div class="mx-auto max-w-5xl px-8 py-8">
-    <div class="mb-6 flex items-center justify-between">
+  <div class="page-shell">
+    <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <div>
         <h1 class="text-2xl font-bold text-slate-800">Создание расписания</h1>
         <p class="text-sm text-slate-500">
@@ -132,7 +132,7 @@ onMounted(load);
       Пока нет расписаний. Создайте первое, чтобы начать.
     </div>
 
-    <div v-else class="grid gap-4 sm:grid-cols-2">
+    <div v-else class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
       <div
         v-for="p in programs"
         :key="p.id"
@@ -154,7 +154,7 @@ onMounted(load);
         <p class="mt-1 line-clamp-2 flex-1 text-sm text-slate-500">
           {{ p.description || "Без описания" }}
         </p>
-        <div class="mt-4 flex gap-2">
+        <div class="mt-4 flex flex-wrap gap-2">
           <button class="btn-primary flex-1" @click="router.push(`/programs/${p.id}`)">
             Открыть
           </button>
@@ -178,7 +178,7 @@ onMounted(load);
           <label class="label">Описание</label>
           <textarea v-model="form.description" class="input" rows="2" />
         </div>
-        <div class="grid grid-cols-2 gap-3">
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label class="label">Утверждающий (ФИО)</label>
             <input v-model="form.approver_name" class="input" />

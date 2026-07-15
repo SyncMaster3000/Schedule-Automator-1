@@ -4,10 +4,10 @@ import { RouterLink, RouterView } from "vue-router";
 </script>
 
 <template>
-  <div class="flex h-full">
+  <div class="flex h-full min-h-0 flex-col md:flex-row">
     <!-- Боковая панель: темный «чернильный» блок, отделяющий навигацию от работы -->
-    <aside class="flex w-60 shrink-0 flex-col bg-brand-900 text-brand-100">
-      <div class="flex items-center gap-3 px-5 py-6">
+    <aside class="flex w-full shrink-0 flex-col bg-brand-900 text-brand-100 md:w-52 lg:w-60 2xl:w-72">
+      <div class="flex items-center gap-3 px-4 py-3 md:px-5 md:py-6">
         <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-600 text-white shadow-sm">
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -34,7 +34,7 @@ import { RouterLink, RouterView } from "vue-router";
         </div>
       </div>
 
-      <nav class="mt-2 flex-1 space-y-1 px-3">
+      <nav class="flex min-w-0 flex-1 gap-1 overflow-x-auto px-3 pb-3 md:mt-2 md:block md:space-y-1 md:overflow-visible md:pb-0">
         <RouterLink to="/" class="nav-link" active-class="nav-active">
           Создать расписание
         </RouterLink>
@@ -46,13 +46,13 @@ import { RouterLink, RouterView } from "vue-router";
         </RouterLink>
       </nav>
 
-      <div class="border-t border-white/10 px-5 py-4 text-xs text-brand-300/80">
+      <div class="hidden border-t border-white/10 px-5 py-4 text-xs text-brand-300/80 md:block">
         Офлайн-режим · v1.0
       </div>
     </aside>
 
     <!-- Контент -->
-    <main class="flex-1 overflow-auto">
+    <main class="min-h-0 min-w-0 flex-1 overflow-auto">
       <RouterView />
     </main>
   </div>
@@ -60,7 +60,7 @@ import { RouterLink, RouterView } from "vue-router";
 
 <style scoped>
 .nav-link {
-  @apply relative block rounded-lg px-3 py-2 text-sm font-medium leading-snug text-brand-100/80 transition
+  @apply relative block shrink-0 rounded-lg px-3 py-2 text-sm font-medium leading-snug text-brand-100/80 transition
          hover:bg-white/5 hover:text-white;
 }
 .nav-active {
@@ -70,6 +70,16 @@ import { RouterLink, RouterView } from "vue-router";
 .nav-active::before {
   content: "";
   @apply absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-full bg-brand-300;
+}
+@media (max-width: 767px) {
+  .nav-active::before {
+    left: 50%;
+    top: auto;
+    bottom: 0;
+    width: 1.25rem;
+    height: 0.25rem;
+    transform: translateX(-50%);
+  }
 }
 </style>
 

@@ -1541,17 +1541,17 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="mx-auto max-w-6xl px-8 py-8">
+  <div class="page-shell">
     <button class="btn-ghost mb-3 px-0" @click="router.push(`/programs/${programId}`)">
       ← Назад
     </button>
 
-    <div v-if="period" class="mb-6 flex items-start justify-between">
-      <div>
+    <div v-if="period" class="mb-6 flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+      <div class="min-w-0">
         <h1 class="text-2xl font-bold text-slate-800">{{ period.name }}</h1>
         <p class="text-sm text-slate-500">{{ period.start_date }} — {{ period.end_date }}</p>
       </div>
-      <div class="flex flex-wrap items-center justify-end gap-2">
+      <div class="flex flex-wrap items-center gap-2 xl:justify-end">
         <label
           class="flex items-center gap-1 text-sm text-slate-600"
           title="Проверять занятость преподавателей и аудиторий по всем расписаниям"
@@ -1586,7 +1586,7 @@ onUnmounted(() => {
 
     <!-- Индикатор накладок -->
     <div
-      class="mb-5 flex items-center justify-between rounded-lg px-4 py-3 text-sm"
+      class="mb-5 flex flex-col gap-3 rounded-lg px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between"
       :class="hasConflicts ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'"
     >
       <span v-if="hasConflicts">⚠ Обнаружены накладки: {{ totalConflicts }}. Утверждение заблокировано.</span>
@@ -1718,8 +1718,7 @@ onUnmounted(() => {
             <!-- Группы периода — отдельными колонками -->
             <div
               v-if="row.groups.length"
-              class="grid gap-3"
-              :style="{ gridTemplateColumns: `repeat(${Math.min(row.groups.length, 4)}, minmax(0, 1fr))` }"
+              class="grid grid-flow-row gap-3 xl:grid-flow-col xl:auto-cols-fr"
             >
               <div v-for="group in row.groups" :key="group.name" class="space-y-2">
                 <div class="px-1 text-xs font-semibold text-brand-700">Группа {{ group.name }}</div>
@@ -1804,7 +1803,7 @@ onUnmounted(() => {
         <!-- Свободное окошко: пустой слот для вписания занятия -->
         <div
           v-if="isEmptyItem(it)"
-          class="card flex items-center gap-3 border-2 border-dashed border-slate-300 bg-slate-50/70 px-4 py-3 transition"
+          class="card flex flex-wrap items-center gap-3 border-2 border-dashed border-slate-300 bg-slate-50/70 px-4 py-3 transition"
         >
           <span class="drag-handle cursor-grab select-none text-slate-300">⋮⋮</span>
           <div class="w-24 shrink-0 text-sm">
@@ -1817,7 +1816,7 @@ onUnmounted(() => {
             </div>
           </div>
           <select
-            class="input h-9 w-56 py-0 text-sm"
+            class="input h-9 w-full py-0 text-sm sm:w-56"
             :disabled="!unallocatedTopics.length"
             @change="assignTopic(it, Number($event.target.value)); $event.target.value = ''"
           >
@@ -1838,7 +1837,7 @@ onUnmounted(() => {
         <!-- Обычное занятие -->
         <div
           v-else
-          class="card flex items-center gap-3 px-4 py-3 transition"
+          class="card flex flex-wrap items-center gap-3 px-4 py-3 transition"
           :class="{
             'conflict-row border-red-200': it.conflicts && it.conflicts.length,
             'ring-2 ring-brand-300': isSelected(it.id),
@@ -1926,7 +1925,7 @@ onUnmounted(() => {
 
     <!-- Редактор занятия -->
     <AppModal v-if="editing" title="Занятие" wide @close="editing = null">
-      <div class="grid grid-cols-2 gap-4">
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
           <label class="label">Тема</label>
           <select v-model.number="editing.topic_id" class="input" @change="onTopicChange">
@@ -1946,7 +1945,7 @@ onUnmounted(() => {
           <label class="label">Дата</label>
           <input v-model="editing.date" type="date" class="input" @change="recheck" />
         </div>
-        <div class="grid grid-cols-2 gap-2">
+        <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
           <div>
             <label class="label">Начало</label>
             <input v-model="editing.start_time" type="time" class="input" @change="recheck" />
@@ -2320,7 +2319,7 @@ onUnmounted(() => {
             @change="rememberAuthor"
           />
         </div>
-        <div class="grid grid-cols-2 gap-3">
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label class="label">Дата утверждения</label>
             <input
@@ -2422,7 +2421,7 @@ onUnmounted(() => {
               </select>
             </div>
 
-            <div class="grid grid-cols-2 gap-2">
+            <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <div>
                 <label class="mb-1 block text-xs font-medium text-slate-700">Действует с</label>
                 <input type="date" v-model="editingTemp.valid_from" class="input w-full"
@@ -2446,7 +2445,7 @@ onUnmounted(() => {
             </label>
 
             <template v-if="!editingTemp.is_cancelled">
-              <div class="grid grid-cols-3 gap-2">
+              <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
                 <div>
                   <label class="mb-1 block text-xs font-medium text-slate-700">Дата</label>
                   <input type="date" v-model="editingTemp.date" class="input w-full"
@@ -2462,7 +2461,7 @@ onUnmounted(() => {
                 </div>
               </div>
 
-              <div class="grid grid-cols-2 gap-2">
+              <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <div>
                   <label class="mb-1 block text-xs font-medium text-slate-700">Вид занятия</label>
                   <select v-model="editingTemp.lesson_type" class="input w-full">

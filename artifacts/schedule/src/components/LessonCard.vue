@@ -62,7 +62,7 @@ function conflictTitle(it) {
   <!-- Свободное окошко: пустой слот для вписания занятия -->
   <div
     v-if="isEmptyItem(item)"
-    class="card flex items-center gap-3 border-2 border-dashed border-slate-300 bg-slate-50/70 px-4 py-3 transition"
+    class="card flex flex-wrap items-center gap-3 border-2 border-dashed border-slate-300 bg-slate-50/70 px-4 py-3 transition"
   >
     <span v-if="showDrag" class="drag-handle cursor-grab select-none text-slate-300">⋮⋮</span>
     <div v-if="showTime" class="w-24 shrink-0 text-sm">
@@ -75,7 +75,7 @@ function conflictTitle(it) {
       </div>
     </div>
     <select
-      class="input h-9 w-56 py-0 text-sm"
+      class="input h-9 w-full py-0 text-sm sm:w-56"
       :disabled="!unallocatedTopics.length"
       @change="emit('assign-topic', item, Number($event.target.value)); $event.target.value = ''"
     >
@@ -98,7 +98,7 @@ function conflictTitle(it) {
   <!-- Обычное занятие -->
   <div
     v-else
-    class="card flex items-center gap-3 px-4 py-3 transition"
+    class="card flex flex-wrap items-center gap-3 px-4 py-3 transition"
     :class="{
       'border-red-400 bg-red-50': item.is_outside_period,
       'conflict-row border-red-200': !item.is_outside_period && item.conflicts && item.conflicts.length,
