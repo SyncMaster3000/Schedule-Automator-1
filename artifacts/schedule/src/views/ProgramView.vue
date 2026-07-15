@@ -29,6 +29,15 @@ const queue = ref({
 });
 const versions = ref([]);
 const topicGroups = computed(() => groupTopicsByDiscipline(topics.value));
+const selectedTopicIds = ref([]);
+const selectedTopicIdSet = computed(
+  () => new Set(selectedTopicIds.value.map((id) => Number(id))),
+);
+const allTopicsSelected = computed(
+  () =>
+    topics.value.length > 0 &&
+    topics.value.every((topic) => selectedTopicIdSet.value.has(Number(topic.id))),
+);
 const projectEditor = ref(null); // { mode: "create" | "rename", versionId? }
 const projectLabel = ref("");
 const projectEditorError = ref("");
@@ -141,6 +150,10 @@ async function loadAll() {
     const data = await api.programs.get(programId.value);
     program.value = data.program;
     topics.value = enrichTopicsWithDisciplines(data.topics);
+    const existingTopicIds = new Set(topics.value.map((topic) => Number(topic.id)));
+    selectedTopicIds.value = selectedTopicIds.value.filter((id) =>
+      existingTopicIds.has(Number(id)),
+    );
     periods.value = data.periods;
     queue.value = await api.topics.queueStatus(programId.value);
     versions.value = await api.versions.list(programId.value);
@@ -205,10 +218,105 @@ async function confirmImport() {
   }
 }
 
+function isTopicSelected(id) {
+  return selectedTopicIdSet.value.has(Number(id));
+}
+
+function setTopicSelected(id, checked) {
+  const topicId = Number(id);
+  if (checked) {
+    if (!selectedTopicIdSet.value.has(topicId)) {
+      selectedTopicIds.value = [...selectedTopicIds.value, topicId];
+    }
+  } else {
+    selectedTopicIds.value = selectedTopicIds.value.filter(
+      (selectedId) => Number(selectedId) !== topicId,
+    );
+  }
+}
+
+function setAllTopicsSelected(checked) {
+  selectedTopicIds.value = checked
+    ? topics.value.map((topic) => Number(topic.id))
+    : [];
+}
+
+function isTopicGroupSelected(group) {
+  return group.topics.every((topic) => isTopicSelected(topic.id));
+}
+
+function isTopicGroupPartlySelected(group) {
+  const selectedCount = group.topics.filter((topic) =>
+    isTopicSelected(topic.id),
+  ).length;
+  return selectedCount > 0 && selectedCount < group.topics.length;
+}
+
+function setTopicGroupSelected(group, checked) {
+  const groupIds = new Set(group.topics.map((topic) => Number(topic.id)));
+  if (checked) {
+    selectedTopicIds.value = [
+      ...new Set([...selectedTopicIds.value.map(Number), ...groupIds]),
+    ];
+  } else {
+    selectedTopicIds.value = selectedTopicIds.value.filter(
+      (id) => !groupIds.has(Number(id)),
+    );
+  }
+}
+
+async function removeTopics(topicIds, { all = false } = {}) {
+  const requestedIds = new Set(topicIds.map(Number));
+  const selectedTopics = topics.value.filter((topic) =>
+    requestedIds.has(Number(topic.id)),
+  );
+  if (!selectedTopics.length) return;
+
+  const scheduledCount = selectedTopics.filter(
+    (topic) => Number(topic.scheduled_hours || 0) > 0,
+  ).length;
+  const scope = all
+    ? `все темы УТП (${selectedTopics.length})`
+    : selectedTopics.length === 1
+      ? "эту тему"
+      : `выбранные темы (${selectedTopics.length})`;
+  const scheduleWarning = scheduledCount
+    ? `\n\nСвязанных с расписанием тем: ${scheduledCount}. Их незакреплённые занятия станут пустыми слотами.`
+    : "";
+  if (!confirm(`Удалить ${scope}?${scheduleWarning}\n\nДействие нельзя отменить.`)) {
+    return;
+  }
+
+  error.value = "";
+  try {
+    const result = await api.topics.bulkRemove({
+      programId: programId.value,
+      topicIds: selectedTopics.map((topic) => topic.id),
+    });
+    selectedTopicIds.value = [];
+    info.value = `Удалено строк УТП: ${result.count}`;
+    if (result.scheduleItemsCleared) {
+      info.value += `. Освобождено слотов расписания: ${result.scheduleItemsCleared}`;
+    }
+    await loadAll();
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
 async function removeTopic(id) {
-  if (!confirm("Удалить тему?")) return;
-  await api.topics.remove(id);
-  await loadAll();
+  await removeTopics([id]);
+}
+
+async function removeSelectedTopics() {
+  await removeTopics(selectedTopicIds.value);
+}
+
+async function removeAllTopics() {
+  await removeTopics(
+    topics.value.map((topic) => topic.id),
+    { all: true },
+  );
 }
 
 // Включить/исключить тему из расписания (без перезагрузки всего)
@@ -588,7 +696,17 @@ onMounted(async () => {
         <p class="text-sm text-slate-500">
           Очередь тем (FIFO). Распределяются в порядке следования.
         </p>
-        <div v-if="topics.length" class="flex gap-2">
+        <div v-if="topics.length" class="flex flex-wrap justify-end gap-2">
+          <button
+            v-if="selectedTopicIds.length"
+            class="btn-danger"
+            @click="removeSelectedTopics"
+          >
+            Удалить выбранные ({{ selectedTopicIds.length }})
+          </button>
+          <button class="btn-ghost text-red-600" @click="removeAllTopics">
+            Удалить все
+          </button>
           <button class="btn-secondary" @click="runImport('append')">
             + Добавить из УТП (.docx)
           </button>
@@ -616,6 +734,15 @@ onMounted(async () => {
           <table class="w-full">
             <thead>
               <tr class="text-left text-xs uppercase text-slate-400">
+                <th class="table-cell w-12 text-center">
+                  <input
+                    type="checkbox"
+                    :checked="allTopicsSelected"
+                    :indeterminate="selectedTopicIds.length > 0 && !allTopicsSelected"
+                    title="Выбрать все темы"
+                    @change="setAllTopicsSelected($event.target.checked)"
+                  />
+                </th>
                 <th class="table-cell w-24 text-center">В расписании</th>
                 <th class="table-cell w-12">№</th>
                 <th class="table-cell">Тема</th>
@@ -628,6 +755,15 @@ onMounted(async () => {
             <tbody>
               <template v-for="group in topicGroups" :key="group.key">
                 <tr class="border-y border-brand-100 bg-brand-50/70">
+                  <td class="table-cell text-center">
+                    <input
+                      type="checkbox"
+                      :checked="isTopicGroupSelected(group)"
+                      :indeterminate="isTopicGroupPartlySelected(group)"
+                      :title="`Выбрать дисциплину «${group.name}»`"
+                      @change="setTopicGroupSelected(group, $event.target.checked)"
+                    />
+                  </td>
                   <td
                     colspan="7"
                     class="table-cell py-2 font-semibold text-brand-800"
@@ -643,6 +779,14 @@ onMounted(async () => {
                   :key="t.id"
                   :class="{ 'opacity-50': t.excluded }"
                 >
+                  <td class="table-cell text-center">
+                    <input
+                      type="checkbox"
+                      :checked="isTopicSelected(t.id)"
+                      title="Выбрать для удаления"
+                      @change="setTopicSelected(t.id, $event.target.checked)"
+                    />
+                  </td>
                   <td class="table-cell text-center">
                     <input
                       type="checkbox"

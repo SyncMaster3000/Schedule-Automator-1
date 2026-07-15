@@ -1,6 +1,90 @@
 // Темы УТП (строгая очередь по sort_order)
 import { getDb, audit } from "../db/index.js";
 
+function normalizeTopicIds(values) {
+  return [
+    ...new Set(
+      (Array.isArray(values) ? values : [])
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value > 0),
+    ),
+  ];
+}
+
+function deleteTopics(db, programId, requestedIds) {
+  const normalizedProgramId = Number(programId);
+  const topicIds = normalizeTopicIds(requestedIds);
+  if (!Number.isInteger(normalizedProgramId) || normalizedProgramId <= 0) {
+    throw new Error("Не указана программа");
+  }
+  if (!topicIds.length) return { count: 0, scheduleItemsCleared: 0 };
+
+  const placeholders = topicIds.map(() => "?").join(",");
+  const topics = db
+    .prepare(
+      `SELECT id FROM program_topics
+       WHERE program_id = ? AND id IN (${placeholders})`,
+    )
+    .all(normalizedProgramId, ...topicIds);
+  const existingIds = topics.map((topic) => topic.id);
+  if (!existingIds.length) return { count: 0, scheduleItemsCleared: 0 };
+
+  const existingPlaceholders = existingIds.map(() => "?").join(",");
+  const scheduleItems = db
+    .prepare(
+      `SELECT id, is_pinned FROM schedule_items
+       WHERE program_id = ? AND topic_id IN (${existingPlaceholders})`,
+    )
+    .all(normalizedProgramId, ...existingIds);
+  const pinnedCount = scheduleItems.filter((item) => item.is_pinned).length;
+  if (pinnedCount) {
+    throw new Error(
+      `Нельзя удалить темы: связанных закреплённых занятий — ${pinnedCount}. Сначала открепите их в конструкторе.`,
+    );
+  }
+
+  const transaction = db.transaction(() => {
+    if (scheduleItems.length) {
+      const itemIds = scheduleItems.map((item) => item.id);
+      const itemPlaceholders = itemIds.map(() => "?").join(",");
+      db.prepare(
+        `DELETE FROM locks WHERE schedule_item_id IN (${itemPlaceholders})`,
+      ).run(...itemIds);
+      db.prepare(
+        `UPDATE schedule_items SET
+           topic_id = NULL,
+           teacher_ids = '[]', custom_teachers = '[]', room_id = NULL,
+           group_ids = '[]', group_label = NULL, note = NULL,
+           lesson_type = CASE
+             WHEN (SELECT empty_slot_mode FROM periods WHERE id = schedule_items.period_id) = 'self_study'
+               THEN 'self_study'
+             ELSE 'empty'
+           END,
+           custom_title = CASE
+             WHEN (SELECT empty_slot_mode FROM periods WHERE id = schedule_items.period_id) = 'self_study'
+               THEN 'Самоподготовка'
+             ELSE NULL
+           END
+         WHERE id IN (${itemPlaceholders})`,
+      ).run(...itemIds);
+    }
+    db.prepare(
+      `DELETE FROM program_topics
+       WHERE program_id = ? AND id IN (${existingPlaceholders})`,
+    ).run(normalizedProgramId, ...existingIds);
+  });
+  transaction();
+
+  audit(normalizedProgramId, null, "topics_deleted", {
+    count: existingIds.length,
+    scheduleItemsCleared: scheduleItems.length,
+  });
+  return {
+    count: existingIds.length,
+    scheduleItemsCleared: scheduleItems.length,
+  };
+}
+
 export default {
   "topics:list": (programId) => {
     const db = getDb();
@@ -126,8 +210,16 @@ export default {
   },
 
   "topics:delete": (id) => {
-    getDb().prepare("DELETE FROM program_topics WHERE id = ?").run(id);
-    return { id };
+    const db = getDb();
+    const topic = db
+      .prepare("SELECT program_id FROM program_topics WHERE id = ?")
+      .get(id);
+    if (!topic) return { id, count: 0, scheduleItemsCleared: 0 };
+    return { id, ...deleteTopics(db, topic.program_id, [id]) };
+  },
+
+  "topics:bulkDelete": (data) => {
+    return deleteTopics(getDb(), data.programId, data.topicIds);
   },
 
   // Прогресс распределения тем: всего / распределено / осталось

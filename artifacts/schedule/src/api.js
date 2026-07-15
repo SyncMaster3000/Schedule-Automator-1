@@ -155,6 +155,7 @@ export const api = {
     update: (data) => call("topics:update", data),
     setExcluded: (data) => call("topics:setExcluded", data),
     remove: (id) => call("topics:delete", id),
+    bulkRemove: (data) => call("topics:bulkDelete", data),
     queueStatus: (programId) => call("topics:queueStatus", programId),
   },
   periods: {
