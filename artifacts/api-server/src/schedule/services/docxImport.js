@@ -85,12 +85,6 @@ function detectAssessment(cells) {
   return null;
 }
 
-function assessmentHours(cells) {
-  // Если форма аттестации содержит часы (например, «Суразмова | 2»),
-  // используем их. Для старых таблиц без числа сохраняем прежние 6 часов.
-  return cells.map(toNumber).find((hours) => hours > 0) || 6;
-}
-
 function isAggregateTitle(title) {
   return /^(всего|итого)(?:\s|$)/.test(normalize(title));
 }
@@ -369,7 +363,10 @@ async function importUtp(input, { sourceName = "" } = {}) {
   for (const row of layout.rows.slice(layout.numberRow + 1)) {
     const assessment = detectAssessment(row);
     if (assessment) {
-      const hours = assessmentHours(row);
+      // Экзамен, зачет и собеседование планируются как отдельная форма
+      // аттестации продолжительностью 6 учебных часов. Числа в соседних
+      // ячейках строки формы аттестации не являются её продолжительностью.
+      const hours = 6;
       sourceTopics.push({
         number: "",
         title: assessment,
