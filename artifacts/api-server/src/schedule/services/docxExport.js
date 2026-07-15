@@ -342,6 +342,18 @@ function setVerticalCenter(tcPr) {
   return tcPr.replace("</w:tcPr>", '<w:vAlign w:val="center"/></w:tcPr>');
 }
 
+function setSymmetricHorizontalIndent(pPr) {
+  if (!pPr) return pPr;
+  return pPr.replace(/<w:ind\b[^>]*\/>/, (indent) => {
+    const left = indent.match(/\bw:(?:left|start)="(-?\d+)"/i)?.[1];
+    if (left == null) return indent;
+    if (/\bw:(?:right|end)="-?\d+"/i.test(indent)) {
+      return indent.replace(/(\bw:(?:right|end)=")-?\d+("?)/i, `$1${left}$2`);
+    }
+    return indent.replace("/>", ` w:right="${left}"/>`);
+  });
+}
+
 function setKeepNext(pPr) {
   pPr = pPr || "<w:pPr></w:pPr>";
   if (/<w:keepNext\b/.test(pPr)) return pPr;
@@ -368,6 +380,9 @@ function markAsRepeatingHeader(rowXml) {
 // vMerge: null | "restart" | "continue"
 function buildCell(style, content, vMerge = null, options = {}) {
   let tcPr = style.tcPr;
+  const pPr = options.symmetricHorizontalIndent
+    ? setSymmetricHorizontalIndent(style.pPr)
+    : style.pPr;
   if (options.gridSpan) tcPr = setGridSpan(tcPr, options.gridSpan);
   if (options.vAlignCenter) tcPr = setVerticalCenter(tcPr);
   if (vMerge === "restart") {
@@ -383,16 +398,16 @@ function buildCell(style, content, vMerge = null, options = {}) {
   let paragraphs;
   if (vMerge === "continue") {
     // Ячейки продолжения merge обязаны иметь пустой параграф.
-    paragraphs = `<w:p>${style.pPr}</w:p>`;
+    paragraphs = `<w:p>${pPr}</w:p>`;
   } else {
     const lines = Array.isArray(content) ? content : [content ?? ""];
     if (!lines.length || (lines.length === 1 && !lines[0])) {
-      paragraphs = `<w:p>${style.pPr}</w:p>`;
+      paragraphs = `<w:p>${pPr}</w:p>`;
     } else {
       paragraphs = lines
         .map(
           (line) =>
-            `<w:p>${style.pPr}<w:r>${style.rPr}<w:t xml:space="preserve">${esc(line)}</w:t></w:r></w:p>`
+            `<w:p>${pPr}<w:r>${style.rPr}<w:t xml:space="preserve">${esc(line)}</w:t></w:r></w:p>`
         )
         .join("");
     }
@@ -528,7 +543,10 @@ function buildDataRows(templateRow, items, ctx, hasGroups) {
       colCells = [
         buildCell(rowStyles[0], isFirst ? fmtDate(it.date) : "", vm, { vAlignCenter: true }),
         buildCell(rowStyles[1], isFirst ? weekdayRu(it.date) : "", vm, { vAlignCenter: true }),
-        buildCell(rowStyles[2], timeVm === "continue" ? "" : time, timeVm, { vAlignCenter: true }),
+        buildCell(rowStyles[2], timeVm === "continue" ? "" : time, timeVm, {
+          vAlignCenter: true,
+          symmetricHorizontalIndent: true,
+        }),
       ];
       if (selfStudy || assessmentLabel) {
         colCells.push(
@@ -555,7 +573,10 @@ function buildDataRows(templateRow, items, ctx, hasGroups) {
       colCells = [
         buildCell(rowStyles[0], isFirst ? fmtDate(it.date) : "", vm, { vAlignCenter: true }),
         buildCell(rowStyles[1], isFirst ? weekdayRu(it.date) : "", vm, { vAlignCenter: true }),
-        buildCell(rowStyles[2], time, null, { vAlignCenter: true }),
+        buildCell(rowStyles[2], time, null, {
+          vAlignCenter: true,
+          symmetricHorizontalIndent: true,
+        }),
       ];
       if (selfStudy || assessmentLabel) {
         colCells.push(
