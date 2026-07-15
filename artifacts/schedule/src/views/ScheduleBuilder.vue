@@ -490,7 +490,14 @@ const unallocatedTopics = computed(() => {
       (t.status === "pending" || t.status === "partial" || Number(t.scheduled_hours) < Number(t.total_hours))
   );
 });
-const topicGroups = computed(() => groupTopicsByDiscipline(topics.value));
+// В редакторе показываем только строки, которые действительно можно поставить
+// в расписание. Разделы-суммы не имеют вида занятия и раньше легко выбирались
+// вместо одноимённой лекции/практического занятия.
+const selectableTopicGroups = computed(() =>
+  groupTopicsByDiscipline(
+    topics.value.filter((topic) => !topic.excluded && !topic.is_section),
+  ),
+);
 const unallocatedTopicGroups = computed(() =>
   groupTopicsByDiscipline(unallocatedTopics.value),
 );
@@ -600,15 +607,19 @@ async function removeNote(id) {
 // Вписать нераспределенную тему в пустой слот (замена из нераспределенных).
 async function assignTopic(it, topicId) {
   if (!topicId) return;
+  const topic = topics.value.find((candidate) => Number(candidate.id) === Number(topicId));
   pushUndo("вписать тему в слот");
   error.value = "";
   try {
     await api.schedule.assignTopic({
       itemId: it.id,
       topic_id: topicId,
+      lesson_type: topic?.default_lesson_type || null,
       author: author.value || null,
     });
-    info.value = "Тема вписана в слот";
+    info.value = topic?.default_lesson_type
+      ? `Тема вписана в слот: ${topic.default_lesson_type}`
+      : "Тема вписана в слот";
     await load();
   } catch (e) {
     error.value = e.message;
@@ -652,6 +663,12 @@ function normalize(it) {
 function openEditor(it) {
   teacherFilter.value = "";
   editing.value = JSON.parse(JSON.stringify(it));
+  if (editing.value.topic_id && !editing.value.lesson_type) {
+    const topic = topics.value.find(
+      (candidate) => Number(candidate.id) === Number(editing.value.topic_id),
+    );
+    editing.value.lesson_type = topic?.default_lesson_type || "";
+  }
   editing.value.custom_teachers = safeJsonArray(editing.value.custom_teachers);
   customTeacherText.value = editing.value.custom_teachers.join("; ");
   editConflicts.value = it.conflicts || [];
@@ -714,10 +731,10 @@ function addOrgEvent(it) {
 // Автозаполнение вида занятия из УТП при смене темы в редакторе (T9)
 function onTopicChange() {
   if (!editing.value) return;
-  const t = topics.value.find((tp) => tp.id === editing.value.topic_id);
-  if (t && t.default_lesson_type) {
-    editing.value.lesson_type = t.default_lesson_type;
-  }
+  const t = topics.value.find(
+    (tp) => Number(tp.id) === Number(editing.value.topic_id),
+  );
+  editing.value.lesson_type = t?.default_lesson_type || "";
   recheck();
 }
 
@@ -1705,7 +1722,7 @@ onUnmounted(() => {
             </option>
             <optgroup v-for="group in unallocatedTopicGroups" :key="group.key" :label="group.name">
               <option v-for="t in group.topics" :key="t.id" :value="t.id">
-                {{ t.utp_number }}. {{ t.title }}
+                {{ t.utp_number }}. {{ t.title }} · {{ t.default_lesson_type || "вид не указан" }}
               </option>
             </optgroup>
           </select>
@@ -1810,9 +1827,9 @@ onUnmounted(() => {
           <label class="label">Тема</label>
           <select v-model.number="editing.topic_id" class="input" @change="onTopicChange">
             <option :value="null">— Произвольное занятие —</option>
-            <optgroup v-for="group in topicGroups" :key="group.key" :label="group.name">
+            <optgroup v-for="group in selectableTopicGroups" :key="group.key" :label="group.name">
               <option v-for="t in group.topics" :key="t.id" :value="t.id">
-                {{ t.utp_number }}. {{ t.title }}
+                {{ t.utp_number }}. {{ t.title }} · {{ t.default_lesson_type || "вид не указан" }}
               </option>
             </optgroup>
           </select>

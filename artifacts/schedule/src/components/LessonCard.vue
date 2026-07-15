@@ -82,7 +82,7 @@ function conflictTitle(it) {
         :label="group.name"
       >
         <option v-for="t in group.topics" :key="t.id" :value="t.id">
-          {{ t.utp_number }}. {{ t.title }}
+          {{ t.utp_number }}. {{ t.title }} · {{ t.default_lesson_type || "вид не указан" }}
         </option>
       </optgroup>
     </select>
