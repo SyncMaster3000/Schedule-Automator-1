@@ -5,9 +5,10 @@ export function importUtpFromBuffer(
   buffer: Buffer,
   options?: { sourceName?: string },
 ): Promise<{
-  topics: unknown[];
+  topics: Array<Record<string, unknown> & { discipline_name?: string | null }>;
   rawTableCount: number;
   disciplineName: string;
+  disciplines: string[];
   sourceFileName: string | null;
 }>;
 export function exportDocxBuffer(data: {

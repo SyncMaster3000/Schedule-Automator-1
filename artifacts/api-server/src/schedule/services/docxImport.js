@@ -61,7 +61,16 @@ function logicalRows(table) {
 
 function isColumnNumberRow(cells) {
   if (cells.length < 3) return false;
-  return cells.every((cell, index) => String(cell || "").trim() === String(index + 1));
+  let previous = 0;
+  for (const cell of cells) {
+    const current = Number(String(cell || "").trim());
+    if (!Number.isInteger(current) || current < 1) return false;
+    // В некоторых новых шаблонах колонка «Всего» физически занимает две
+    // колонки Word, поэтому её номер (например, «3») повторяется дважды.
+    if (current !== previous && current !== previous + 1) return false;
+    previous = current;
+  }
+  return previous >= 3;
 }
 
 function detectAssessment(cells) {
@@ -115,8 +124,11 @@ function parseLayout(table) {
   const title = normalized.findIndex((h) =>
     /назван|наименован|назвы раздзела|компоненты учебного/.test(h),
   );
-  const number = normalized.findIndex((h, index) =>
-    index !== title && (/п\/п/.test(headers[index].join(" ").toLowerCase()) || /номер|темы$/.test(h)),
+  const number = normalized.findIndex(
+    (h, index) =>
+      index !== title &&
+      (/п\/п/.test(headers[index].join(" ").toLowerCase()) ||
+        /номер|темы$/.test(h)),
   );
   const total = leaves.findIndex((h) => /^(всего|усяго)$/.test(h));
   const note = normalized.findIndex((h) => /кафедр|циклов/.test(h));
@@ -129,8 +141,10 @@ function parseLayout(table) {
   let score = 0;
   for (const row of rows.slice(numberRow + 1)) {
     const titleText = (row[title] || "").trim();
-    const numberText = number >= 0 ? (row[number] || "").trim() : titleText.split(/\s+/, 1)[0];
-    if (titleText && (isTopicNumber(numberText) || isSectionNumber(numberText))) score += 1;
+    const numberText =
+      number >= 0 ? (row[number] || "").trim() : titleText.split(/\s+/, 1)[0];
+    if (titleText && (isTopicNumber(numberText) || isSectionNumber(numberText)))
+      score += 1;
   }
 
   return { rows, numberRow, title, number, total, note, lessonTypes, score };
@@ -189,12 +203,44 @@ function disciplineFromSourceName(sourceName) {
   );
 }
 
+function disciplineFromLayout(layout) {
+  const prefix = layout.rows
+    .slice(0, layout.numberRow)
+    .flat()
+    .map((value) =>
+      String(value || "")
+        .replace(/\s+/g, " ")
+        .trim(),
+    )
+    .filter(Boolean);
+  const planLine = prefix.find((text) =>
+    /учебно[- ]тематический\s+план/i.test(text),
+  );
+  if (!planLine) return "";
+
+  // В новых УТП заголовок, название программы, продолжительность и форма
+  // обучения находятся в одной объединённой ячейке над шапкой таблицы.
+  return cleanDisciplineName(
+    planLine
+      .replace(
+        /^.*?учебно[- ]тематический\s+план(?:\s+повышения\s+квалификации)?/iu,
+        "",
+      )
+      .split(
+        /продолжительность\s+обучения|форма\s+получения\s+образования/iu,
+        1,
+      )[0],
+  );
+}
+
 function isGenericPlanLine(text) {
   const value = normalize(text);
   return (
     !value ||
     value.length < 4 ||
-    /^(повышения квалификации|переподготовки|продолжительность|форма получения|срок обучения|специальность|квалификация)/.test(value) ||
+    /^(повышения квалификации|переподготовки|продолжительность|форма получения|срок обучения|специальность|квалификация)/.test(
+      value,
+    ) ||
     /^(согласовано|утверждаю|учреждение образования)/.test(value) ||
     /^(№|названия|наименования|количество учебных часов)/i.test(text.trim())
   );
@@ -230,22 +276,67 @@ function disciplineFromDocument(root) {
   return cleanDisciplineName(titleParts.join(" "));
 }
 
-function suggestedDisciplineName(root, topics, sourceName) {
-  // В планах переподготовки строка верхнего уровня (например, 1.3) обычно и
-  // является названием дисциплины. Она надежнее сокращенного имени файла.
-  const numericSections = topics
-    .filter((topic) => topic.is_section && /^\d+(?:\.\d+)+$/.test(topic.utp_number || ""))
-    .map((topic) => ({ topic, depth: topic.utp_number.split(".").length }));
-  if (numericSections.length) {
-    const minDepth = Math.min(...numericSections.map((entry) => entry.depth));
-    const firstTopLevel = numericSections.find((entry) => entry.depth === minDepth);
-    if (firstTopLevel) return cleanDisciplineName(firstTopLevel.topic.title);
-  }
+function suggestedDisciplineName(root, layout, sourceTopics, sourceName) {
+  const firstSection = sourceTopics.find(
+    (topic, index) =>
+      isSectionNumber(topic.number) ||
+      hasChildTopic(topic.number, sourceTopics[index + 1]?.number),
+  );
   return (
+    disciplineFromLayout(layout) ||
     disciplineFromDocument(root) ||
+    cleanDisciplineName(firstSection?.title) ||
     disciplineFromSourceName(sourceName) ||
     "Без названия дисциплины"
   );
+}
+
+function describeSourceTopics(sourceTopics) {
+  return sourceTopics.map((source, index) => {
+    const next = sourceTopics[index + 1];
+    const hasChildren =
+      !source.isAssessment && hasChildTopic(source.number, next?.number);
+    return {
+      source,
+      hasChildren,
+      isSection: isSectionNumber(source.number) || hasChildren,
+      isAggregate: hasChildren,
+    };
+  });
+}
+
+function assignDisciplines(describedTopics, fallbackName) {
+  const romanSections = describedTopics.filter(({ source }) =>
+    isSectionNumber(source.number),
+  );
+  const numericTopics = describedTopics
+    .filter(({ source }) => isTopicNumber(source.number))
+    .map(({ source }) => ({
+      depth: source.number.split(".").filter(Boolean).length,
+    }));
+  const minimumDepth = numericTopics.length
+    ? Math.min(...numericTopics.map(({ depth }) => depth))
+    : 0;
+  const hasNestedNumericTopics = numericTopics.some(
+    ({ depth }) => depth > minimumDepth,
+  );
+
+  let currentDiscipline =
+    cleanDisciplineName(fallbackName) || "Без названия дисциплины";
+  return describedTopics.map((entry) => {
+    const { source } = entry;
+    const numericDepth = isTopicNumber(source.number)
+      ? source.number.split(".").filter(Boolean).length
+      : 0;
+    const startsDiscipline = romanSections.length
+      ? isSectionNumber(source.number)
+      : hasNestedNumericTopics && numericDepth === minimumDepth;
+
+    if (startsDiscipline && cleanDisciplineName(source.title)) {
+      currentDiscipline = cleanDisciplineName(source.title);
+    }
+    return { ...entry, disciplineName: currentDiscipline };
+  });
 }
 
 async function importUtp(input, { sourceName = "" } = {}) {
@@ -253,7 +344,8 @@ async function importUtp(input, { sourceName = "" } = {}) {
   const result = await mammoth.convertToHtml(options);
   const root = parse(result.value);
   const tables = root.querySelectorAll("table");
-  if (!tables.length) throw new Error("В документе не найдено ни одной таблицы");
+  if (!tables.length)
+    throw new Error("В документе не найдено ни одной таблицы");
 
   const layout = pickUtpLayout(tables);
   if (!layout) {
@@ -283,7 +375,8 @@ async function importUtp(input, { sourceName = "" } = {}) {
       .map(({ column, type }) => ({ type, hours: toNumber(row[column]) }))
       .filter(({ hours }) => hours > 0);
     const total = toNumber(row[layout.total]);
-    if (!isTopicNumber(number) && !isSectionNumber(number) && total <= 0) continue;
+    if (!isTopicNumber(number) && !isSectionNumber(number) && total <= 0)
+      continue;
 
     sourceTopics.push({
       number,
@@ -295,13 +388,19 @@ async function importUtp(input, { sourceName = "" } = {}) {
     });
   }
 
+  const fallbackDisciplineName = suggestedDisciplineName(
+    root,
+    layout,
+    sourceTopics,
+    sourceName,
+  );
+  const describedTopics = assignDisciplines(
+    describeSourceTopics(sourceTopics),
+    fallbackDisciplineName,
+  );
   const topics = [];
-  for (let index = 0; index < sourceTopics.length; index += 1) {
-    const source = sourceTopics[index];
-    const next = sourceTopics[index + 1];
-    const hasChildren = !source.isAssessment && hasChildTopic(source.number, next?.number);
-    const isSection = isSectionNumber(source.number) || hasChildren;
-    const isAggregate = hasChildren;
+  for (const described of describedTopics) {
+    const { source, isSection, isAggregate, disciplineName } = described;
 
     // Строка-раздел остается одной строкой-суммой и не планируется. Обычная тема
     // разворачивается в отдельную сущность для каждой заполненной колонки вида.
@@ -310,9 +409,15 @@ async function importUtp(input, { sourceName = "" } = {}) {
       entities = [{ type: null, hours: source.total }];
     } else {
       entities = [...source.lessonHours];
-      const specifiedHours = entities.reduce((sum, entity) => sum + entity.hours, 0);
+      const specifiedHours = entities.reduce(
+        (sum, entity) => sum + entity.hours,
+        0,
+      );
       if (source.total > specifiedHours) {
-        entities.push({ type: "Вид занятия не указан", hours: source.total - specifiedHours });
+        entities.push({
+          type: "Вид занятия не указан",
+          hours: source.total - specifiedHours,
+        });
       }
       if (!entities.length) entities.push({ type: null, hours: 0 });
     }
@@ -322,6 +427,7 @@ async function importUtp(input, { sourceName = "" } = {}) {
       topics.push({
         utp_number: source.number,
         title: source.title,
+        discipline_name: disciplineName,
         total_hours: hours,
         ...legacyHours(entity.type, hours),
         note: source.note,
@@ -338,14 +444,17 @@ async function importUtp(input, { sourceName = "" } = {}) {
     throw new Error("Не удалось распознать ни одной темы в таблице УТП");
   }
 
+  const disciplines = [
+    ...new Set(topics.map((topic) => topic.discipline_name).filter(Boolean)),
+  ];
+
   return {
     topics,
     rawTableCount: tables.length,
-    disciplineName: suggestedDisciplineName(root, topics, sourceName),
+    disciplineName: disciplines[0] || fallbackDisciplineName,
+    disciplines,
     sourceFileName: sourceName || null,
   };
 }
 
 export { importUtp };
-
-
