@@ -21,19 +21,23 @@ const PROGRAM_FOLDERS = [
   { key: "all", label: "Все расписания" },
   { key: "draft", label: "Проекты" },
   { key: "approved", label: "Утверждённые" },
-  { key: "archived", label: "В архиве" },
 ];
 
+// Архивные снимки показываются только в отдельном разделе «Архив расписаний».
+// На главном экране остаются программы, с которыми пользователь продолжает работать.
+const workingPrograms = computed(() =>
+  programs.value.filter((program) => program.status !== "archived"),
+);
+
 const folderCounts = computed(() => ({
-  all: programs.value.length,
-  draft: programs.value.filter((program) => program.status === "draft").length,
-  approved: programs.value.filter((program) => program.status === "approved").length,
-  archived: programs.value.filter((program) => program.status === "archived").length,
+  all: workingPrograms.value.length,
+  draft: workingPrograms.value.filter((program) => program.status === "draft").length,
+  approved: workingPrograms.value.filter((program) => program.status === "approved").length,
 }));
 
 const filteredPrograms = computed(() => {
   const needle = query.value.trim().toLowerCase();
-  return programs.value.filter((program) => {
+  return workingPrograms.value.filter((program) => {
     if (activeFolder.value !== "all" && program.status !== activeFolder.value) return false;
     if (!needle) return true;
     return [program.title, program.description]
@@ -141,7 +145,6 @@ async function remove(id) {
 const statusLabel = {
   draft: "Черновик",
   approved: "Утверждено",
-  archived: "В архиве",
 };
 
 function formatUpdatedAt(value) {
@@ -171,8 +174,15 @@ onMounted(load);
 
     <div v-if="loading" class="text-slate-400">Загрузка…</div>
 
-    <div v-else-if="!programs.length" class="card p-10 text-center text-slate-400">
+    <div v-else-if="!workingPrograms.length" class="card p-10 text-center text-slate-400">
       Пока нет расписаний. Создайте первое, чтобы начать.
+      <button
+        v-if="programs.length"
+        class="btn-secondary ml-2"
+        @click="router.push('/archive')"
+      >
+        Открыть архив
+      </button>
     </div>
 
     <div v-else>
@@ -192,7 +202,7 @@ onMounted(load);
             >✕</button>
           </div>
           <div class="text-sm text-slate-500">
-            Найдено: {{ filteredPrograms.length }} из {{ programs.length }}
+            Найдено: {{ filteredPrograms.length }} из {{ workingPrograms.length }}
           </div>
         </div>
         <div class="mt-3 flex gap-2 overflow-x-auto border-t border-slate-100 pt-3">
@@ -228,7 +238,6 @@ onMounted(load);
                 :class="{
                   'bg-slate-100 text-slate-600': p.status === 'draft',
                   'bg-green-100 text-green-700': p.status === 'approved',
-                  'bg-amber-100 text-amber-700': p.status === 'archived',
                 }"
               >
                 {{ statusLabel[p.status] || p.status }}
