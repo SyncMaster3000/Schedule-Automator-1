@@ -404,9 +404,23 @@ async function savePeriod() {
         autofill: periodForm.value.autofill,
       });
       showPeriod.value = false;
-      info.value = createdPeriod.autofill
-        ? `Период создан. Автоматически распределено занятий: ${createdPeriod.autofill.created}`
-        : "Период создан";
+      if (createdPeriod.autofill) {
+        const result = createdPeriod.autofill;
+        const messages = [
+          `Период создан. Автоматически распределено занятий: ${result.created}`,
+        ];
+        if (result.planCount > 1 && result.plansUsed > 1) {
+          messages.push(`Задействовано учебных планов: ${result.plansUsed}`);
+        }
+        if (result.blockedAssessmentUnits > 0) {
+          messages.push(
+            "Аттестация оставлена в очереди: для неё нужны три последовательных двухчасовых слота в одном дне после завершения тем соответствующего УТП.",
+          );
+        }
+        info.value = messages.join(" ");
+      } else {
+        info.value = "Период создан";
+      }
     }
     await loadAll();
   } catch (e) {

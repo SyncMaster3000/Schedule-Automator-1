@@ -2,41 +2,7 @@
 import { getDb, audit } from "../db/index.js";
 import { eachDayOfInterval, parseISO, format } from "date-fns";
 import { listTopicsWithActualProgress } from "./topics.js";
-
-const HOURS_PER_SLOT = 2; // академических часов в одном слоте по умолчанию
-
-// Список видов занятий темы по часам: Лекция / Практическое занятие / Круглый стол.
-// Если разбивки нет — равномерно заполняем общий объем практическими занятиями.
-function plannedSlots(topic) {
-  const slots = [];
-  const addType = (hours, type) => {
-    for (let h = 0; h < (hours || 0); h += HOURS_PER_SLOT) slots.push(type);
-  };
-
-  // Тема с заданным видом по умолчанию (напр. «Зачет»/«Экзамен» из формы
-  // итоговой аттестации) — все ее часы заполняются этим видом занятия.
-  if (topic.default_lesson_type) {
-    addType(topic.total_hours || HOURS_PER_SLOT, topic.default_lesson_type);
-    return slots;
-  }
-
-  addType(topic.lecture_hours, "Лекция");
-  addType(topic.practice_hours, "Практическое занятие");
-  addType(topic.roundtable_hours, "Круглый стол");
-
-  const planned =
-    (topic.lecture_hours || 0) +
-    (topic.practice_hours || 0) +
-    (topic.roundtable_hours || 0);
-  const total = topic.total_hours || 0;
-
-  if (slots.length === 0) {
-    addType(total || HOURS_PER_SLOT, "Практическое занятие");
-  } else if (total > planned) {
-    addType(total - planned, "Практическое занятие");
-  }
-  return slots;
-}
+import { buildAutofillPlan } from "../services/autofillPlanner.js";
 
 function listPeriods(programId) {
   return getDb()
@@ -265,32 +231,12 @@ const handlers = {
         return Number(a.sort_order || 0) - Number(b.sort_order || 0);
       });
 
-    const queues = Array.from({ length: targetGroupCount }, (_, groupIndex) => {
-      const queue = [];
-      for (const topic of topics) {
-        const slots = plannedSlots(topic);
-        const completedHours =
-          targetGroupCount === 1 && !period.group_mode
-            ? Number(topic.scheduled_hours || 0)
-            : Number(
-                topic.progress_by_group?.[groupIndex] ??
-                  topic.scheduled_hours ??
-                  0,
-              );
-        const completedSlots = Math.min(
-          slots.length,
-          Math.floor(completedHours / HOURS_PER_SLOT),
-        );
-        for (let unitIndex = completedSlots; unitIndex < slots.length; unitIndex += 1) {
-          queue.push({
-            topic,
-            topicId: Number(topic.id),
-            lessonType: slots[unitIndex],
-            unitIndex,
-          });
-        }
-      }
-      return queue;
+    const autofillPlan = buildAutofillPlan({
+      topics,
+      cells,
+      groupCount: targetGroupCount,
+      groupMode: !!period.group_mode,
+      separateLectures: !!period.separate_lectures,
     });
 
     let created = 0;
@@ -312,19 +258,6 @@ const handlers = {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', NULL, ?, ?, ?)`
     );
 
-    const isLecture = (lessonType) =>
-      String(lessonType || "").toLowerCase().includes("лекц");
-    const isSharedLecture = (entry) =>
-      targetGroupCount === 2 &&
-      !period.separate_lectures &&
-      isLecture(entry?.lessonType);
-    const sameUnit = (left, right) =>
-      left &&
-      right &&
-      left.topicId === right.topicId &&
-      left.unitIndex === right.unitIndex &&
-      left.lessonType === right.lessonType;
-
     const insertEntry = (entry, cell, groupsForItem) => {
       insertItem.run(
         periodId,
@@ -344,58 +277,16 @@ const handlers = {
     };
 
     const tx = db.transaction(() => {
-      while (rowsUsed < cells.length && queues.some((queue) => queue.length)) {
-        const cell = cells[rowsUsed];
-
-        if (targetGroupCount === 1) {
-          const entry = queues[0].shift();
-          const groupsForItem = activeGroups.length ? [activeGroups[0]] : [];
-          insertEntry(entry, cell, groupsForItem);
-          separateCreated += 1;
-          rowsUsed += 1;
-          continue;
-        }
-
-        const first = queues[0][0];
-        const second = queues[1][0];
-        if (
-          sameUnit(first, second) &&
-          isSharedLecture(first) &&
-          isSharedLecture(second)
-        ) {
-          queues[0].shift();
-          queues[1].shift();
-          insertEntry(first, cell, activeGroups);
-          sharedCreated += 1;
-          rowsUsed += 1;
-          continue;
-        }
-
-        let primaryIndex = rowsUsed % 2;
-        if (!queues[primaryIndex].length) primaryIndex = primaryIndex === 0 ? 1 : 0;
-        const secondaryIndex = primaryIndex === 0 ? 1 : 0;
-        const primary = queues[primaryIndex].shift();
-        let secondary = null;
-        if (queues[secondaryIndex].length) {
-          const candidateIndex = queues[secondaryIndex].findIndex((candidate) => {
-            if (isSharedLecture(candidate)) return false;
-            if (candidate.topicId !== primary.topicId) return true;
-            return (
-              !!period.separate_lectures &&
-              isLecture(primary.lessonType) &&
-              isLecture(candidate.lessonType)
-            );
-          });
-          if (candidateIndex >= 0) {
-            secondary = queues[secondaryIndex].splice(candidateIndex, 1)[0];
-          }
-        }
-
-        insertEntry(primary, cell, [activeGroups[primaryIndex]]);
-        separateCreated += 1;
-        if (secondary) {
-          insertEntry(secondary, cell, [activeGroups[secondaryIndex]]);
-          separateCreated += 1;
+      for (const row of autofillPlan.rows) {
+        for (const assignment of row.assignments) {
+          const groupsForItem = activeGroups.length
+            ? assignment.groupIndexes
+                .map((groupIndex) => activeGroups[groupIndex])
+                .filter(Boolean)
+            : [];
+          insertEntry(assignment.entry, row.cell, groupsForItem);
+          if (assignment.groupIndexes.length > 1) sharedCreated += 1;
+          else separateCreated += 1;
         }
         rowsUsed += 1;
       }
@@ -418,7 +309,7 @@ const handlers = {
       }
     });
     tx();
-    const remainingUnits = queues.reduce((sum, queue) => sum + queue.length, 0);
+    const remainingUnits = autofillPlan.remainingUnits;
     audit(programId, periodId, "period_autofilled", {
       created,
       rowsUsed,
@@ -426,6 +317,9 @@ const handlers = {
       separateCreated,
       remainingUnits,
       groupCount: targetGroupCount,
+      blockedAssessmentUnits: autofillPlan.blockedAssessmentUnits,
+      planCount: autofillPlan.planCount,
+      plansUsed: autofillPlan.plansUsed,
     });
     return {
       created,
@@ -434,6 +328,9 @@ const handlers = {
       separateCreated,
       remainingUnits,
       groupCount: targetGroupCount,
+      blockedAssessmentUnits: autofillPlan.blockedAssessmentUnits,
+      planCount: autofillPlan.planCount,
+      plansUsed: autofillPlan.plansUsed,
     };
   },
 };

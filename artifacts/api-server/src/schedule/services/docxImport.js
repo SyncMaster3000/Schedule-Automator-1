@@ -439,6 +439,8 @@ async function importUtp(input, { sourceName = "" } = {}) {
         utp_number: source.number,
         title: source.title,
         discipline_name: disciplineName,
+        utp_source:
+          String(sourceName || "").trim() || fallbackDisciplineName,
         total_hours: hours,
         ...legacyHours(entity.type, hours),
         note: source.note,

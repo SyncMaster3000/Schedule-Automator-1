@@ -224,10 +224,10 @@ export default {
       db.prepare("DELETE FROM program_topics WHERE program_id = ?").run(programId);
       const insert = db.prepare(
         `INSERT INTO program_topics
-          (program_id, utp_number, title, discipline_name, total_hours, lecture_hours, practice_hours,
+          (program_id, utp_number, title, discipline_name, utp_source, total_hours, lecture_hours, practice_hours,
            roundtable_hours, default_dept, note, status, scheduled_hours,
            excluded, is_section, default_lesson_type, sort_order)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?)`
       );
       topics.forEach((t, idx) => {
         insert.run(
@@ -235,6 +235,7 @@ export default {
           t.utp_number != null ? t.utp_number : String(idx + 1),
           t.title,
           t.discipline_name || null,
+          t.utp_source || null,
           t.total_hours || 0,
           t.lecture_hours || 0,
           t.practice_hours || 0,
@@ -269,10 +270,10 @@ export default {
     const tx = db.transaction(() => {
       const insert = db.prepare(
         `INSERT INTO program_topics
-          (program_id, utp_number, title, discipline_name, total_hours, lecture_hours, practice_hours,
+          (program_id, utp_number, title, discipline_name, utp_source, total_hours, lecture_hours, practice_hours,
            roundtable_hours, default_dept, note, status, scheduled_hours,
            excluded, is_section, default_lesson_type, sort_order)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?)`
       );
       topics.forEach((t, idx) => {
         insert.run(
@@ -280,6 +281,7 @@ export default {
           t.utp_number != null ? t.utp_number : String(baseNum + idx + 1),
           t.title,
           t.discipline_name || null,
+          t.utp_source || null,
           t.total_hours || 0,
           t.lecture_hours || 0,
           t.practice_hours || 0,

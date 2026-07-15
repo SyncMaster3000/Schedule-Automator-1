@@ -74,10 +74,10 @@ function restoreSnapshotToProgram(db, programId, snap) {
   const topicMap = {};
   const insTopic = db.prepare(
     `INSERT INTO program_topics
-      (program_id, utp_number, title, discipline_name, total_hours, lecture_hours, practice_hours,
+      (program_id, utp_number, title, discipline_name, utp_source, total_hours, lecture_hours, practice_hours,
        roundtable_hours, default_dept, note, status, scheduled_hours,
        excluded, is_section, default_lesson_type, sort_order)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   for (const t of snap.topics || []) {
     const r = insTopic.run(
@@ -85,6 +85,7 @@ function restoreSnapshotToProgram(db, programId, snap) {
       t.utp_number,
       t.title,
       t.discipline_name || null,
+      t.utp_source || null,
       t.total_hours,
       t.lecture_hours,
       t.practice_hours,
