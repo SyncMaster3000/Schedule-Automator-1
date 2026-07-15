@@ -586,6 +586,7 @@ function auditText(a) {
     topics_imported: "Импорт УТП",
     topics_appended: "Добавлены темы из УТП",
     project_restored: "Восстановлена сохранённая версия",
+    schedule_slot_rows_swapped: "Переставлены временные ряды группового расписания",
   };
   let base = map[a.action] || a.action;
   try {
@@ -866,6 +867,7 @@ async function deleteItem() {
 const dragSlots = ref([]);
 const dragOrder = ref([]);
 const groupDragBusy = ref(false);
+const groupRowDragOrder = ref([]);
 
 function groupDragName(groupName) {
   const group = groups.value.find((candidate) => candidate.name === groupName);
@@ -949,6 +951,64 @@ async function onGroupDragChange(evt, targetRow, targetGroup) {
   } catch (e) {
     failMsg = e.message;
   } finally {
+    try {
+      await load();
+      if (failMsg) error.value = failMsg;
+    } finally {
+      groupDragBusy.value = false;
+    }
+  }
+}
+
+function groupedRowSlot(row) {
+  return {
+    date: row.date,
+    start_time: row.start_time,
+    end_time: row.end_time,
+  };
+}
+
+// Общая лекция занимает весь ряд, поэтому при перетаскивании сохраняем порядок
+// временных рядов целиком. Целевой ряд может содержать как другую общую лекцию,
+// так и отдельные занятия двух групп.
+function onGroupedRowDragStart() {
+  groupRowDragOrder.value = groupedRows.value.map((row) => ({
+    key: row.key,
+    slot: groupedRowSlot(row),
+    hasCommonLesson: row.hasCommonLesson,
+  }));
+}
+
+async function onGroupedRowDragEnd(evt) {
+  const oldIndex = evt?.oldIndex;
+  const newIndex = evt?.newIndex;
+  const order = groupRowDragOrder.value;
+  if (oldIndex == null || newIndex == null || oldIndex === newIndex) {
+    groupRowDragOrder.value = [];
+    return;
+  }
+  const source = order[oldIndex];
+  const target = order[newIndex];
+  let failMsg = "";
+  groupDragBusy.value = true;
+  error.value = "";
+  try {
+    if (!source?.hasCommonLesson || !target) {
+      throw new Error("Перетаскивать целый ряд можно только за ручку общей лекции");
+    }
+    pushUndo("перестановка общей лекции");
+    const result = await api.schedule.swapSlotRows({
+      periodId: periodId.value,
+      source: source.slot,
+      target: target.slot,
+    });
+    info.value = target.hasCommonLesson
+      ? "Общие лекции поменялись местами"
+      : `Общая лекция поменялась местами с занятиями групп (${result.targetCount})`;
+  } catch (e) {
+    failMsg = e.message;
+  } finally {
+    groupRowDragOrder.value = [];
     try {
       await load();
       if (failMsg) error.value = failMsg;
@@ -1666,7 +1726,17 @@ onUnmounted(() => {
     </div>
 
     <!-- Групповой режим: занятия одного слота в одном ряду, группы — отдельными колонками -->
-    <div v-else-if="period && period.group_mode" class="space-y-2">
+    <VueDraggableNext
+      v-else-if="period && period.group_mode"
+      :list="groupedRows"
+      :disabled="groupDragBusy"
+      item-key="key"
+      handle=".group-row-drag-handle"
+      ghost-class="opacity-40"
+      class="space-y-2"
+      @start="onGroupedRowDragStart"
+      @end="onGroupedRowDragEnd"
+    >
       <div v-for="(row, ridx) in groupedRows" :key="row.key">
         <!-- Заголовок дня -->
         <div
@@ -1696,8 +1766,14 @@ onUnmounted(() => {
         </div>
         <!-- Ряд одного таймслота -->
         <div class="flex items-start gap-3">
-          <div class="w-20 shrink-0 pt-3 text-sm text-slate-400">
-            {{ row.start_time }}–{{ row.end_time }}
+          <div class="flex w-24 shrink-0 items-start gap-1 pt-3 text-sm text-slate-400">
+            <button
+              v-if="row.hasCommonLesson"
+              type="button"
+              class="group-row-drag-handle cursor-grab select-none text-slate-300 hover:text-brand-500"
+              title="Перетащить общую лекцию на другое время"
+            >⋮⋮</button>
+            <span>{{ row.start_time }}–{{ row.end_time }}</span>
           </div>
           <div class="min-w-0 flex-1 space-y-2">
             <!-- Общие занятия — на всю ширину -->
@@ -1766,7 +1842,7 @@ onUnmounted(() => {
           </div>
         </div>
       </div>
-    </div>
+    </VueDraggableNext>
 
     <!-- Список занятий с drag-and-drop -->
     <VueDraggableNext

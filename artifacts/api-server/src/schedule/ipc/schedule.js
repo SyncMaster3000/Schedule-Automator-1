@@ -248,6 +248,94 @@ const handlers = {
     return { id: itemId, conflicts };
   },
 
+  // В групповом расписании общая лекция занимает весь временной ряд. При её
+  // перетаскивании меняем местами не отдельные карточки, а всё содержимое двух
+  // слотов: одну общую лекцию можно обменять с другой общей лекцией либо с
+  // параллельными занятиями всех групп. Обновление выполняется одной транзакцией.
+  "schedule:swapSlotRows": (data) => {
+    const db = getDb();
+    const periodId = Number(data?.periodId);
+    const source = data?.source || {};
+    const target = data?.target || {};
+    const period = db.prepare("SELECT * FROM periods WHERE id = ?").get(periodId);
+    if (!period) throw new Error("Период не найден");
+    if (!period.group_mode) {
+      throw new Error("Перестановка целых рядов доступна только в групповом расписании");
+    }
+    if (!source.date || !source.start_time || !target.date || !target.start_time) {
+      throw new Error("Не указаны исходный и целевой временные слоты");
+    }
+    if (source.date === target.date && source.start_time === target.start_time) {
+      return { moved: 0, sourceCount: 0, targetCount: 0 };
+    }
+
+    const selectItems = db.prepare(
+      `SELECT * FROM schedule_items
+       WHERE period_id = ? AND date = ? AND start_time = ?
+       ORDER BY sort_order`,
+    );
+    const sourceItems = selectItems.all(periodId, source.date, source.start_time);
+    const targetItems = selectItems.all(periodId, target.date, target.start_time);
+    if (!sourceItems.length) throw new Error("В исходном временном слоте нет занятий");
+    if (!targetItems.length) throw new Error("В целевом временном слоте нет занятий");
+    if ([...sourceItems, ...targetItems].some((item) => item.is_pinned)) {
+      throw new Error(
+        "Нельзя переставить ряд с закрепленным занятием. Сначала открепите его (📌).",
+      );
+    }
+
+    const sourceSlot = {
+      date: source.date,
+      start: source.start_time,
+      end: source.end_time || sourceItems[0].end_time,
+    };
+    const targetSlot = {
+      date: target.date,
+      start: target.start_time,
+      end: target.end_time || targetItems[0].end_time,
+    };
+    const now = new Date().toISOString();
+    const updateItem = db.prepare(
+      `UPDATE schedule_items SET
+         date = ?, start_time = ?, end_time = ?, start_dt = ?, end_dt = ?,
+         is_outside_period = 0, is_modified = 1, modified_at = ?,
+         change_desc = 'Изменено: дата/время'
+       WHERE id = ?`,
+    );
+    const moveToSlot = (item, slot) => {
+      updateItem.run(
+        slot.date,
+        slot.start,
+        slot.end,
+        `${slot.date}T${slot.start}:00`,
+        `${slot.date}T${slot.end}:00`,
+        now,
+        item.id,
+      );
+    };
+
+    const tx = db.transaction(() => {
+      for (const item of sourceItems) moveToSlot(item, targetSlot);
+      for (const item of targetItems) moveToSlot(item, sourceSlot);
+      for (const item of [...sourceItems, ...targetItems]) {
+        const saved = db.prepare("SELECT * FROM schedule_items WHERE id = ?").get(item.id);
+        rebuildLocksForItem(saved);
+      }
+      audit(period.program_id, periodId, "schedule_slot_rows_swapped", {
+        source: sourceSlot,
+        target: targetSlot,
+        sourceItemIds: sourceItems.map((item) => item.id),
+        targetItemIds: targetItems.map((item) => item.id),
+      });
+    });
+    tx();
+    return {
+      moved: sourceItems.length + targetItems.length,
+      sourceCount: sourceItems.length,
+      targetCount: targetItems.length,
+    };
+  },
+
   "schedule:deleteItem": (id) => {
     const db = getDb();
     const item = db.prepare("SELECT * FROM schedule_items WHERE id = ?").get(id);

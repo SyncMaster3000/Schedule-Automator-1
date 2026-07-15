@@ -193,6 +193,7 @@ export const api = {
     listByPeriod: (periodId, crossPeriod = false) =>
       call("schedule:listByPeriod", { periodId, crossPeriod }),
     saveItem: (data) => call("schedule:saveItem", data),
+    swapSlotRows: (data) => call("schedule:swapSlotRows", data),
     deleteItem: (id) => call("schedule:deleteItem", id),
     bulkDelete: (data) => call("schedule:bulkDelete", data),
     fillGrid: (periodId) => call("schedule:fillGrid", { periodId }),
