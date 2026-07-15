@@ -75,11 +75,20 @@ function isColumnNumberRow(cells) {
 
 function detectAssessment(cells) {
   const joined = normalize(cells.join(" "));
-  if (!/форма/.test(joined) || !/аттестац/.test(joined)) return null;
+  // Поддерживаем русские и белорусские формулировки:
+  // «форма промежуточной аттестации» / «форма прамежкавай атэстацыі».
+  if (!/форма/.test(joined) || !/(?:аттестац|атэстац)/.test(joined))
+    return null;
   if (/экзамен/.test(joined)) return "Экзамен";
-  if (/собеседован/.test(joined)) return "Собеседование";
-  if (/зач[ее]т/.test(joined)) return "Зачет";
+  if (/собеседован|суразмов/.test(joined)) return "Собеседование";
+  if (/зач[ее]т|зал[іi]к/.test(joined)) return "Зачет";
   return null;
+}
+
+function assessmentHours(cells) {
+  // Если форма аттестации содержит часы (например, «Суразмова | 2»),
+  // используем их. Для старых таблиц без числа сохраняем прежние 6 часов.
+  return cells.map(toNumber).find((hours) => hours > 0) || 6;
 }
 
 function isAggregateTitle(title) {
@@ -360,13 +369,14 @@ async function importUtp(input, { sourceName = "" } = {}) {
   for (const row of layout.rows.slice(layout.numberRow + 1)) {
     const assessment = detectAssessment(row);
     if (assessment) {
+      const hours = assessmentHours(row);
       sourceTopics.push({
         number: "",
         title: assessment,
-        total: 6,
+        total: hours,
         note: "",
         isAssessment: true,
-        lessonHours: [{ type: assessment, hours: 6 }],
+        lessonHours: [{ type: assessment, hours }],
       });
       continue;
     }
