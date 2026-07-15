@@ -100,6 +100,10 @@ function lessonTypeFromHeader(headerPath) {
   return null;
 }
 
+function isIndependentStudyType(type) {
+  return /самостоятель|самастойн|самоподготов/.test(normalize(type));
+}
+
 function headerPath(rows, headerEnd, column) {
   const result = [];
   for (let row = 0; row < headerEnd; row += 1) {
@@ -432,7 +436,13 @@ async function importUtp(input, { sourceName = "" } = {}) {
         ...legacyHours(entity.type, hours),
         note: source.note,
         is_section: isSection ? 1 : 0,
-        excluded: isAggregate || hours <= 0 ? 1 : 0,
+        // Самостоятельная работа учитывается в общей трудоёмкости УТП, но не
+        // должна автоматически попадать в очное расписание. При необходимости
+        // пользователь всё ещё может включить такую строку в предпросмотре.
+        excluded:
+          isAggregate || hours <= 0 || isIndependentStudyType(entity.type)
+            ? 1
+            : 0,
         status: "pending",
         default_lesson_type: entity.type,
         sort_order: topics.length + 1,
