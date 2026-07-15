@@ -1,6 +1,7 @@
 // Учебные периоды (блоки дат) + полуавтоматическое заполнение очередью тем
 import { getDb, audit } from "../db/index.js";
 import { eachDayOfInterval, parseISO, format } from "date-fns";
+import { listTopicsWithActualProgress } from "./topics.js";
 
 const HOURS_PER_SLOT = 2; // академических часов в одном слоте по умолчанию
 
@@ -113,7 +114,14 @@ const handlers = {
         );
       const periodId = info.lastInsertRowid;
 
-      const groupNames = Array.isArray(data.groups) ? data.groups : [];
+      // Интерфейс и алгоритм групповой сетки рассчитаны максимум на две группы.
+      const groupNames = [
+        ...new Set(
+          (Array.isArray(data.groups) ? data.groups : [])
+            .map((name) => String(name || "").trim())
+            .filter(Boolean),
+        ),
+      ].slice(0, 2);
       const groupIds = [];
       const insertGroup = db.prepare(
         "INSERT INTO groups (period_id, name, is_active) VALUES (?, ?, 1)"
@@ -133,10 +141,10 @@ const handlers = {
     const res = tx();
 
     // Автозаполнение оставшимися темами очереди
-    if (data.autofill) {
-      handlers["periods:autofill"]({ programId, periodId: res.periodId });
-    }
-    return res;
+    const autofill = data.autofill
+      ? handlers["periods:autofill"]({ programId, periodId: res.periodId })
+      : null;
+    return { ...res, autofill };
   },
 
   "periods:update": (data) => {
@@ -214,8 +222,10 @@ const handlers = {
     return { id };
   },
 
-  // Полуавтоматическое заполнение периода следующими нераспределенными темами.
-  // Соблюдается строгий порядок очереди; темы partial идут первыми.
+  // Полуавтоматическое заполнение периода фактически нераспределёнными темами.
+  // Для двух групп лекции по умолчанию общие, а остальные занятия размещаются
+  // в двух колонках одного временного слота. Одинаковая практическая/семинарская
+  // тема одновременно обеим группам не назначается.
   "periods:autofill": (data) => {
     const db = getDb();
     const { programId, periodId } = data;
@@ -230,20 +240,71 @@ const handlers = {
       period.work_week || "mon-fri"
     );
 
-    const topics = db
-      .prepare(
-        `SELECT * FROM program_topics
-         WHERE program_id = ? AND excluded = 0 AND status IN ('pending', 'partial')
-         ORDER BY (status = 'partial') DESC, sort_order`
-      )
-      .all(programId);
-
     const activeGroups = period.group_mode
-      ? db.prepare("SELECT id, name FROM groups WHERE period_id = ? AND is_active = 1 ORDER BY id").all(periodId)
+      ? db
+          .prepare(
+            "SELECT id, name FROM groups WHERE period_id = ? AND is_active = 1 ORDER BY id",
+          )
+          .all(periodId)
+          .slice(0, 2)
       : [];
+    const targetGroupCount = activeGroups.length > 1 ? 2 : 1;
+    const topics = listTopicsWithActualProgress(db, programId, {
+      onlyIncluded: true,
+    })
+      .filter(
+        (topic) =>
+          !topic.is_section &&
+          Number(topic.total_hours || 0) > 0 &&
+          topic.status !== "scheduled" &&
+          topic.status !== "completed",
+      )
+      .sort((a, b) => {
+        if (a.status === "partial" && b.status !== "partial") return -1;
+        if (b.status === "partial" && a.status !== "partial") return 1;
+        return Number(a.sort_order || 0) - Number(b.sort_order || 0);
+      });
 
-    let cellIdx = 0;
+    const queues = Array.from({ length: targetGroupCount }, (_, groupIndex) => {
+      const queue = [];
+      for (const topic of topics) {
+        const slots = plannedSlots(topic);
+        const completedHours =
+          targetGroupCount === 1 && !period.group_mode
+            ? Number(topic.scheduled_hours || 0)
+            : Number(
+                topic.progress_by_group?.[groupIndex] ??
+                  topic.scheduled_hours ??
+                  0,
+              );
+        const completedSlots = Math.min(
+          slots.length,
+          Math.floor(completedHours / HOURS_PER_SLOT),
+        );
+        for (let unitIndex = completedSlots; unitIndex < slots.length; unitIndex += 1) {
+          queue.push({
+            topic,
+            topicId: Number(topic.id),
+            lessonType: slots[unitIndex],
+            unitIndex,
+          });
+        }
+      }
+      return queue;
+    });
+
     let created = 0;
+    let rowsUsed = 0;
+    let sharedCreated = 0;
+    let separateCreated = 0;
+    let sortOrder =
+      Number(
+        db
+          .prepare(
+            "SELECT MAX(sort_order) AS value FROM schedule_items WHERE period_id = ?",
+          )
+          .get(periodId)?.value || 0,
+      ) + 1;
     const insertItem = db.prepare(
       `INSERT INTO schedule_items
         (period_id, program_id, topic_id, date, start_time, end_time, start_dt, end_dt,
@@ -251,77 +312,129 @@ const handlers = {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', NULL, ?, ?, ?)`
     );
 
+    const isLecture = (lessonType) =>
+      String(lessonType || "").toLowerCase().includes("лекц");
+    const isSharedLecture = (entry) =>
+      targetGroupCount === 2 &&
+      !period.separate_lectures &&
+      isLecture(entry?.lessonType);
+    const sameUnit = (left, right) =>
+      left &&
+      right &&
+      left.topicId === right.topicId &&
+      left.unitIndex === right.unitIndex &&
+      left.lessonType === right.lessonType;
+
+    const insertEntry = (entry, cell, groupsForItem) => {
+      insertItem.run(
+        periodId,
+        programId,
+        entry.topicId,
+        cell.date,
+        cell.start,
+        cell.end,
+        `${cell.date}T${cell.start}:00`,
+        `${cell.date}T${cell.end}:00`,
+        entry.lessonType,
+        JSON.stringify(groupsForItem.map((group) => group.id)),
+        groupsForItem.length ? groupsForItem.map((group) => group.name).join("; ") : null,
+        sortOrder++,
+      );
+      created += 1;
+    };
+
     const tx = db.transaction(() => {
-      for (const topic of topics) {
-        const slots = plannedSlots(topic);
-        let placed = 0;
-        const expectedPlacements = slots.reduce((sum, lessonType) => {
-          const sharedLecture =
-            activeGroups.length > 1 &&
-            !period.separate_lectures &&
-            String(lessonType || "").toLowerCase().includes("лекц");
-          return sum + (activeGroups.length && !sharedLecture ? activeGroups.length : 1);
-        }, 0);
+      while (rowsUsed < cells.length && queues.some((queue) => queue.length)) {
+        const cell = cells[rowsUsed];
 
-        for (const lessonType of slots) {
-          const sharedLecture =
-            activeGroups.length > 1 &&
-            !period.separate_lectures &&
-            String(lessonType || "").toLowerCase().includes("лекц");
-          const placements =
-            activeGroups.length && !sharedLecture
-              ? activeGroups.map((group) => ({
-                  groupIds: [group.id],
-                  groupLabel: group.name,
-                }))
-              : [
-                  {
-                    groupIds: activeGroups.map((group) => group.id),
-                    groupLabel: activeGroups.length > 1 ? activeGroups.map((group) => group.name).join("; ") : null,
-                  },
-                ];
-
-          for (const placement of placements) {
-            if (cellIdx >= cells.length) break;
-            const cell = cells[cellIdx++];
-            insertItem.run(
-              periodId,
-              programId,
-              topic.id,
-              cell.date,
-              cell.start,
-              cell.end,
-              `${cell.date}T${cell.start}:00`,
-              `${cell.date}T${cell.end}:00`,
-              lessonType,
-              JSON.stringify(placement.groupIds),
-              placement.groupLabel,
-              created
-            );
-            created += 1;
-            placed += 1;
-          }
-          if (placed < expectedPlacements && cellIdx >= cells.length) break;
+        if (targetGroupCount === 1) {
+          const entry = queues[0].shift();
+          const groupsForItem = activeGroups.length ? [activeGroups[0]] : [];
+          insertEntry(entry, cell, groupsForItem);
+          separateCreated += 1;
+          rowsUsed += 1;
+          continue;
         }
 
-        const fullyScheduled = placed >= expectedPlacements;
-        const scheduledHours = placed * HOURS_PER_SLOT;
-        db.prepare(
-          `UPDATE program_topics SET status = ?, assigned_period_id = ?, scheduled_hours = ?
-           WHERE id = ?`
-        ).run(
-          fullyScheduled ? "scheduled" : "partial",
-          periodId,
-          scheduledHours,
-          topic.id
-        );
+        const first = queues[0][0];
+        const second = queues[1][0];
+        if (
+          sameUnit(first, second) &&
+          isSharedLecture(first) &&
+          isSharedLecture(second)
+        ) {
+          queues[0].shift();
+          queues[1].shift();
+          insertEntry(first, cell, activeGroups);
+          sharedCreated += 1;
+          rowsUsed += 1;
+          continue;
+        }
 
-        if (cellIdx >= cells.length && !fullyScheduled) break;
+        let primaryIndex = rowsUsed % 2;
+        if (!queues[primaryIndex].length) primaryIndex = primaryIndex === 0 ? 1 : 0;
+        const secondaryIndex = primaryIndex === 0 ? 1 : 0;
+        const primary = queues[primaryIndex].shift();
+        let secondary = null;
+        if (queues[secondaryIndex].length) {
+          const candidateIndex = queues[secondaryIndex].findIndex((candidate) => {
+            if (isSharedLecture(candidate)) return false;
+            if (candidate.topicId !== primary.topicId) return true;
+            return (
+              !!period.separate_lectures &&
+              isLecture(primary.lessonType) &&
+              isLecture(candidate.lessonType)
+            );
+          });
+          if (candidateIndex >= 0) {
+            secondary = queues[secondaryIndex].splice(candidateIndex, 1)[0];
+          }
+        }
+
+        insertEntry(primary, cell, [activeGroups[primaryIndex]]);
+        separateCreated += 1;
+        if (secondary) {
+          insertEntry(secondary, cell, [activeGroups[secondaryIndex]]);
+          separateCreated += 1;
+        }
+        rowsUsed += 1;
+      }
+
+      // Сохраняем вычисленный по фактическим занятиям прогресс. Это также
+      // исправляет старые статусы, из-за которых автозаполнение создавало 0 строк.
+      const refreshedTopics = listTopicsWithActualProgress(db, programId);
+      const updateProgress = db.prepare(
+        `UPDATE program_topics
+         SET status = ?, assigned_period_id = ?, scheduled_hours = ?
+         WHERE id = ?`,
+      );
+      for (const topic of refreshedTopics) {
+        updateProgress.run(
+          topic.status,
+          topic.assigned_period_id,
+          topic.scheduled_hours,
+          topic.id,
+        );
       }
     });
     tx();
-    audit(programId, periodId, "period_autofilled", { created });
-    return { created };
+    const remainingUnits = queues.reduce((sum, queue) => sum + queue.length, 0);
+    audit(programId, periodId, "period_autofilled", {
+      created,
+      rowsUsed,
+      sharedCreated,
+      separateCreated,
+      remainingUnits,
+      groupCount: targetGroupCount,
+    });
+    return {
+      created,
+      rowsUsed,
+      sharedCreated,
+      separateCreated,
+      remainingUnits,
+      groupCount: targetGroupCount,
+    };
   },
 };
 

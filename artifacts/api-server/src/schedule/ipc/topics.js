@@ -3,33 +3,127 @@ import { getDb, audit } from "../db/index.js";
 
 const HOURS_PER_SLOT = 2;
 
+function safeJsonArray(value) {
+  if (Array.isArray(value)) return value;
+  try {
+    return JSON.parse(value || "[]");
+  } catch {
+    return [];
+  }
+}
+
 // Счётчики в program_topics могли остаться устаревшими после удаления периода
 // или работы со старыми версиями приложения. Для очереди всегда считаем
 // распределённые часы по фактическим занятиям, чтобы пользователю предлагался
-// только реальный остаток темы.
-function listTopicsWithActualProgress(db, programId, { onlyIncluded = false } = {}) {
-  return db
+// только реальный остаток темы. В расписании для двух групп часы считаются
+// освоенными, когда занятие получили обе группы: общее занятие засчитывается
+// сразу обеим, раздельное — только указанной группе.
+export function listTopicsWithActualProgress(
+  db,
+  programId,
+  { onlyIncluded = false } = {},
+) {
+  const topics = db
     .prepare(
-      `SELECT pt.*,
-        CASE
-          WHEN COUNT(si.id) = 0 THEN 'pending'
-          WHEN COALESCE(pt.total_hours, 0) <= 0
-            OR COUNT(si.id) * ${HOURS_PER_SLOT} >= COALESCE(pt.total_hours, 0)
-            THEN 'scheduled'
-          ELSE 'partial'
-        END AS status,
-        MAX(
-          0,
-          MIN(COALESCE(pt.total_hours, 0), COUNT(si.id) * ${HOURS_PER_SLOT})
-        ) AS scheduled_hours,
-        CASE WHEN COUNT(si.id) > 0 THEN MIN(si.period_id) ELSE NULL END AS assigned_period_id
-       FROM program_topics pt
-       LEFT JOIN schedule_items si ON si.topic_id = pt.id
-       WHERE pt.program_id = ? ${onlyIncluded ? "AND pt.excluded = 0" : ""}
-       GROUP BY pt.id
-       ORDER BY pt.sort_order`,
+      `SELECT * FROM program_topics
+       WHERE program_id = ? ${onlyIncluded ? "AND excluded = 0" : ""}
+       ORDER BY sort_order`,
     )
     .all(programId);
+
+  const periods = db
+    .prepare("SELECT id, group_mode FROM periods WHERE program_id = ?")
+    .all(programId);
+  const periodInfo = new Map(
+    periods.map((period) => [
+      Number(period.id),
+      { groupMode: !!period.group_mode, groupIds: [] },
+    ]),
+  );
+  const groupRows = db
+    .prepare(
+      `SELECT g.period_id, g.id
+       FROM groups g
+       JOIN periods p ON p.id = g.period_id
+       WHERE p.program_id = ? AND g.is_active = 1
+       ORDER BY g.period_id, g.id`,
+    )
+    .all(programId);
+  for (const group of groupRows) {
+    periodInfo.get(Number(group.period_id))?.groupIds.push(Number(group.id));
+  }
+  const configuredGroupCounts = [...periodInfo.values()]
+    .filter((info) => info.groupMode)
+    .map((info) => info.groupIds.length);
+  const groupCount = Math.max(
+    1,
+    Math.min(
+      2,
+      configuredGroupCounts.length ? Math.max(...configuredGroupCounts) : 1,
+    ),
+  );
+
+  const items = db
+    .prepare(
+      `SELECT id, topic_id, period_id, group_ids
+       FROM schedule_items
+       WHERE program_id = ? AND topic_id IS NOT NULL`,
+    )
+    .all(programId);
+  const itemsByTopic = new Map();
+  for (const item of items) {
+    const topicId = Number(item.topic_id);
+    if (!itemsByTopic.has(topicId)) itemsByTopic.set(topicId, []);
+    itemsByTopic.get(topicId).push(item);
+  }
+
+  return topics.map((topic) => {
+    const topicItems = itemsByTopic.get(Number(topic.id)) || [];
+    const hoursByGroup = Array(groupCount).fill(0);
+    for (const item of topicItems) {
+      const info = periodInfo.get(Number(item.period_id));
+      if (groupCount === 1 || !info?.groupMode) {
+        for (let index = 0; index < groupCount; index += 1) {
+          hoursByGroup[index] += HOURS_PER_SLOT;
+        }
+        continue;
+      }
+
+      const itemGroupIds = safeJsonArray(item.group_ids).map(Number);
+      const matchedIndexes = itemGroupIds
+        .map((groupId) => info.groupIds.indexOf(groupId))
+        .filter((index) => index >= 0 && index < groupCount);
+      const targetIndexes = matchedIndexes.length
+        ? [...new Set(matchedIndexes)]
+        : info.groupIds.length > 1
+          ? Array.from({ length: groupCount }, (_, index) => index)
+          : [0];
+      for (const index of targetIndexes) hoursByGroup[index] += HOURS_PER_SLOT;
+    }
+
+    const totalHours = Math.max(0, Number(topic.total_hours || 0));
+    const cappedGroupHours = hoursByGroup.map((hours) =>
+      Math.min(totalHours, hours),
+    );
+    const scheduledHours = Math.min(...cappedGroupHours);
+    const status =
+      topicItems.length === 0
+        ? "pending"
+        : totalHours <= 0 || scheduledHours >= totalHours
+          ? "scheduled"
+          : "partial";
+    const assignedPeriodId = topicItems.length
+      ? Math.min(...topicItems.map((item) => Number(item.period_id)))
+      : null;
+    return {
+      ...topic,
+      status,
+      scheduled_hours: scheduledHours,
+      assigned_period_id: assignedPeriodId,
+      progress_by_group: cappedGroupHours,
+      progress_group_count: groupCount,
+    };
+  });
 }
 
 function normalizeTopicIds(values) {

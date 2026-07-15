@@ -388,7 +388,11 @@ async function savePeriod() {
         .split(";")
         .map((g) => g.trim())
         .filter(Boolean);
-      await api.periods.create({
+      if (groups.length > 2) {
+        error.value = "Для группового расписания можно указать не более двух групп";
+        return;
+      }
+      const createdPeriod = await api.periods.create({
         programId: programId.value,
         name: periodForm.value.name,
         start_date: periodForm.value.start_date,
@@ -400,7 +404,9 @@ async function savePeriod() {
         autofill: periodForm.value.autofill,
       });
       showPeriod.value = false;
-      info.value = "Период создан";
+      info.value = createdPeriod.autofill
+        ? `Период создан. Автоматически распределено занятий: ${createdPeriod.autofill.created}`
+        : "Период создан";
     }
     await loadAll();
   } catch (e) {
@@ -1212,7 +1218,7 @@ onMounted(async () => {
         <!-- Только при создании нового периода -->
         <template v-if="!editingPeriodId">
           <div>
-            <label class="label">Группы (через точку с запятой)</label>
+            <label class="label">Группы (не более двух, через точку с запятой)</label>
             <input
               v-model="periodForm.groups"
               class="input"
