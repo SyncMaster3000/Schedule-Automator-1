@@ -4,6 +4,10 @@ import { ref, computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import api from "../api";
 import AppModal from "../components/AppModal.vue";
+import {
+  enrichTopicsWithDisciplines,
+  groupTopicsByDiscipline,
+} from "../utils/topicDisciplines";
 
 const props = defineProps({ id: { type: [String, Number], required: true } });
 const router = useRouter();
@@ -18,6 +22,7 @@ const topics = ref([]);
 const periods = ref([]);
 const queue = ref({ total: 0, scheduled: 0, partial: 0, pending: 0, remaining: 0 });
 const versions = ref([]);
+const topicGroups = computed(() => groupTopicsByDiscipline(topics.value));
 const projectEditor = ref(null); // { mode: "create" | "rename", versionId? }
 const projectLabel = ref("");
 const projectEditorError = ref("");
@@ -85,7 +90,7 @@ async function loadAll() {
   try {
     const data = await api.programs.get(programId.value);
     program.value = data.program;
-    topics.value = data.topics;
+    topics.value = enrichTopicsWithDisciplines(data.topics);
     periods.value = data.periods;
     queue.value = await api.topics.queueStatus(programId.value);
     versions.value = await api.versions.list(programId.value);
@@ -108,18 +113,24 @@ async function runImport(mode = "replace") {
 
 async function confirmImport() {
   try {
+    const disciplineName =
+      String(importPreview.value.disciplineName || "").trim() || "Без названия дисциплины";
+    const importedTopics = importPreview.value.topics.map((topic) => ({
+      ...topic,
+      discipline_name: disciplineName,
+    }));
     if (importMode.value === "append") {
       await api.topics.append({
         programId: programId.value,
-        topics: importPreview.value.topics,
+        topics: importedTopics,
       });
-      info.value = "Темы добавлены из УТП";
+      info.value = `Добавлена дисциплина «${disciplineName}»`;
     } else {
       await api.topics.save({
         programId: programId.value,
-        topics: importPreview.value.topics,
+        topics: importedTopics,
       });
-      info.value = "Темы УТП импортированы";
+      info.value = `Импортирована дисциплина «${disciplineName}»`;
     }
     importPreview.value = null;
     await loadAll();
@@ -475,7 +486,16 @@ onMounted(async () => {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="t in topics" :key="t.id" :class="{ 'opacity-50': t.excluded }">
+            <template v-for="group in topicGroups" :key="group.key">
+            <tr class="border-y border-brand-100 bg-brand-50/70">
+              <td colspan="7" class="table-cell py-2 font-semibold text-brand-800">
+                {{ group.name }}
+                <span class="ml-2 text-xs font-normal text-brand-500">
+                  {{ group.topics.length }} строк(и)
+                </span>
+              </td>
+            </tr>
+            <tr v-for="t in group.topics" :key="t.id" :class="{ 'opacity-50': t.excluded }">
               <td class="table-cell text-center">
                 <input
                   type="checkbox"
@@ -508,6 +528,7 @@ onMounted(async () => {
                 <button class="btn-ghost text-red-500" @click="removeTopic(t.id)">✕</button>
               </td>
             </tr>
+            </template>
           </tbody>
         </table>
       </div>
@@ -658,6 +679,19 @@ onMounted(async () => {
       wide
       @close="importPreview = null"
     >
+      <div class="mb-4 rounded-lg border border-brand-100 bg-brand-50/60 p-3">
+        <label class="label">Название дисциплины</label>
+        <input
+          v-model.trim="importPreview.disciplineName"
+          class="input"
+          placeholder="Например: Охрана труда в профессиональной деятельности"
+        />
+        <p class="mt-1 text-xs text-slate-500">
+          Название определено автоматически. При необходимости исправьте его — под ним будут
+          сгруппированы все темы этого УТП.
+          <span v-if="importPreview.sourceFileName">Файл: {{ importPreview.sourceFileName }}</span>
+        </p>
+      </div>
       <p class="mb-3 text-sm text-slate-500">
         <span v-if="importMode === 'append'" class="font-medium text-slate-600">
           Темы будут добавлены к существующим (сборка из нескольких УТП).

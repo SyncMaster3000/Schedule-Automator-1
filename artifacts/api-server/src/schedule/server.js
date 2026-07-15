@@ -82,9 +82,9 @@ export async function dispatch(channel, payload) {
 }
 
 // Импорт УТП из загруженного .docx (Buffer) — возвращает превью тем.
-export async function importUtpFromBuffer(buffer) {
+export async function importUtpFromBuffer(buffer, options = {}) {
   await ensureReady();
-  return importUtp(buffer);
+  return importUtp(buffer, options);
 }
 
 function safeJsonArray(value) {
@@ -191,7 +191,7 @@ export async function exportDocxBuffer(data) {
   const placeholders = periodIds.map(() => "?").join(",");
   let items = db
     .prepare(
-      `SELECT si.*, tp.utp_number, tp.title AS topic_title, tp.is_section
+      `SELECT si.*, tp.utp_number, tp.title AS topic_title, tp.discipline_name, tp.is_section
        FROM schedule_items si
        LEFT JOIN program_topics tp ON tp.id = si.topic_id
        WHERE si.period_id IN (${placeholders})

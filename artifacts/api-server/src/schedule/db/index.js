@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS program_topics (
   program_id INTEGER NOT NULL,
   utp_number TEXT NOT NULL,
   title TEXT NOT NULL,
+  discipline_name TEXT,
   total_hours REAL NOT NULL DEFAULT 0,
   lecture_hours REAL NOT NULL DEFAULT 0,
   practice_hours REAL NOT NULL DEFAULT 0,
@@ -323,6 +324,9 @@ function addColumnIfMissing(table, column, ddl) {
 }
 
 function runMigrations() {
+  // Название дисциплины/УТП позволяет разделять темы при сборке одной программы
+  // из нескольких учебно-тематических планов.
+  addColumnIfMissing("program_topics", "discipline_name", "discipline_name TEXT");
   addColumnIfMissing("program_topics", "roundtable_hours", "roundtable_hours REAL NOT NULL DEFAULT 0");
   // Один номер темы может иметь несколько сущностей — по одной на каждый вид занятия.
   raw.run("DROP INDEX IF EXISTS ux_topic_program_number");

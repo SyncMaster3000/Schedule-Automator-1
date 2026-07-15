@@ -6,6 +6,7 @@ const props = defineProps({
   item: { type: Object, required: true },
   selected: { type: Boolean, default: false },
   unallocatedTopics: { type: Array, default: () => [] },
+  unallocatedTopicGroups: { type: Array, default: () => [] },
   teachers: { type: Array, default: () => [] },
   rooms: { type: Array, default: () => [] },
   showDrag: { type: Boolean, default: true },
@@ -75,9 +76,15 @@ function conflictTitle(it) {
       <option value="">
         {{ unallocatedTopics.length ? "Из нераспределенных…" : "Нет нераспределенных" }}
       </option>
-      <option v-for="t in unallocatedTopics" :key="t.id" :value="t.id">
-        {{ t.utp_number }}. {{ t.title }}
-      </option>
+      <optgroup
+        v-for="group in unallocatedTopicGroups"
+        :key="group.key"
+        :label="group.name"
+      >
+        <option v-for="t in group.topics" :key="t.id" :value="t.id">
+          {{ t.utp_number }}. {{ t.title }}
+        </option>
+      </optgroup>
     </select>
     <button class="btn-secondary" @click="emit('edit', item)">Вписать занятие</button>
     <button class="btn-ghost text-slate-400" @click="emit('delete-empty', item)">Удалить</button>
@@ -110,6 +117,11 @@ function conflictTitle(it) {
         :class="isSelfStudy(item) ? 'italic text-slate-500' : 'text-slate-800'"
       >
         {{ itemTitle(item) }}
+        <span
+          v-if="item.discipline_name"
+          class="badge ml-1 max-w-64 truncate bg-violet-50 align-middle text-violet-700"
+          :title="item.discipline_name"
+        >{{ item.discipline_name }}</span>
         <span
           v-if="showGroupBadge && item.group_label"
           class="badge ml-1 bg-brand-50 text-brand-700"

@@ -65,7 +65,9 @@ router.post("/import-utp", async (req, res) => {
       res.status(400).json({ ok: false, error: "Файл не загружен" });
       return;
     }
-    const data = await importUtpFromBuffer(req.file.buffer);
+    const data = await importUtpFromBuffer(req.file.buffer, {
+      sourceName: req.file.originalname,
+    });
     res.json({ ok: true, data });
   } catch (err) {
     res.json({ ok: false, error: errMsg(err) });

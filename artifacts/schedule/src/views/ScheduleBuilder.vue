@@ -7,6 +7,10 @@ import { eachDayOfInterval, parseISO, format, getDay } from "date-fns";
 import api from "../api";
 import AppModal from "../components/AppModal.vue";
 import LessonCard from "../components/LessonCard.vue";
+import {
+  enrichTopicsWithDisciplines,
+  groupTopicsByDiscipline,
+} from "../utils/topicDisciplines";
 
 const props = defineProps({
   id: { type: [String, Number], required: true },
@@ -450,14 +454,7 @@ async function load() {
       group_mode: data.period.group_mode || 0,
       separate_lectures: data.period.separate_lectures || 0,
     };
-    [
-      topics.value,
-      groups.value,
-      teachers.value,
-      rooms.value,
-      grids.value,
-      lessonTypes.value,
-    ] = await Promise.all([
+    const [loadedTopics, loadedGroups, loadedTeachers, loadedRooms, loadedGrids, loadedLessonTypes] = await Promise.all([
       api.topics.list(programId.value),
       api.groups.list(periodId.value),
       api.references.teachers(),
@@ -465,6 +462,20 @@ async function load() {
       api.references.grids(),
       api.references.lessonTypes(),
     ]);
+    topics.value = enrichTopicsWithDisciplines(loadedTopics);
+    groups.value = loadedGroups;
+    teachers.value = loadedTeachers;
+    rooms.value = loadedRooms;
+    grids.value = loadedGrids;
+    lessonTypes.value = loadedLessonTypes;
+    const disciplineByTopicId = new Map(
+      topics.value.map((topic) => [Number(topic.id), topic.discipline_name]),
+    );
+    items.value = items.value.map((item) => ({
+      ...item,
+      discipline_name:
+        item.discipline_name || disciplineByTopicId.get(Number(item.topic_id)) || null,
+    }));
   } catch (e) {
     error.value = e.message;
   }
@@ -479,6 +490,10 @@ const unallocatedTopics = computed(() => {
       (t.status === "pending" || t.status === "partial" || Number(t.scheduled_hours) < Number(t.total_hours))
   );
 });
+const topicGroups = computed(() => groupTopicsByDiscipline(topics.value));
+const unallocatedTopicGroups = computed(() =>
+  groupTopicsByDiscipline(unallocatedTopics.value),
+);
 
 // --- Заполнение полной сетки таймслотов ---
 async function fillGrid() {
@@ -1584,6 +1599,7 @@ onUnmounted(() => {
               :item="it"
               :selected="isSelected(it.id)"
               :unallocated-topics="unallocatedTopics"
+              :unallocated-topic-groups="unallocatedTopicGroups"
               :teachers="teachers"
               :rooms="rooms"
               :show-drag="false"
@@ -1607,6 +1623,7 @@ onUnmounted(() => {
                   :item="it"
                   :selected="isSelected(it.id)"
                   :unallocated-topics="unallocatedTopics"
+                  :unallocated-topic-groups="unallocatedTopicGroups"
                   :teachers="teachers"
                   :rooms="rooms"
                   :show-drag="false"
@@ -1686,9 +1703,11 @@ onUnmounted(() => {
             <option value="">
               {{ unallocatedTopics.length ? "Из нераспределенных…" : "Нет нераспределенных" }}
             </option>
-            <option v-for="t in unallocatedTopics" :key="t.id" :value="t.id">
-              {{ t.utp_number }}. {{ t.title }}
-            </option>
+            <optgroup v-for="group in unallocatedTopicGroups" :key="group.key" :label="group.name">
+              <option v-for="t in group.topics" :key="t.id" :value="t.id">
+                {{ t.utp_number }}. {{ t.title }}
+              </option>
+            </optgroup>
           </select>
           <button class="btn-secondary" @click="addOrgEvent(it)" title="Добавить организационное мероприятие">Орг. мероприятие</button>
           <button class="btn-secondary" @click="addSelfStudySlot(it)" title="Заполнить самоподготовкой">Самоподготовка</button>
@@ -1729,6 +1748,11 @@ onUnmounted(() => {
                 title="Занятие изменено после создания"
               ></span>
               {{ itemTitle(it) }}
+              <span
+                v-if="it.discipline_name"
+                class="badge ml-1 max-w-64 truncate bg-violet-50 align-middle text-violet-700"
+                :title="it.discipline_name"
+              >{{ it.discipline_name }}</span>
               <span
                 v-if="itemGroupLabel(it)"
                 class="badge ml-1 bg-brand-50 text-brand-700"
@@ -1786,9 +1810,11 @@ onUnmounted(() => {
           <label class="label">Тема</label>
           <select v-model.number="editing.topic_id" class="input" @change="onTopicChange">
             <option :value="null">— Произвольное занятие —</option>
-            <option v-for="t in topics" :key="t.id" :value="t.id">
-              {{ t.utp_number }}. {{ t.title }}
-            </option>
+            <optgroup v-for="group in topicGroups" :key="group.key" :label="group.name">
+              <option v-for="t in group.topics" :key="t.id" :value="t.id">
+                {{ t.utp_number }}. {{ t.title }}
+              </option>
+            </optgroup>
           </select>
         </div>
         <div>

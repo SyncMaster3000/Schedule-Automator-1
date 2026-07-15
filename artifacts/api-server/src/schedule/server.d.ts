@@ -3,7 +3,13 @@ export function ensureReady(): Promise<void>;
 export function dispatch(channel: string, payload?: unknown): Promise<unknown>;
 export function importUtpFromBuffer(
   buffer: Buffer,
-): Promise<{ topics: unknown[]; rawTableCount: number }>;
+  options?: { sourceName?: string },
+): Promise<{
+  topics: unknown[];
+  rawTableCount: number;
+  disciplineName: string;
+  sourceFileName: string | null;
+}>;
 export function exportDocxBuffer(data: {
   programId?: number;
   versionId?: number;

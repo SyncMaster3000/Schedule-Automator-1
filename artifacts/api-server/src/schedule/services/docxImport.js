@@ -172,7 +172,83 @@ function hasChildTopic(number, nextNumber) {
   return nextNumber.startsWith(`${number}.`);
 }
 
-async function importUtp(input) {
+function cleanDisciplineName(value) {
+  return String(value || "")
+    .replace(/^[«"'\s]+|[»"'\s]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function disciplineFromSourceName(sourceName) {
+  return cleanDisciplineName(
+    String(sourceName || "")
+      .replace(/\.docx$/i, "")
+      .replace(/[_]+/g, " ")
+      .replace(/^[!\s.\d-]+/, "")
+      .replace(/\b(?:утп|учебно[- ]тематический план)\b/gi, " "),
+  );
+}
+
+function isGenericPlanLine(text) {
+  const value = normalize(text);
+  return (
+    !value ||
+    value.length < 4 ||
+    /^(повышения квалификации|переподготовки|продолжительность|форма получения|срок обучения|специальность|квалификация)/.test(value) ||
+    /^(согласовано|утверждаю|учреждение образования)/.test(value) ||
+    /^(№|названия|наименования|количество учебных часов)/i.test(text.trim())
+  );
+}
+
+function disciplineFromDocument(root) {
+  const paragraphs = root
+    .querySelectorAll("h1,h2,h3,p")
+    .map((p) => cellText(p))
+    .filter(Boolean);
+  const headingIndex = paragraphs.findIndex((text) =>
+    /учебно[- ]тематический\s+план/i.test(text),
+  );
+  if (headingIndex < 0) return "";
+
+  const sameLineTail = cleanDisciplineName(
+    paragraphs[headingIndex]
+      .replace(/^.*?учебно[- ]тематический\s+план/iu, "")
+      .replace(/^(?:повышения\s+квалификации|переподготовки)\s*/iu, ""),
+  );
+  if (!isGenericPlanLine(sameLineTail)) return sameLineTail;
+
+  const titleParts = [];
+  for (const text of paragraphs.slice(headingIndex + 1, headingIndex + 10)) {
+    const candidate = cleanDisciplineName(text);
+    if (isGenericPlanLine(candidate)) {
+      if (titleParts.length) break;
+      continue;
+    }
+    titleParts.push(candidate);
+    if (titleParts.length >= 3) break;
+  }
+  return cleanDisciplineName(titleParts.join(" "));
+}
+
+function suggestedDisciplineName(root, topics, sourceName) {
+  // В планах переподготовки строка верхнего уровня (например, 1.3) обычно и
+  // является названием дисциплины. Она надежнее сокращенного имени файла.
+  const numericSections = topics
+    .filter((topic) => topic.is_section && /^\d+(?:\.\d+)+$/.test(topic.utp_number || ""))
+    .map((topic) => ({ topic, depth: topic.utp_number.split(".").length }));
+  if (numericSections.length) {
+    const minDepth = Math.min(...numericSections.map((entry) => entry.depth));
+    const firstTopLevel = numericSections.find((entry) => entry.depth === minDepth);
+    if (firstTopLevel) return cleanDisciplineName(firstTopLevel.topic.title);
+  }
+  return (
+    disciplineFromDocument(root) ||
+    disciplineFromSourceName(sourceName) ||
+    "Без названия дисциплины"
+  );
+}
+
+async function importUtp(input, { sourceName = "" } = {}) {
   const options = Buffer.isBuffer(input) ? { buffer: input } : { path: input };
   const result = await mammoth.convertToHtml(options);
   const root = parse(result.value);
@@ -262,7 +338,12 @@ async function importUtp(input) {
     throw new Error("Не удалось распознать ни одной темы в таблице УТП");
   }
 
-  return { topics, rawTableCount: tables.length };
+  return {
+    topics,
+    rawTableCount: tables.length,
+    disciplineName: suggestedDisciplineName(root, topics, sourceName),
+    sourceFileName: sourceName || null,
+  };
 }
 
 export { importUtp };
