@@ -2,7 +2,6 @@
 // Конструктор расписания: drag-and-drop занятий + контроль накладок в реальном времени
 import { ref, computed, onMounted, onUnmounted } from "vue";
 import { useRouter } from "vue-router";
-import { VueDraggableNext } from "vue-draggable-next";
 import { eachDayOfInterval, parseISO, format, getDay } from "date-fns";
 import api from "../api";
 import AppModal from "../components/AppModal.vue";
@@ -444,22 +443,42 @@ const moveTargetSlots = computed(() =>
   gridCells.value.filter((cell) => cell.date === moveTarget.value.date)
 );
 
+function applyScheduleData(data) {
+  const disciplineByTopicId = new Map(
+    topics.value.map((topic) => [Number(topic.id), topic.discipline_name]),
+  );
+  const nextItems = data.items.map(normalize).map((item) => ({
+    ...item,
+    discipline_name:
+      item.discipline_name || disciplineByTopicId.get(Number(item.topic_id)) || null,
+  }));
+
+  period.value = data.period;
+  dayGrid.value = JSON.parse(data.period.day_grids_json || "{}");
+  settings.value = {
+    work_week: data.period.work_week || "mon-fri",
+    empty_slot_mode: data.period.empty_slot_mode || "empty",
+    group_mode: data.period.group_mode || 0,
+    separate_lectures: data.period.separate_lectures || 0,
+  };
+  items.value = nextItems;
+  const currentIds = new Set(nextItems.map((it) => it.id));
+  selected.value = selected.value.filter((id) => currentIds.has(id));
+}
+
+// После перетаскивания меняются только дата и время занятий. Перечитываем одну
+// авторитетную выборку расписания и обновляем интерфейс за один рендер, не
+// перезагружая справочники и не пересоздавая всю групповую сетку.
+async function refreshSchedule() {
+  const data = await api.schedule.listByPeriod(periodId.value, crossPeriod.value);
+  applyScheduleData(data);
+}
+
 async function load() {
   error.value = "";
   try {
-    const data = await api.schedule.listByPeriod(periodId.value, crossPeriod.value);
-    period.value = data.period;
-    dayGrid.value = JSON.parse(data.period.day_grids_json || "{}");
-    items.value = data.items.map(normalize);
-    const currentIds = new Set(items.value.map((it) => it.id));
-    selected.value = selected.value.filter((id) => currentIds.has(id));
-    settings.value = {
-      work_week: data.period.work_week || "mon-fri",
-      empty_slot_mode: data.period.empty_slot_mode || "empty",
-      group_mode: data.period.group_mode || 0,
-      separate_lectures: data.period.separate_lectures || 0,
-    };
-    const [loadedTopics, loadedGroups, loadedTeachers, loadedRooms, loadedGrids, loadedLessonTypes] = await Promise.all([
+    const [data, loadedTopics, loadedGroups, loadedTeachers, loadedRooms, loadedGrids, loadedLessonTypes] = await Promise.all([
+      api.schedule.listByPeriod(periodId.value, crossPeriod.value),
       api.topics.list(programId.value),
       api.groups.list(periodId.value),
       api.references.teachers(),
@@ -473,14 +492,7 @@ async function load() {
     rooms.value = loadedRooms;
     grids.value = loadedGrids;
     lessonTypes.value = loadedLessonTypes;
-    const disciplineByTopicId = new Map(
-      topics.value.map((topic) => [Number(topic.id), topic.discipline_name]),
-    );
-    items.value = items.value.map((item) => ({
-      ...item,
-      discipline_name:
-        item.discipline_name || disciplineByTopicId.get(Number(item.topic_id)) || null,
-    }));
+    applyScheduleData(data);
   } catch (e) {
     error.value = e.message;
   }
@@ -591,6 +603,7 @@ function auditText(a) {
     topics_appended: "Добавлены темы из УТП",
     project_restored: "Восстановлена сохранённая версия",
     schedule_slot_rows_swapped: "Переставлены временные ряды группового расписания",
+    schedule_items_swapped: "Переставлены занятия",
   };
   let base = map[a.action] || a.action;
   try {
@@ -870,54 +883,176 @@ async function deleteItem() {
 // «Сместить весь ряд» (shift — все занятия сдвигаются по позициям).
 const dragSlots = ref([]);
 const dragOrder = ref([]);
+const flatDragBusy = ref(false);
 const groupDragBusy = ref(false);
-// SortableJS физически переносит DOM-узел раньше, чем сервер завершает обмен.
-// После ответа пересоздаем групповые контейнеры, чтобы в них не оставалась
-// визуальная копия карточки одновременно в исходном и целевом слотах.
-const groupDragEpoch = ref(0);
+const lessonPointerDrag = ref(null);
+const flatDragTargetIndex = ref(-1);
+const groupLessonDragTargetKey = ref("");
 const commonRowDrag = ref(null);
 const commonRowDragTargetKey = ref("");
 const commonRowPointerStart = ref(null);
 
-function groupDragName(groupName) {
-  const group = groups.value.find((candidate) => candidate.name === groupName);
-  return `schedule-group-${group?.id ?? groupName}`;
+function groupIdByName(groupName) {
+  return Number(groups.value.find((candidate) => candidate.name === groupName)?.id || 0);
 }
 
-function itemSlot(it) {
-  return {
-    date: it.date,
-    start_time: it.start_time,
-    end_time: it.end_time,
+function groupDropKey(rowKey, groupId) {
+  return String(rowKey) + "::" + String(groupId);
+}
+
+function stopLessonPointerTracking() {
+  window.removeEventListener("pointermove", onLessonPointerMove);
+  window.removeEventListener("pointerup", onLessonPointerUp);
+  window.removeEventListener("pointercancel", onLessonPointerCancel);
+  window.removeEventListener("blur", onLessonPointerCancel);
+}
+
+function resetLessonPointerDrag() {
+  lessonPointerDrag.value = null;
+  flatDragTargetIndex.value = -1;
+  groupLessonDragTargetKey.value = "";
+}
+
+function startLessonPointerTracking() {
+  window.addEventListener("pointermove", onLessonPointerMove, { passive: false });
+  window.addEventListener("pointerup", onLessonPointerUp);
+  window.addEventListener("pointercancel", onLessonPointerCancel);
+  window.addEventListener("blur", onLessonPointerCancel);
+}
+
+function onFlatLessonPointerDown(evt, item, index) {
+  if (
+    evt.button !== 0 ||
+    evt.isPrimary === false ||
+    item.is_pinned ||
+    flatDragBusy.value ||
+    lessonPointerDrag.value
+  ) return;
+  onDragStart();
+  lessonPointerDrag.value = {
+    kind: "flat",
+    item,
+    oldIndex: index,
+    pointerId: evt.pointerId,
+    startX: evt.clientX,
+    startY: evt.clientY,
+    active: false,
   };
+  startLessonPointerTracking();
+  evt.preventDefault();
 }
 
-async function saveItemInSlot(it, slot) {
-  await api.schedule.saveItem({
-    ...it,
-    date: slot.date,
-    start_time: slot.start_time,
-    end_time: slot.end_time,
-    crossPeriod: crossPeriod.value,
-  });
+function onGroupLessonPointerDown(evt, item, row, group) {
+  const groupId = groupIdByName(group.name);
+  if (
+    evt.button !== 0 ||
+    evt.isPrimary === false ||
+    !groupId ||
+    item.is_pinned ||
+    groupDragBusy.value ||
+    lessonPointerDrag.value ||
+    commonRowDrag.value
+  ) return;
+  lessonPointerDrag.value = {
+    kind: "group",
+    item,
+    groupId,
+    groupName: group.name,
+    sourceKey: groupDropKey(row.key, groupId),
+    pointerId: evt.pointerId,
+    startX: evt.clientX,
+    startY: evt.clientY,
+    active: false,
+  };
+  startLessonPointerTracking();
+  evt.preventDefault();
 }
 
-async function swapItemSlots(first, second, firstSlot, secondSlot) {
-  if (first.is_pinned || second.is_pinned) {
-    throw new Error(
-      "Нельзя переставить закрепленное занятие. Открепите его (📌) и попробуйте снова."
-    );
+function flatDropAtPoint(clientX, clientY) {
+  const element = document
+    .elementFromPoint(clientX, clientY)
+    ?.closest?.("[data-flat-drag-index]");
+  if (!element) return null;
+  const index = Number(element.dataset.flatDragIndex);
+  return Number.isInteger(index) && items.value[index] ? { index } : null;
+}
+
+function groupDropAtPoint(clientX, clientY, source) {
+  const element = document
+    .elementFromPoint(clientX, clientY)
+    ?.closest?.("[data-group-drop-row-key][data-group-drop-group-id]");
+  if (!element) return null;
+  const groupId = Number(element.dataset.groupDropGroupId);
+  if (!groupId || groupId !== source.groupId) return null;
+  const rowKey = element.dataset.groupDropRowKey;
+  const row = groupedRows.value.find((candidate) => candidate.key === rowKey);
+  const group = row?.groups.find((candidate) => candidate.name === source.groupName);
+  if (!row || !group) return null;
+  return { row, group, key: groupDropKey(row.key, groupId) };
+}
+
+function scrollDuringPointerDrag(clientY) {
+  const edge = 70;
+  if (clientY < edge) window.scrollBy(0, -24);
+  else if (clientY > window.innerHeight - edge) window.scrollBy(0, 24);
+}
+
+function onLessonPointerMove(evt) {
+  const drag = lessonPointerDrag.value;
+  if (!drag || (drag.pointerId != null && evt.pointerId !== drag.pointerId)) return;
+  if (!drag.active) {
+    if (Math.hypot(evt.clientX - drag.startX, evt.clientY - drag.startY) < 5) return;
+    drag.active = true;
   }
-  await saveItemInSlot(first, secondSlot);
-  await saveItemInSlot(second, firstSlot);
+  scrollDuringPointerDrag(evt.clientY);
+  if (drag.kind === "flat") {
+    const target = flatDropAtPoint(evt.clientX, evt.clientY);
+    flatDragTargetIndex.value = target && target.index !== drag.oldIndex ? target.index : -1;
+  } else {
+    const target = groupDropAtPoint(evt.clientX, evt.clientY, drag);
+    groupLessonDragTargetKey.value = target && target.key !== drag.sourceKey ? target.key : "";
+  }
+  evt.preventDefault();
 }
 
-// Групповое представление состоит из отдельных drag-and-drop-контейнеров для
-// каждого временного слота. Контейнеры одной группы имеют общее имя, поэтому
-// карточку можно переносить только между слотами этой же группы.
-async function onGroupDragChange(evt, targetRow, targetGroup) {
-  const moved = evt?.added?.element;
-  if (!moved) return;
+async function onLessonPointerUp(evt) {
+  const drag = lessonPointerDrag.value;
+  if (!drag || (drag.pointerId != null && evt.pointerId !== drag.pointerId)) return;
+  const target = drag.kind === "flat"
+    ? flatDropAtPoint(evt.clientX, evt.clientY)
+    : groupDropAtPoint(evt.clientX, evt.clientY, drag);
+  stopLessonPointerTracking();
+  resetLessonPointerDrag();
+
+  if (!drag.active || !target) {
+    if (drag.kind === "flat") {
+      dragSlots.value = [];
+      dragOrder.value = [];
+    }
+    return;
+  }
+  if (drag.kind === "flat" && target.index !== drag.oldIndex) {
+    await onDragEnd({ oldIndex: drag.oldIndex, newIndex: target.index });
+  } else if (drag.kind === "group" && target.key !== drag.sourceKey) {
+    await onGroupLessonDrop(drag.item, target.row, target.group, drag.groupId);
+  }
+}
+
+function onLessonPointerCancel() {
+  const wasFlat = lessonPointerDrag.value?.kind === "flat";
+  stopLessonPointerTracking();
+  resetLessonPointerDrag();
+  if (wasFlat) {
+    dragSlots.value = [];
+    dragOrder.value = [];
+  }
+}
+
+// Карточка остаётся в исходном DOM-слоте на протяжении всего жеста. После
+// отпускания сервер атомарно меняет записи группы, а клиент один раз перечитывает
+// расписание. Поэтому в целевой ячейке не возникает временной второй карточки.
+async function onGroupLessonDrop(moved, targetRow, targetGroup, groupId) {
+  if (!moved || !targetRow || !targetGroup) return;
 
   let failMsg = "";
   groupDragBusy.value = true;
@@ -928,16 +1063,16 @@ async function onGroupDragChange(evt, targetRow, targetGroup) {
       throw new Error("Занятия можно менять местами только внутри одной группы");
     }
 
-    const targetGroupRecord = groups.value.find(
-      (candidate) => candidate.name === targetGroup.name
-    );
-    if (!targetGroupRecord) throw new Error("Учебная группа не найдена");
+    const targetGroupRecord = groups.value.find((candidate) => Number(candidate.id) === groupId);
+    if (!targetGroupRecord || targetGroupRecord.name !== targetGroup.name) {
+      throw new Error("Учебная группа не найдена");
+    }
 
     pushUndo(`перестановка занятий группы ${targetGroup.name}`);
     const result = await api.schedule.swapGroupSlots({
       periodId: periodId.value,
       itemId: moved.id,
-      groupId: targetGroupRecord.id,
+      groupId,
       target: {
         date: targetRow.date,
         start_time: targetRow.start_time,
@@ -953,10 +1088,11 @@ async function onGroupDragChange(evt, targetRow, targetGroup) {
     failMsg = e.message;
   } finally {
     try {
-      await load();
-      groupDragEpoch.value += 1;
-      if (failMsg) error.value = failMsg;
+      await refreshSchedule();
+    } catch (e) {
+      failMsg = failMsg || `Не удалось синхронизировать расписание: ${e.message}`;
     } finally {
+      if (failMsg) error.value = failMsg;
       groupDragBusy.value = false;
     }
   }
@@ -984,6 +1120,7 @@ function stopCommonRowPointerTracking() {
   window.removeEventListener("pointermove", onCommonRowPointerMove);
   window.removeEventListener("pointerup", onCommonRowPointerUp);
   window.removeEventListener("pointercancel", onCommonRowPointerCancel);
+  window.removeEventListener("blur", onCommonRowPointerCancel);
 }
 
 function groupedRowAtPoint(clientX, clientY) {
@@ -999,7 +1136,8 @@ function onCommonRowPointerDown(evt, row) {
     evt.button !== 0 ||
     !row.hasCommonLesson ||
     row.hasPinnedCommonLesson ||
-    groupDragBusy.value
+    groupDragBusy.value ||
+    lessonPointerDrag.value
   ) return;
   commonRowDrag.value = {
     key: row.key,
@@ -1010,6 +1148,7 @@ function onCommonRowPointerDown(evt, row) {
   window.addEventListener("pointermove", onCommonRowPointerMove);
   window.addEventListener("pointerup", onCommonRowPointerUp);
   window.addEventListener("pointercancel", onCommonRowPointerCancel);
+  window.addEventListener("blur", onCommonRowPointerCancel);
   evt.preventDefault();
 }
 
@@ -1018,9 +1157,7 @@ function onCommonRowPointerMove(evt) {
   const start = commonRowPointerStart.value;
   if (!source || !start) return;
   if (Math.hypot(evt.clientX - start.x, evt.clientY - start.y) < 5) return;
-  const edge = 70;
-  if (evt.clientY < edge) window.scrollBy(0, -24);
-  else if (evt.clientY > window.innerHeight - edge) window.scrollBy(0, 24);
+  scrollDuringPointerDrag(evt.clientY);
   const target = groupedRowAtPoint(evt.clientX, evt.clientY);
   commonRowDragTargetKey.value = target && target.key !== source.key ? target.key : "";
   evt.preventDefault();
@@ -1073,9 +1210,11 @@ async function onCommonRowDrop(targetRow) {
     failMsg = e.message;
   } finally {
     try {
-      await load();
-      if (failMsg) error.value = failMsg;
+      await refreshSchedule();
+    } catch (e) {
+      failMsg = failMsg || `Не удалось синхронизировать расписание: ${e.message}`;
     } finally {
+      if (failMsg) error.value = failMsg;
       groupDragBusy.value = false;
     }
   }
@@ -1091,15 +1230,30 @@ function onDragStart() {
   }));
 }
 
+function flatSlotKey(item, index) {
+  return [item.date, item.start_time, item.end_time, index].join("|");
+}
+
 async function onDragEnd(evt) {
+  const oldIndex = evt?.oldIndex;
+  const newIndex = evt?.newIndex;
   const slots = dragSlots.value;
-  if (!slots.length) {
+  if (
+    !slots.length ||
+    oldIndex == null ||
+    newIndex == null ||
+    oldIndex === newIndex ||
+    !dragOrder.value[oldIndex] ||
+    !slots[newIndex]
+  ) {
+    dragSlots.value = [];
     dragOrder.value = [];
     return;
   }
+  flatDragBusy.value = true;
   error.value = "";
-  const dragged = dragOrder.value[evt?.oldIndex];
-  const targetSlot = dragSlots.value[evt?.newIndex];
+  const dragged = dragOrder.value[oldIndex];
+  const targetSlot = dragSlots.value[newIndex];
   const multiSelectionDrag = Boolean(
     dragged && targetSlot && selected.value.length > 1 && selected.value.includes(dragged.id)
   );
@@ -1129,13 +1283,18 @@ async function onDragEnd(evt) {
   } catch (e) {
     failMsg = e.message;
   } finally {
-    // Всегда перечитываем состояние из БД, чтобы восстановить корректный порядок
-    // (в т.ч. при отмене из-за нехватки слотов). Ошибку выставляем после load(),
-    // т.к. load() очищает error в начале.
-    await load();
-    if (failMsg) error.value = failMsg;
-    dragSlots.value = [];
-    dragOrder.value = [];
+    // DOM во время жеста не меняется. После ответа один раз применяем состояние
+    // БД; это также гарантированно возвращает исходный вид при серверном отказе.
+    try {
+      await refreshSchedule();
+    } catch (e) {
+      failMsg = failMsg || `Не удалось синхронизировать расписание: ${e.message}`;
+    } finally {
+      if (failMsg) error.value = failMsg;
+      dragSlots.value = [];
+      dragOrder.value = [];
+      flatDragBusy.value = false;
+    }
   }
 }
 
@@ -1144,12 +1303,20 @@ async function swapItems(evt) {
   const oldIndex = evt?.oldIndex;
   const newIndex = evt?.newIndex;
   const order = dragOrder.value;
-  const slots = dragSlots.value;
   if (oldIndex == null || newIndex == null || oldIndex === newIndex) return;
   const moved = order[oldIndex];
   const target = order[newIndex];
   if (!moved || !target || moved === target) return;
-  await swapItemSlots(moved, target, slots[oldIndex], slots[newIndex]);
+  if (moved.is_pinned || target.is_pinned) {
+    throw new Error(
+      "Нельзя переставить закрепленное занятие. Открепите его (📌) и попробуйте снова."
+    );
+  }
+  await api.schedule.swapItems({
+    periodId: periodId.value,
+    itemId: moved.id,
+    targetItemId: target.id,
+  });
   info.value = "Занятия поменялись местами";
 }
 
@@ -1162,9 +1329,11 @@ async function shiftItems(evt) {
   if (oldIndex == null || newIndex == null || oldIndex === newIndex) return;
 
   const cells = gridCells.value;
-  // items.value уже переставлен draggable. Вставляем пустое окошко (null)
-  // на исходную позицию перетянутого занятия.
-  const ordered = [...items.value];
+  // DOM больше не переставляется библиотекой. Воспроизводим прежнюю семантику
+  // MOVE на снимке и затем вставляем пустое окошко в исходную позицию.
+  const ordered = [...dragOrder.value];
+  const [moved] = ordered.splice(oldIndex, 1);
+  ordered.splice(newIndex, 0, moved);
   ordered.splice(oldIndex, 0, null);
 
   if (ordered.length > cells.length) {
@@ -1179,7 +1348,6 @@ async function shiftItems(evt) {
   if (hasPinned) {
     error.value =
       "Нельзя сместить ряд: среди занятий есть закрепленные. Открепите их и попробуйте снова.";
-    await load();
     return;
   }
 
@@ -1665,7 +1833,8 @@ onMounted(() => {
 });
 onUnmounted(() => {
   window.removeEventListener("keydown", handleUndoKey);
-  stopCommonRowPointerTracking();
+  onLessonPointerCancel();
+  onCommonRowPointerCancel();
 });
 </script>
 
@@ -1710,8 +1879,20 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <div v-if="error" class="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{{ error }}</div>
-    <div v-if="info" class="mb-4 rounded-lg bg-green-50 px-4 py-3 text-sm text-green-700">{{ info }}</div>
+    <!-- Сообщения не участвуют в потоке сетки: первый результат drag-and-drop
+         больше не сдвигает все карточки вниз на высоту появившегося баннера. -->
+    <div
+      v-if="error || info"
+      class="pointer-events-none fixed right-4 top-4 z-[70] flex w-[28rem] max-w-[calc(100vw-2rem)] flex-col gap-2"
+      aria-live="polite"
+    >
+      <div v-if="error" class="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 shadow-lg">
+        {{ error }}
+      </div>
+      <div v-if="info" class="rounded-lg bg-green-50 px-4 py-3 text-sm text-green-700 shadow-lg">
+        {{ info }}
+      </div>
+    </div>
 
     <!-- Индикатор накладок -->
     <div
@@ -1801,7 +1982,7 @@ onUnmounted(() => {
         v-for="(row, ridx) in groupedRows"
         :key="row.key"
         :data-group-row-key="row.key"
-        class="rounded-xl transition"
+        class="rounded-xl transition-[background-color,box-shadow] duration-100"
         :class="commonRowDragTargetKey === row.key ? 'bg-brand-50/60 ring-2 ring-brand-300' : ''"
       >
         <!-- Заголовок дня -->
@@ -1872,19 +2053,16 @@ onUnmounted(() => {
             >
               <div
                 v-for="group in row.groups"
-                :key="`${group.name}-${groupDragEpoch}`"
+                :key="group.name"
                 class="space-y-2"
               >
                 <div class="px-1 text-xs font-semibold text-brand-700">Группа {{ group.name }}</div>
                 <div class="relative">
-                  <VueDraggableNext
-                    :list="group.items"
-                    :group="groupDragName(group.name)"
-                    :disabled="groupDragBusy"
-                    handle=".drag-handle"
-                    ghost-class="opacity-40"
-                    class="min-h-14 space-y-2 rounded-lg"
-                    @change="onGroupDragChange($event, row, group)"
+                  <div
+                    :data-group-drop-row-key="row.key"
+                    :data-group-drop-group-id="groupIdByName(group.name)"
+                    class="min-h-14 space-y-2 rounded-lg transition-[background-color,box-shadow] duration-100"
+                    :class="groupLessonDragTargetKey === groupDropKey(row.key, groupIdByName(group.name)) ? 'bg-brand-50/60 ring-2 ring-brand-300' : ''"
                   >
                     <LessonCard
                       v-for="it in group.items"
@@ -1903,8 +2081,9 @@ onUnmounted(() => {
                       @assign-topic="assignTopic"
                       @toggle-select="toggleSelect"
                       @toggle-pin="togglePin"
+                      @drag-start="onGroupLessonPointerDown($event, it, row, group)"
                     />
-                  </VueDraggableNext>
+                  </div>
                   <div
                     v-if="!group.items.length"
                     class="pointer-events-none absolute inset-0 flex items-center px-1 text-xs italic text-slate-300"
@@ -1920,15 +2099,14 @@ onUnmounted(() => {
     </div>
 
     <!-- Список занятий с drag-and-drop -->
-    <VueDraggableNext
-      v-else
-      v-model="items"
-      handle=".drag-handle"
-      class="space-y-2"
-      @start="onDragStart"
-      @end="onDragEnd"
-    >
-      <div v-for="(it, idx) in items" :key="it.id">
+    <div v-else class="space-y-2">
+      <div
+        v-for="(it, idx) in items"
+        :key="flatSlotKey(it, idx)"
+        :data-flat-drag-index="idx"
+        class="rounded-xl transition-[background-color,box-shadow] duration-100"
+        :class="flatDragTargetIndex === idx ? 'bg-brand-50/60 ring-2 ring-brand-300' : ''"
+      >
         <!-- Заголовок дня -->
         <div
           v-if="idx === 0 || items[idx - 1].date !== it.date"
@@ -1958,9 +2136,12 @@ onUnmounted(() => {
         <!-- Свободное окошко: пустой слот для вписания занятия -->
         <div
           v-if="isEmptyItem(it)"
-          class="card flex flex-wrap items-center gap-3 border-2 border-dashed border-slate-300 bg-slate-50/70 px-4 py-3 transition"
+          class="card flex flex-wrap items-center gap-3 border-2 border-dashed border-slate-300 bg-slate-50/70 px-4 py-3 transition-colors duration-100"
         >
-          <span class="drag-handle cursor-grab select-none text-slate-300">⋮⋮</span>
+          <span
+            class="drag-handle touch-none cursor-grab select-none text-slate-300 active:cursor-grabbing"
+            @pointerdown.stop="onFlatLessonPointerDown($event, it, idx)"
+          >⋮⋮</span>
           <div class="w-24 shrink-0 text-sm">
             <div class="text-slate-400">{{ it.start_time }}–{{ it.end_time }}</div>
           </div>
@@ -1992,7 +2173,7 @@ onUnmounted(() => {
         <!-- Обычное занятие -->
         <div
           v-else
-          class="card flex flex-wrap items-center gap-3 px-4 py-3 transition"
+          class="card flex flex-wrap items-center gap-3 px-4 py-3 transition-colors duration-100"
           :class="{
             'conflict-row border-red-200': it.conflicts && it.conflicts.length,
             'ring-2 ring-brand-300': isSelected(it.id),
@@ -2015,7 +2196,11 @@ onUnmounted(() => {
             <span aria-hidden="true">{{ it.is_pinned ? "🔒" : "📌" }}</span>
             <span class="hidden 2xl:inline">{{ it.is_pinned ? "Закреплено" : "Закрепить" }}</span>
           </button>
-          <span v-if="!it.is_pinned" class="drag-handle cursor-grab select-none text-slate-300">⋮⋮</span>
+          <span
+            v-if="!it.is_pinned"
+            class="drag-handle touch-none cursor-grab select-none text-slate-300 active:cursor-grabbing"
+            @pointerdown.stop="onFlatLessonPointerDown($event, it, idx)"
+          >⋮⋮</span>
           <div class="w-24 shrink-0 text-sm">
             <div class="text-slate-400">{{ it.start_time }}–{{ it.end_time }}</div>
           </div>
@@ -2066,7 +2251,7 @@ onUnmounted(() => {
           <button class="btn-secondary" @click="openEditor(it)">Изменить</button>
         </div>
       </div>
-    </VueDraggableNext>
+    </div>
 
     <AppModal v-if="exportPreview" title="Предпросмотр экспорта Word" @close="exportPreview = false">
       <div class="space-y-3 text-sm text-slate-600">

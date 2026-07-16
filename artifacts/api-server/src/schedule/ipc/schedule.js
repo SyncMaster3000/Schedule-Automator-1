@@ -336,6 +336,84 @@ const handlers = {
     };
   },
 
+  // Обычный список может содержать старые записи с одинаковым временем, поэтому
+  // атомарно меняем только две выбранные карточки по их ID, а не всё содержимое
+  // временных рядов. Это сохраняет точную семантику клиентского режима swap.
+  "schedule:swapItems": (data) => {
+    const db = getDb();
+    const periodId = Number(data?.periodId);
+    const itemId = Number(data?.itemId);
+    const targetItemId = Number(data?.targetItemId);
+    const period = db.prepare("SELECT * FROM periods WHERE id = ?").get(periodId);
+    if (!period) throw new Error("Период не найден");
+    if (period.group_mode) {
+      throw new Error("Отдельные карточки группового расписания переставляются внутри своей группы");
+    }
+    if (!itemId || !targetItemId || itemId === targetItemId) {
+      throw new Error("Не указаны две разные карточки для перестановки");
+    }
+
+    const selectItem = db.prepare("SELECT * FROM schedule_items WHERE id = ? AND period_id = ?");
+    const moved = selectItem.get(itemId, periodId);
+    const targetItem = selectItem.get(targetItemId, periodId);
+    if (!moved || !targetItem) throw new Error("Одно из переставляемых занятий не найдено");
+    if (moved.is_pinned || targetItem.is_pinned) {
+      throw new Error(
+        "Нельзя переставить закрепленное занятие. Открепите его (📌) и попробуйте снова.",
+      );
+    }
+    if (moved.date === targetItem.date && moved.start_time === targetItem.start_time) {
+      return { moved: 0 };
+    }
+
+    const sourceSlot = {
+      date: moved.date,
+      start: moved.start_time,
+      end: moved.end_time,
+    };
+    const targetSlot = {
+      date: targetItem.date,
+      start: targetItem.start_time,
+      end: targetItem.end_time,
+    };
+    const now = new Date().toISOString();
+    const updateItem = db.prepare(
+      `UPDATE schedule_items SET
+         date = ?, start_time = ?, end_time = ?, start_dt = ?, end_dt = ?,
+         is_outside_period = 0, is_modified = 1, modified_at = ?,
+         change_desc = 'Изменено: дата/время'
+       WHERE id = ?`,
+    );
+    const moveToSlot = (item, slot) => {
+      updateItem.run(
+        slot.date,
+        slot.start,
+        slot.end,
+        `${slot.date}T${slot.start}:00`,
+        `${slot.date}T${slot.end}:00`,
+        now,
+        item.id,
+      );
+    };
+
+    const tx = db.transaction(() => {
+      moveToSlot(moved, targetSlot);
+      moveToSlot(targetItem, sourceSlot);
+      for (const item of [moved, targetItem]) {
+        const saved = db.prepare("SELECT * FROM schedule_items WHERE id = ?").get(item.id);
+        rebuildLocksForItem(saved);
+      }
+      audit(period.program_id, periodId, "schedule_items_swapped", {
+        source: sourceSlot,
+        target: targetSlot,
+        movedItemId: moved.id,
+        targetItemId: targetItem.id,
+      });
+    });
+    tx();
+    return { moved: 2 };
+  },
+
   // Перестановка занятий внутри одной группы должна быть атомарной. Клиентский
   // drag-and-drop заранее меняет порядок карточек в памяти, поэтому искать
   // занятие назначения по соседней карточке ненадежно. Сервер сам находит его

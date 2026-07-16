@@ -21,6 +21,7 @@ const emit = defineEmits([
   "assign-topic",
   "toggle-select",
   "toggle-pin",
+  "drag-start",
 ]);
 
 function isSelfStudy(it) {
@@ -69,9 +70,13 @@ function conflictTitle(it) {
   <!-- Свободное окошко: пустой слот для вписания занятия -->
   <div
     v-if="isEmptyItem(item)"
-    class="card flex flex-wrap items-center gap-3 border-2 border-dashed border-slate-300 bg-slate-50/70 px-4 py-3 transition"
+    class="card flex flex-wrap items-center gap-3 border-2 border-dashed border-slate-300 bg-slate-50/70 px-4 py-3 transition-colors duration-100"
   >
-    <span v-if="showDrag" class="drag-handle cursor-grab select-none text-slate-300">⋮⋮</span>
+    <span
+      v-if="showDrag"
+      class="drag-handle touch-none cursor-grab select-none text-slate-300 active:cursor-grabbing"
+      @pointerdown.stop="emit('drag-start', $event)"
+    >⋮⋮</span>
     <div v-if="showTime" class="w-24 shrink-0 text-sm">
       <div class="text-slate-400">{{ item.start_time }}–{{ item.end_time }}</div>
     </div>
@@ -105,7 +110,7 @@ function conflictTitle(it) {
   <!-- Обычное занятие -->
   <div
     v-else
-    class="card flex flex-wrap items-center gap-3 px-4 py-3 transition"
+    class="card flex flex-wrap items-center gap-3 px-4 py-3 transition-colors duration-100"
     :class="{
       'border-red-400 bg-red-50': item.is_outside_period,
       'conflict-row border-red-200': !item.is_outside_period && item.conflicts && item.conflicts.length,
@@ -131,7 +136,11 @@ function conflictTitle(it) {
       <span aria-hidden="true">{{ item.is_pinned ? "🔒" : "📌" }}</span>
       <span class="hidden 2xl:inline">{{ item.is_pinned ? "Закреплено" : "Закрепить" }}</span>
     </button>
-    <span v-if="showDrag && !item.is_pinned" class="drag-handle cursor-grab select-none text-slate-300">⋮⋮</span>
+    <span
+      v-if="showDrag && !item.is_pinned"
+      class="drag-handle touch-none cursor-grab select-none text-slate-300 active:cursor-grabbing"
+      @pointerdown.stop="emit('drag-start', $event)"
+    >⋮⋮</span>
     <div v-if="showTime" class="w-24 shrink-0 text-sm">
       <div class="text-slate-400">{{ item.start_time }}–{{ item.end_time }}</div>
     </div>
