@@ -137,6 +137,8 @@ function blankPeriod() {
     end_date: "",
     groups: "",
     autofill: true,
+    work_week: "mon-fri",
+    empty_slot_mode: "empty",
     group_mode: false,
     separate_lectures: false,
     grid_id: null,
@@ -347,6 +349,10 @@ function openEditPeriod(p) {
     end_date: p.end_date || "",
     groups: "", // groups хранятся отдельно; оставляем пустым при редактировании
     autofill: false,
+    work_week: p.work_week || "mon-fri",
+    empty_slot_mode: p.empty_slot_mode || "empty",
+    group_mode: !!p.group_mode,
+    separate_lectures: !!p.separate_lectures,
     grid_id: null,
     time_grid: timeGrid,
   };
@@ -379,6 +385,8 @@ async function savePeriod() {
         time_grid: periodForm.value.time_grid.length
           ? periodForm.value.time_grid
           : undefined,
+        work_week: periodForm.value.work_week,
+        empty_slot_mode: periodForm.value.empty_slot_mode,
       });
       showPeriod.value = false;
       info.value = "Период обновлен";
@@ -398,6 +406,8 @@ async function savePeriod() {
         start_date: periodForm.value.start_date,
         end_date: periodForm.value.end_date,
         time_grid: periodForm.value.time_grid,
+        work_week: periodForm.value.work_week,
+        empty_slot_mode: periodForm.value.empty_slot_mode,
         groups,
         group_mode: periodForm.value.group_mode && groups.length > 0,
         separate_lectures: periodForm.value.separate_lectures,
@@ -1227,6 +1237,28 @@ onMounted(async () => {
           <div>
             <label class="label">Дата окончания *</label>
             <input v-model="periodForm.end_date" type="date" class="input" />
+          </div>
+        </div>
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div>
+            <label class="label">Учебная неделя</label>
+            <select v-model="periodForm.work_week" class="input">
+              <option value="mon-fri">Понедельник – Пятница</option>
+              <option value="mon-sat">Понедельник – Суббота</option>
+            </select>
+            <p class="mt-1 text-xs text-slate-400">
+              Субботы включаются, если попадают в выбранный диапазон дат.
+            </p>
+          </div>
+          <div>
+            <label class="label">Пустые слоты сетки</label>
+            <select v-model="periodForm.empty_slot_mode" class="input">
+              <option value="empty">Оставлять пустыми</option>
+              <option value="self_study">Помечать «Самоподготовка»</option>
+            </select>
+            <p class="mt-1 text-xs text-slate-400">
+              Применяется при заполнении сетки этого периода.
+            </p>
           </div>
         </div>
         <!-- Только при создании нового периода -->

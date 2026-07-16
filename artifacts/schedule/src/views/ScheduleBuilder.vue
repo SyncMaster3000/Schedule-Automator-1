@@ -60,15 +60,6 @@ function rememberAuthor() {
   localStorage.setItem("schedule_author", author.value || "");
 }
 
-// --- Настройки периода (учебная неделя, режим пустых слотов, группы) ---
-const settingsOpen = ref(false);
-const settings = ref({
-  work_week: "mon-fri",
-  empty_slot_mode: "empty",
-  group_mode: 0,
-  separate_lectures: 0,
-});
-
 // --- Журнал изменений и заметки ---
 const historyOpen = ref(false);
 const auditLog = ref([]);
@@ -485,12 +476,6 @@ function applyScheduleData(data) {
 
   period.value = data.period;
   dayGrid.value = JSON.parse(data.period.day_grids_json || "{}");
-  settings.value = {
-    work_week: data.period.work_week || "mon-fri",
-    empty_slot_mode: data.period.empty_slot_mode || "empty",
-    group_mode: data.period.group_mode || 0,
-    separate_lectures: data.period.separate_lectures || 0,
-  };
   items.value = nextItems;
   const currentIds = new Set(nextItems.map((it) => it.id));
   selected.value = selected.value.filter((id) => currentIds.has(id));
@@ -574,34 +559,6 @@ async function fillGrid() {
     info.value = res.created
       ? `Сетка заполнена: добавлено пустых слотов ${res.created}`
       : "Все слоты сетки уже заняты";
-    await load();
-  } catch (e) {
-    error.value = e.message;
-  }
-}
-
-// --- Настройки периода ---
-function openSettings() {
-  settings.value = {
-    work_week: period.value.work_week || "mon-fri",
-    empty_slot_mode: period.value.empty_slot_mode || "empty",
-    group_mode: period.value.group_mode || 0,
-    separate_lectures: period.value.separate_lectures || 0,
-  };
-  settingsOpen.value = true;
-}
-async function saveSettings() {
-  error.value = "";
-  try {
-    await api.periods.updateSettings({
-      id: periodId.value,
-      work_week: settings.value.work_week,
-      empty_slot_mode: settings.value.empty_slot_mode,
-      group_mode: settings.value.group_mode ? 1 : 0,
-      separate_lectures: settings.value.separate_lectures ? 1 : 0,
-    });
-    settingsOpen.value = false;
-    info.value = "Настройки периода сохранены";
     await load();
   } catch (e) {
     error.value = e.message;
@@ -2162,7 +2119,6 @@ onUnmounted(() => {
           <input type="checkbox" v-model="crossPeriod" @change="load" />
           Сквозная проверка по всем расписаниям
         </label>
-        <button class="btn-secondary" @click="openSettings">Настройки периода</button>
         <button class="btn-secondary" @click="fillGrid">Заполнить сетку</button>
         <button class="btn-secondary" @click="undoLastGridFill">Отменить заполнение сетки</button>
         <button class="btn-secondary" @click="openBulkShift">Сдвинуть вниз…</button>
@@ -2933,44 +2889,6 @@ onUnmounted(() => {
         >
           Применить
         </button>
-      </template>
-    </AppModal>
-
-    <!-- Настройки периода -->
-    <AppModal v-if="settingsOpen" title="Настройки периода" @close="settingsOpen = false">
-      <div class="space-y-4">
-        <div>
-          <label class="label">Учебная неделя</label>
-          <select v-model="settings.work_week" class="input">
-            <option value="mon-fri">Понедельник – Пятница</option>
-            <option value="mon-sat">Понедельник – Суббота</option>
-          </select>
-          <p class="mt-1 text-xs text-slate-400">
-            Влияет на дни в сетке (заполнение и автозаполнение).
-          </p>
-        </div>
-        <div>
-          <label class="label">Пустые слоты сетки</label>
-          <select v-model="settings.empty_slot_mode" class="input">
-            <option value="empty">Оставлять пустыми</option>
-            <option value="self_study">Помечать «Самоподготовка»</option>
-          </select>
-        </div>
-        <label class="flex items-center gap-2 text-sm text-slate-700">
-          <input type="checkbox" v-model="settings.group_mode" />
-          Групповое расписание (две группы A/B в одной сетке)
-        </label>
-        <label
-          v-if="settings.group_mode"
-          class="flex items-center gap-2 text-sm text-slate-700"
-        >
-          <input type="checkbox" v-model="settings.separate_lectures" />
-          Лекции раздельно по группам (иначе общие)
-        </label>
-      </div>
-      <template #footer>
-        <button class="btn-secondary" @click="settingsOpen = false">Отмена</button>
-        <button class="btn-primary" @click="saveSettings">Сохранить</button>
       </template>
     </AppModal>
 
