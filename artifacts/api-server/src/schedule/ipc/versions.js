@@ -105,9 +105,10 @@ function restoreSnapshotToProgram(db, programId, snap) {
   const periodMap = {};
   const insPeriod = db.prepare(
     `INSERT INTO periods
-      (program_id, name, start_date, end_date, time_grid_json, day_grids_json, status, sort_order,
-       work_week, empty_slot_mode, group_mode, separate_lectures)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      (program_id, name, start_date, end_date, time_grid_json, day_grids_json,
+       excluded_dates_json, status, sort_order, work_week, empty_slot_mode,
+       group_mode, separate_lectures)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   for (const p of snap.periods || []) {
     const r = insPeriod.run(
@@ -117,6 +118,7 @@ function restoreSnapshotToProgram(db, programId, snap) {
       p.end_date,
       p.time_grid_json || "[]",
       p.day_grids_json || "{}",
+      p.excluded_dates_json || "[]",
       p.status || "active",
       p.sort_order || 0,
       p.work_week || "mon-fri",

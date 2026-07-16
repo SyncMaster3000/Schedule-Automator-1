@@ -58,6 +58,8 @@ CREATE TABLE IF NOT EXISTS periods (
   end_date TEXT NOT NULL,
   time_grid_json TEXT NOT NULL DEFAULT '[]',
   day_grids_json TEXT NOT NULL DEFAULT '{}',
+  excluded_dates_json TEXT NOT NULL DEFAULT '[]',
+  last_grid_fill_id TEXT,
   status TEXT NOT NULL DEFAULT 'active',
   sort_order INTEGER NOT NULL DEFAULT 0,
   FOREIGN KEY (program_id) REFERENCES programs(id) ON DELETE CASCADE
@@ -118,6 +120,8 @@ CREATE TABLE IF NOT EXISTS schedule_items (
   note TEXT,
   sort_order INTEGER NOT NULL DEFAULT 0,
   is_outside_period INTEGER NOT NULL DEFAULT 0,
+  grid_fill_id TEXT,
+  grid_fill_signature TEXT,
   FOREIGN KEY (period_id) REFERENCES periods(id) ON DELETE CASCADE,
   FOREIGN KEY (program_id) REFERENCES programs(id) ON DELETE CASCADE
 );
@@ -351,6 +355,11 @@ function runMigrations() {
   addColumnIfMissing("periods", "empty_slot_mode", "empty_slot_mode TEXT NOT NULL DEFAULT 'empty'");
   // Выбранная пользователем сетка учебных часов для отдельных дат периода.
   addColumnIfMissing("periods", "day_grids_json", "day_grids_json TEXT NOT NULL DEFAULT '{}'");
+  // Исключенные пользователем даты не должны возвращаться после перезагрузки
+  // или повторного заполнения сетки.
+  addColumnIfMissing("periods", "excluded_dates_json", "excluded_dates_json TEXT NOT NULL DEFAULT '[]'");
+  // Идентификатор последней операции заполнения нужен для безопасной отмены.
+  addColumnIfMissing("periods", "last_grid_fill_id", "last_grid_fill_id TEXT");
   // Групповое расписание на две группы и раздельные лекции.
   addColumnIfMissing("periods", "group_mode", "group_mode INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing("periods", "separate_lectures", "separate_lectures INTEGER NOT NULL DEFAULT 0");
@@ -369,6 +378,10 @@ function runMigrations() {
   addColumnIfMissing("schedule_items", "is_modified", "is_modified INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing("schedule_items", "modified_at", "modified_at TEXT");
   addColumnIfMissing("schedule_items", "change_desc", "change_desc TEXT");
+  // Метка и исходная сигнатура пустого слота, созданного заполнением сетки.
+  // При пользовательском редактировании метка снимается.
+  addColumnIfMissing("schedule_items", "grid_fill_id", "grid_fill_id TEXT");
+  addColumnIfMissing("schedule_items", "grid_fill_signature", "grid_fill_signature TEXT");
   // Даты для печатной формы расписания.
   addColumnIfMissing("programs", "approve_date", "approve_date TEXT");
   addColumnIfMissing("programs", "sign_date", "sign_date TEXT");

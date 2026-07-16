@@ -17,8 +17,10 @@ const props = defineProps({
 });
 const emit = defineEmits([
   "edit",
-  "delete-empty",
   "assign-topic",
+  "add-self-study",
+  "add-org-event",
+  "leave-empty",
   "toggle-select",
   "toggle-pin",
   "drag-start",
@@ -104,8 +106,22 @@ function conflictTitle(it) {
         </option>
       </optgroup>
     </select>
+    <button
+      class="btn-secondary"
+      title="Заполнить самоподготовкой только для этой группы"
+      @click="emit('add-self-study', item)"
+    >Самоподготовка</button>
+    <button
+      class="btn-secondary"
+      title="Добавить организационное мероприятие для этой группы"
+      @click="emit('add-org-event', item)"
+    >Орг. мероприятие</button>
     <button class="btn-secondary" @click="emit('edit', item)">Вписать занятие</button>
-    <button class="btn-ghost text-slate-400" @click="emit('delete-empty', item)">Удалить</button>
+    <button
+      class="btn-ghost text-slate-500"
+      title="Сохранить этот слот пустым; отмена заполнения сетки его не удалит"
+      @click="emit('leave-empty', item)"
+    >Оставить пустым</button>
   </div>
   <!-- Обычное занятие -->
   <div

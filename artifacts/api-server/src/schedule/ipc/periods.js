@@ -31,11 +31,20 @@ function extendEndDateForSaturday(endDate, previousWorkWeek, nextWorkWeek) {
 }
 
 // Сформировать список ячеек (дата × слот) в строгом порядке с учетом учебной недели
-function buildCells(startDate, endDate, timeGrid, workWeek = "mon-fri") {
+function buildCells(
+  startDate,
+  endDate,
+  timeGrid,
+  workWeek = "mon-fri",
+  excludedDates = [],
+) {
+  const excluded = new Set(excludedDates || []);
   const days = eachDayOfInterval({
     start: parseISO(startDate),
     end: parseISO(endDate),
-  }).filter((d) => isWorkDay(d, workWeek));
+  }).filter(
+    (d) => isWorkDay(d, workWeek) && !excluded.has(format(d, "yyyy-MM-dd")),
+  );
   const slots = (timeGrid || []).filter((s) => !s.is_break);
   const cells = [];
   for (const d of days) {
@@ -203,7 +212,8 @@ const handlers = {
       period.start_date,
       period.end_date,
       timeGrid,
-      period.work_week || "mon-fri"
+      period.work_week || "mon-fri",
+      JSON.parse(period.excluded_dates_json || "[]"),
     );
 
     const activeGroups = period.group_mode

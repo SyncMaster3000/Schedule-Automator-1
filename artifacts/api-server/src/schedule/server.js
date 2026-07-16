@@ -40,6 +40,8 @@ const READONLY = new Set([
   "ref:grids:list",
   "lessonTypes:list",
   "schedule:listByPeriod",
+  "schedule:gridFillUndoInfo",
+  "schedule:dayRemovalInfo",
   "conflicts:check",
   "versions:list",
   "versions:get",

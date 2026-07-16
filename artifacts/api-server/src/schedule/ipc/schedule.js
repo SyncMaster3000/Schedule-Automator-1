@@ -2,7 +2,17 @@
 import { getDb, audit } from "../db/index.js";
 import { checkScheduleItem, rebuildLocksForItem } from "../services/conflicts.js";
 import { buildCells, buildExtendedCells } from "./periods.js";
+import { randomUUID } from "node:crypto";
 const HOURS_PER_SLOT = 2;
+
+function safeJsonArray(value) {
+  if (Array.isArray(value)) return value;
+  try {
+    return JSON.parse(value || "[]");
+  } catch {
+    return [];
+  }
+}
 
 // Сформировать фактическую сетку периода с учетом отдельной сетки, назначенной
 // конкретному дню. Раньше операции перемещения использовали только общую сетку
@@ -11,6 +21,7 @@ const HOURS_PER_SLOT = 2;
 function buildConfiguredPeriodCells(db, period, { endDate, includeAllDays = false } = {}) {
   const defaultGrid = JSON.parse(period.time_grid_json || "[]");
   const dayGridIds = JSON.parse(period.day_grids_json || "{}");
+  const excludedDates = new Set(safeJsonArray(period.excluded_dates_json));
   const gridCache = new Map();
   const dateCells = includeAllDays
     ? buildExtendedCells(
@@ -27,6 +38,7 @@ function buildConfiguredPeriodCells(db, period, { endDate, includeAllDays = fals
 
   const cells = [];
   for (const { date } of dateCells) {
+    if (excludedDates.has(date)) continue;
     const gridId = Number(dayGridIds[date] || 0);
     let slots = defaultGrid;
     if (gridId) {
@@ -61,6 +73,18 @@ function isGridPlaceholder(it) {
   );
 }
 
+function gridPlaceholderSignature(it) {
+  return JSON.stringify({
+    date: it.date,
+    start_time: it.start_time,
+    end_time: it.end_time,
+    lesson_type: it.lesson_type || null,
+    custom_title: it.custom_title || null,
+    group_ids: safeJsonArray(it.group_ids).map(Number).sort((a, b) => a - b),
+    group_label: it.group_label || null,
+  });
+}
+
 // Синхронизировать очередь УТП с фактическими занятиями темы в расписании.
 // Удаление одного из нескольких слотов переводит тему в partial, последнего — в pending.
 function refreshTopicProgress(db, topicId) {
@@ -87,6 +111,183 @@ function refreshTopicProgress(db, topicId) {
      SET status = ?, assigned_period_id = ?, scheduled_hours = ?
      WHERE id = ?`
   ).run(status, slotCount ? usage.period_id : null, scheduledHours, topicId);
+}
+
+function fillGridPlaceholders(db, period, { onlyDate = null, fillOperationId = null } = {}) {
+  const periodId = Number(period.id);
+  const cells = buildConfiguredPeriodCells(db, period).filter(
+    (cell) => !onlyDate || cell.date === onlyDate,
+  );
+  const existing = db
+    .prepare("SELECT * FROM schedule_items WHERE period_id = ?")
+    .all(periodId);
+  const existingByCell = new Map();
+  for (const item of existing) {
+    const key = `${item.date} ${item.start_time}`;
+    if (!existingByCell.has(key)) existingByCell.set(key, []);
+    existingByCell.get(key).push(item);
+  }
+
+  const activeGroups = period.group_mode
+    ? db
+        .prepare(
+          "SELECT id, name FROM groups WHERE period_id = ? AND is_active = 1 ORDER BY id",
+        )
+        .all(periodId)
+        .slice(0, 2)
+    : [];
+  const activeGroupIds = activeGroups.map((group) => Number(group.id));
+  const groupIdByName = new Map(
+    activeGroups.map((group) => [String(group.name).trim(), Number(group.id)]),
+  );
+  const itemGroupIds = (item) => {
+    const ids = safeJsonArray(item.group_ids)
+      .map(Number)
+      .filter((id) => activeGroupIds.includes(id));
+    if (ids.length) return [...new Set(ids)];
+    return String(item.group_label || "")
+      .split(";")
+      .map((name) => groupIdByName.get(name.trim()))
+      .filter(Boolean);
+  };
+
+  const selfStudy = period.empty_slot_mode === "self_study";
+  const insert = db.prepare(
+    `INSERT INTO schedule_items
+      (period_id, program_id, topic_id, date, start_time, end_time, start_dt, end_dt,
+       lesson_type, custom_title, teacher_ids, room_id, group_ids, group_label, note,
+       sort_order, grid_fill_id, grid_fill_signature)
+     VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, '[]', NULL, ?, ?, NULL, ?, ?, ?)`,
+  );
+  let order =
+    (db
+      .prepare("SELECT MAX(sort_order) AS m FROM schedule_items WHERE period_id = ?")
+      .get(periodId).m || 0) + 1;
+  let created = 0;
+  let removedLegacy = 0;
+  const deletePlaceholder = db.prepare("DELETE FROM schedule_items WHERE id = ?");
+  const insertPlaceholder = (cell, group = null) => {
+    const groupIds = group ? [Number(group.id)] : [];
+    const groupLabel = group?.name || null;
+    const signature = gridPlaceholderSignature({
+      date: cell.date,
+      start_time: cell.start,
+      end_time: cell.end,
+      lesson_type: selfStudy ? "self_study" : "empty",
+      custom_title: selfStudy ? "Самоподготовка" : null,
+      group_ids: groupIds,
+      group_label: groupLabel,
+    });
+    insert.run(
+      periodId,
+      period.program_id,
+      cell.date,
+      cell.start,
+      cell.end,
+      `${cell.date}T${cell.start}:00`,
+      `${cell.date}T${cell.end}:00`,
+      selfStudy ? "self_study" : "empty",
+      selfStudy ? "Самоподготовка" : null,
+      JSON.stringify(groupIds),
+      groupLabel,
+      order++,
+      fillOperationId,
+      fillOperationId ? signature : null,
+    );
+    created += 1;
+  };
+  const tx = db.transaction(() => {
+    for (const cell of cells) {
+      const key = `${cell.date} ${cell.start}`;
+      const rowItems = existingByCell.get(key) || [];
+      if (!period.group_mode || !activeGroups.length) {
+        if (!rowItems.length) insertPlaceholder(cell);
+        continue;
+      }
+
+      const placeholders = rowItems.filter(isGridPlaceholder);
+      const realItems = rowItems.filter((item) => !isGridPlaceholder(item));
+      const coveredGroups = new Set();
+      let commonOccupied = false;
+      for (const item of realItems) {
+        const ids = itemGroupIds(item);
+        if (ids.length === 0 || ids.length === activeGroups.length) {
+          commonOccupied = true;
+          break;
+        }
+        for (const id of ids) coveredGroups.add(id);
+      }
+
+      const placeholderGroups = new Set();
+      for (const placeholder of placeholders) {
+        const ids = itemGroupIds(placeholder);
+        const groupId = ids.length === 1 ? ids[0] : null;
+        const redundant =
+          commonOccupied ||
+          !groupId ||
+          coveredGroups.has(groupId) ||
+          placeholderGroups.has(groupId);
+        if (redundant) {
+          deletePlaceholder.run(placeholder.id);
+          removedLegacy += 1;
+        } else {
+          placeholderGroups.add(groupId);
+        }
+      }
+
+      if (commonOccupied) continue;
+      for (const group of activeGroups) {
+        const groupId = Number(group.id);
+        if (coveredGroups.has(groupId) || placeholderGroups.has(groupId)) continue;
+        insertPlaceholder(cell, group);
+      }
+    }
+  });
+  tx();
+  return {
+    created,
+    removedLegacy,
+    groupMode: !!period.group_mode,
+    groupCount: activeGroups.length,
+  };
+}
+
+function undoableGridFill(db, periodId) {
+  const period = db.prepare("SELECT * FROM periods WHERE id = ?").get(periodId);
+  if (!period) throw new Error("Период не найден");
+  const fillId = period.last_grid_fill_id || null;
+  if (!fillId) return { period, fillId: null, tracked: [], removable: [] };
+  const tracked = db
+    .prepare("SELECT * FROM schedule_items WHERE period_id = ? AND grid_fill_id = ?")
+    .all(periodId, fillId);
+  const removable = tracked.filter(
+    (item) =>
+      isGridPlaceholder(item) &&
+      item.grid_fill_signature &&
+      item.grid_fill_signature === gridPlaceholderSignature(item),
+  );
+  return { period, fillId, tracked, removable };
+}
+
+function dayRemovalInfo(db, periodId, date) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date || "")) throw new Error("Некорректная дата");
+  const period = db.prepare("SELECT * FROM periods WHERE id = ?").get(periodId);
+  if (!period) throw new Error("Период не найден");
+  const items = db
+    .prepare("SELECT * FROM schedule_items WHERE period_id = ? AND date = ?")
+    .all(periodId, date);
+  const realItems = items.filter((item) => !isGridPlaceholder(item));
+  const excluded = safeJsonArray(period.excluded_dates_json).includes(date);
+  return {
+    period,
+    items,
+    realItems,
+    excluded,
+    totalCount: items.length,
+    realCount: realItems.length,
+    placeholderCount: items.length - realItems.length,
+    pinnedCount: realItems.filter((item) => Number(item.is_pinned) === 1).length,
+  };
 }
 
 
@@ -165,6 +366,7 @@ const handlers = {
           topic_id = ?, date = ?, start_time = ?, end_time = ?, start_dt = ?, end_dt = ?,
           lesson_type = ?, custom_title = ?, teacher_ids = ?, custom_teachers = ?, room_id = ?, group_ids = ?,
           group_label = ?, note = ?, is_outside_period = 0,
+          grid_fill_id = NULL, grid_fill_signature = NULL,
           is_modified = CASE WHEN ? > 0 THEN 1 ELSE is_modified END,
           modified_at = CASE WHEN ? > 0 THEN ? ELSE modified_at END,
           change_desc = CASE WHEN ? > 0 THEN ? ELSE change_desc END
@@ -226,6 +428,26 @@ const handlers = {
     }
 
     const saved = db.prepare("SELECT * FROM schedule_items WHERE id = ?").get(itemId);
+    const savedPeriod = db.prepare("SELECT group_mode FROM periods WHERE id = ?").get(saved.period_id);
+    const savedGroupIds = safeJsonArray(saved.group_ids);
+    if (
+      savedPeriod?.group_mode &&
+      !isGridPlaceholder(saved) &&
+      savedGroupIds.length === 0 &&
+      !saved.group_label
+    ) {
+      const siblingPlaceholders = db
+        .prepare(
+          `SELECT * FROM schedule_items
+           WHERE period_id = ? AND date = ? AND start_time = ? AND id <> ?`,
+        )
+        .all(saved.period_id, saved.date, saved.start_time, saved.id)
+        .filter(isGridPlaceholder);
+      for (const sibling of siblingPlaceholders) {
+        db.prepare("DELETE FROM locks WHERE schedule_item_id = ?").run(sibling.id);
+        db.prepare("DELETE FROM schedule_items WHERE id = ?").run(sibling.id);
+      }
+    }
     rebuildLocksForItem(saved);
     if (previousTopicId && previousTopicId !== saved.topic_id) {
       refreshTopicProgress(db, previousTopicId);
@@ -588,129 +810,154 @@ const handlers = {
     const periodId = typeof payload === "object" ? payload.periodId : payload;
     const period = db.prepare("SELECT * FROM periods WHERE id = ?").get(periodId);
     if (!period) throw new Error("Период не найден");
-
-    const cells = buildConfiguredPeriodCells(db, period);
-
-    const existing = db
-      .prepare("SELECT * FROM schedule_items WHERE period_id = ?")
-      .all(periodId);
-    const existingByCell = new Map();
-    for (const item of existing) {
-      const key = `${item.date} ${item.start_time}`;
-      if (!existingByCell.has(key)) existingByCell.set(key, []);
-      existingByCell.get(key).push(item);
-    }
-
-    const activeGroups = period.group_mode
-      ? db
-          .prepare(
-            "SELECT id, name FROM groups WHERE period_id = ? AND is_active = 1 ORDER BY id",
-          )
-          .all(periodId)
-          .slice(0, 2)
-      : [];
-    const activeGroupIds = activeGroups.map((group) => Number(group.id));
-    const groupIdByName = new Map(
-      activeGroups.map((group) => [String(group.name).trim(), Number(group.id)]),
-    );
-    const itemGroupIds = (item) => {
-      const ids = JSON.parse(item.group_ids || "[]")
-        .map(Number)
-        .filter((id) => activeGroupIds.includes(id));
-      if (ids.length) return [...new Set(ids)];
-      return String(item.group_label || "")
-        .split(";")
-        .map((name) => groupIdByName.get(name.trim()))
-        .filter(Boolean);
-    };
-
-    const selfStudy = period.empty_slot_mode === "self_study";
-    const insert = db.prepare(
-      `INSERT INTO schedule_items
-        (period_id, program_id, topic_id, date, start_time, end_time, start_dt, end_dt,
-         lesson_type, custom_title, teacher_ids, room_id, group_ids, group_label, note, sort_order)
-       VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, '[]', NULL, ?, ?, NULL, ?)`
-    );
-    let order =
-      (db
-        .prepare("SELECT MAX(sort_order) AS m FROM schedule_items WHERE period_id = ?")
-        .get(periodId).m || 0) + 1;
-    let created = 0;
-    let removedLegacy = 0;
-    const deletePlaceholder = db.prepare(
-      "DELETE FROM schedule_items WHERE id = ?",
-    );
-    const insertPlaceholder = (cell, group = null) => {
-      insert.run(
+    const fillOperationId = randomUUID();
+    const result = fillGridPlaceholders(db, period, { fillOperationId });
+    if (result.created > 0) {
+      db.prepare("UPDATE periods SET last_grid_fill_id = ? WHERE id = ?").run(
+        fillOperationId,
         periodId,
-        period.program_id,
-        cell.date,
-        cell.start,
-        cell.end,
-        `${cell.date}T${cell.start}:00`,
-        `${cell.date}T${cell.end}:00`,
-        selfStudy ? "self_study" : "empty",
-        selfStudy ? "Самоподготовка" : null,
-        JSON.stringify(group ? [group.id] : []),
-        group?.name || null,
-        order++,
       );
-      created += 1;
+      audit(period.program_id, periodId, "grid_filled", { count: result.created });
+    }
+    return result;
+  },
+
+  // Предпросмотр и безопасная отмена последнего заполнения сетки. Удаляются
+  // только не измененные с момента заполнения пустые слоты с совпавшей сигнатурой.
+  "schedule:gridFillUndoInfo": ({ periodId }) => {
+    const { fillId, tracked, removable } = undoableGridFill(getDb(), Number(periodId));
+    return {
+      available: !!fillId,
+      removable: removable.length,
+      protected: tracked.length - removable.length,
     };
+  },
+
+  "schedule:undoGridFill": ({ periodId, author = null }) => {
+    const db = getDb();
+    const state = undoableGridFill(db, Number(periodId));
+    if (!state.fillId) return { removed: 0, protected: 0, available: false };
+    const removableIds = state.removable.map((item) => item.id);
     const tx = db.transaction(() => {
-      for (const c of cells) {
-        const key = `${c.date} ${c.start}`;
-        const rowItems = existingByCell.get(key) || [];
-        if (!period.group_mode || !activeGroups.length) {
-          if (!rowItems.length) insertPlaceholder(c);
-          continue;
-        }
-
-        const placeholders = rowItems.filter(isGridPlaceholder);
-        const realItems = rowItems.filter((item) => !isGridPlaceholder(item));
-        const coveredGroups = new Set();
-        let commonOccupied = false;
-        for (const item of realItems) {
-          const ids = itemGroupIds(item);
-          if (ids.length === 0 || ids.length === activeGroups.length) {
-            commonOccupied = true;
-            break;
-          }
-          for (const id of ids) coveredGroups.add(id);
-        }
-
-        const placeholderGroups = new Set();
-        for (const placeholder of placeholders) {
-          const ids = itemGroupIds(placeholder);
-          const groupId = ids.length === 1 ? ids[0] : null;
-          const redundant =
-            commonOccupied ||
-            !groupId ||
-            coveredGroups.has(groupId) ||
-            placeholderGroups.has(groupId);
-          if (redundant) {
-            deletePlaceholder.run(placeholder.id);
-            removedLegacy += 1;
-          } else {
-            placeholderGroups.add(groupId);
-          }
-        }
-
-        if (commonOccupied) continue;
-        for (const group of activeGroups) {
-          const groupId = Number(group.id);
-          if (coveredGroups.has(groupId) || placeholderGroups.has(groupId)) continue;
-          insertPlaceholder(c, group);
-        }
+      if (removableIds.length) {
+        const placeholders = removableIds.map(() => "?").join(",");
+        db.prepare(`DELETE FROM locks WHERE schedule_item_id IN (${placeholders})`).run(
+          ...removableIds,
+        );
+        db.prepare(`DELETE FROM schedule_items WHERE id IN (${placeholders})`).run(
+          ...removableIds,
+        );
       }
+      db.prepare(
+        "UPDATE schedule_items SET grid_fill_id = NULL, grid_fill_signature = NULL WHERE period_id = ? AND grid_fill_id = ?",
+      ).run(Number(periodId), state.fillId);
+      db.prepare(
+        "UPDATE periods SET last_grid_fill_id = NULL WHERE id = ? AND last_grid_fill_id = ?",
+      ).run(Number(periodId), state.fillId);
+      audit(
+        state.period.program_id,
+        Number(periodId),
+        "grid_fill_undone",
+        {
+          removed: removableIds.length,
+          protected: state.tracked.length - removableIds.length,
+        },
+        author,
+      );
     });
     tx();
     return {
-      created,
-      removedLegacy,
-      groupMode: !!period.group_mode,
-      groupCount: activeGroups.length,
+      removed: removableIds.length,
+      protected: state.tracked.length - removableIds.length,
+      available: true,
     };
+  },
+
+  "schedule:dayRemovalInfo": ({ periodId, date }) => {
+    const info = dayRemovalInfo(getDb(), Number(periodId), date);
+    return {
+      excluded: info.excluded,
+      totalCount: info.totalCount,
+      realCount: info.realCount,
+      placeholderCount: info.placeholderCount,
+      pinnedCount: info.pinnedCount,
+    };
+  },
+
+  // Исключить дату из периода и удалить ее текущие строки. Если в дне есть
+  // занятия или мероприятия, прямой API-вызов без явного подтверждения запрещен.
+  "schedule:removeDay": ({ periodId, date, confirmRealItems = false, author = null }) => {
+    const db = getDb();
+    const info = dayRemovalInfo(db, Number(periodId), date);
+    if (info.excluded) return { removed: 0, realRemoved: 0, alreadyExcluded: true };
+    if (info.realCount > 0 && !confirmRealItems) {
+      throw new Error(
+        `В дне есть занятия или мероприятия: ${info.realCount}. Требуется явное подтверждение удаления.`,
+      );
+    }
+    const topicIds = [...new Set(info.items.map((item) => item.topic_id).filter(Boolean))];
+    const excludedDates = [...new Set([
+      ...safeJsonArray(info.period.excluded_dates_json),
+      date,
+    ])].sort();
+    const tx = db.transaction(() => {
+      if (info.items.length) {
+        const ids = info.items.map((item) => item.id);
+        const placeholders = ids.map(() => "?").join(",");
+        db.prepare(`DELETE FROM locks WHERE schedule_item_id IN (${placeholders})`).run(...ids);
+        db.prepare(`DELETE FROM schedule_items WHERE id IN (${placeholders})`).run(...ids);
+      }
+      db.prepare("UPDATE periods SET excluded_dates_json = ? WHERE id = ?").run(
+        JSON.stringify(excludedDates),
+        Number(periodId),
+      );
+      for (const topicId of topicIds) refreshTopicProgress(db, topicId);
+      audit(
+        info.period.program_id,
+        Number(periodId),
+        "schedule_day_removed",
+        { date, removed: info.totalCount, realRemoved: info.realCount },
+        author,
+      );
+    });
+    tx();
+    return {
+      removed: info.totalCount,
+      realRemoved: info.realCount,
+      alreadyExcluded: false,
+    };
+  },
+
+  "schedule:restoreDay": ({ periodId, date, author = null }) => {
+    const db = getDb();
+    const info = dayRemovalInfo(db, Number(periodId), date);
+    if (!info.excluded) return { restored: false, created: 0 };
+    const excludedDates = safeJsonArray(info.period.excluded_dates_json).filter(
+      (excludedDate) => excludedDate !== date,
+    );
+    db.prepare("UPDATE periods SET excluded_dates_json = ? WHERE id = ?").run(
+      JSON.stringify(excludedDates),
+      Number(periodId),
+    );
+    const restoredPeriod = db.prepare("SELECT * FROM periods WHERE id = ?").get(Number(periodId));
+    let result;
+    try {
+      result = fillGridPlaceholders(db, restoredPeriod, { onlyDate: date });
+    } catch (error) {
+      db.prepare("UPDATE periods SET excluded_dates_json = ? WHERE id = ?").run(
+        info.period.excluded_dates_json || "[]",
+        Number(periodId),
+      );
+      throw error;
+    }
+    audit(
+      restoredPeriod.program_id,
+      Number(periodId),
+      "schedule_day_restored",
+      { date, created: result.created },
+      author,
+    );
+    return { restored: true, created: result.created };
   },
 
   // Назначить тему из очереди нераспределенных на занятие (замена содержимого
@@ -724,7 +971,8 @@ const handlers = {
       .get(data.topic_id);
     if (!topic) throw new Error("Тема не найдена");
     db.prepare(
-      `UPDATE schedule_items SET topic_id = ?, lesson_type = ?, custom_title = NULL
+      `UPDATE schedule_items SET topic_id = ?, lesson_type = ?, custom_title = NULL,
+         grid_fill_id = NULL, grid_fill_signature = NULL
        WHERE id = ?`
     ).run(
       data.topic_id,
@@ -759,8 +1007,8 @@ const handlers = {
       : null;
     db.prepare(
       `UPDATE schedule_items SET topic_id = NULL, teacher_ids = '[]', custom_teachers = '[]', room_id = NULL,
-        group_ids = '[]', group_label = NULL, note = NULL,
-        lesson_type = ?, custom_title = ? WHERE id = ?`
+        note = NULL, lesson_type = ?, custom_title = ?, grid_fill_id = NULL,
+        grid_fill_signature = NULL WHERE id = ?`
     ).run(
       selfStudy ? "self_study" : "empty",
       selfStudy ? "Самоподготовка" : null,
@@ -808,7 +1056,8 @@ const handlers = {
         const note = f.note !== undefined ? f.note || null : item.note;
         db.prepare(
           `UPDATE schedule_items SET teacher_ids = ?, room_id = ?, group_label = ?,
-            lesson_type = ?, note = ? WHERE id = ?`
+            lesson_type = ?, note = ?, grid_fill_id = NULL,
+            grid_fill_signature = NULL WHERE id = ?`
         ).run(teacherIds, roomId, groupLabel, lessonType, note, id);
         const saved = db.prepare("SELECT * FROM schedule_items WHERE id = ?").get(id);
         rebuildLocksForItem(saved);
@@ -831,7 +1080,9 @@ const handlers = {
   // Закрепить / открепить занятие. Закрепленные не перемещаются при авто-операциях.
   "schedule:setPin": ({ itemId, pinned }) => {
     getDb()
-      .prepare("UPDATE schedule_items SET is_pinned = ? WHERE id = ?")
+      .prepare(
+        "UPDATE schedule_items SET is_pinned = ?, grid_fill_id = NULL, grid_fill_signature = NULL WHERE id = ?",
+      )
       .run(pinned ? 1 : 0, itemId);
     return { id: itemId, is_pinned: pinned ? 1 : 0 };
   },
@@ -840,7 +1091,9 @@ const handlers = {
   "schedule:bulkSetPin": ({ itemIds, pinned }) => {
     if (!itemIds || !itemIds.length) return { updated: 0 };
     const db = getDb();
-    const stmt = db.prepare("UPDATE schedule_items SET is_pinned = ? WHERE id = ?");
+    const stmt = db.prepare(
+      "UPDATE schedule_items SET is_pinned = ?, grid_fill_id = NULL, grid_fill_signature = NULL WHERE id = ?",
+    );
     const tx = db.transaction(() => {
       for (const id of itemIds) stmt.run(pinned ? 1 : 0, id);
     });

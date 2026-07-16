@@ -179,8 +179,7 @@ function deleteTopics(db, programId, requestedIds) {
         `UPDATE schedule_items SET
            topic_id = NULL,
            teacher_ids = '[]', custom_teachers = '[]', room_id = NULL,
-           group_ids = '[]', group_label = NULL, note = NULL,
-           lesson_type = CASE
+           note = NULL, lesson_type = CASE
              WHEN (SELECT empty_slot_mode FROM periods WHERE id = schedule_items.period_id) = 'self_study'
                THEN 'self_study'
              ELSE 'empty'

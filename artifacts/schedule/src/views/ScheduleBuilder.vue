@@ -90,6 +90,10 @@ const ARCHIVE_SECTIONS = [
 // Сетки учебных часов (для выбора другой сетки на отдельный день)
 const grids = ref([]);
 const dayGrid = ref({}); // выбранная сетка по дате: { 'yyyy-mm-dd': gridId }
+const excludedDates = computed(() =>
+  safeJsonArray(period.value?.excluded_dates_json).slice().sort(),
+);
+const excludedDateSet = computed(() => new Set(excludedDates.value));
 
 // Поведение при перетаскивании: поменять местами два занятия или сместить весь ряд
 const dragMode = ref("swap"); // 'swap' | 'shift'
@@ -453,7 +457,10 @@ const gridCells = computed(() => {
   const days = eachDayOfInterval({
     start: parseISO(period.value.start_date),
     end: parseISO(period.value.end_date),
-  }).filter(isWorkDay);
+  }).filter(
+    (day) =>
+      isWorkDay(day) && !excludedDateSet.value.has(format(day, "yyyy-MM-dd")),
+  );
   const cells = [];
   for (const d of days) {
     const date = format(d, "yyyy-MM-dd");
@@ -561,7 +568,6 @@ const unallocatedTopicGroups = computed(() =>
 
 // --- Заполнение полной сетки таймслотов ---
 async function fillGrid() {
-  pushUndo("заполнение сетки");
   error.value = "";
   try {
     const res = await api.schedule.fillGrid(periodId.value);
@@ -627,6 +633,10 @@ function auditText(a) {
     project_restored: "Восстановлена сохранённая версия",
     schedule_slot_rows_swapped: "Переставлены временные ряды группового расписания",
     schedule_items_swapped: "Переставлены занятия",
+    grid_filled: "Заполнена сетка",
+    grid_fill_undone: "Отменено заполнение сетки",
+    schedule_day_removed: "Удален день из сетки",
+    schedule_day_restored: "Восстановлен день в сетке",
   };
   let base = map[a.action] || a.action;
   try {
@@ -722,6 +732,16 @@ function normalize(it) {
 function openEditor(it) {
   teacherFilter.value = "";
   editing.value = JSON.parse(JSON.stringify(it));
+  const assignedNames = itemGroupNames(it);
+  let assignedGroupIds = safeJsonArray(editing.value.group_ids).map(Number);
+  if (!assignedGroupIds.length && assignedNames.length) {
+    assignedGroupIds = groups.value
+      .filter((group) => assignedNames.includes(group.name))
+      .map((group) => Number(group.id));
+  }
+  editing.value.group_ids = assignedGroupIds;
+  editing.value.common_for_all_groups =
+    !!period.value?.group_mode && assignedGroupIds.length === 0;
   if (editing.value.topic_id && !editing.value.lesson_type) {
     const topic = topics.value.find(
       (candidate) => Number(candidate.id) === Number(editing.value.topic_id),
@@ -780,8 +800,9 @@ function addOrgEvent(it) {
     teacher_ids: [],
     room_id: null,
     custom_teachers: [],
-    group_ids: [],
-    group_label: "",
+    group_ids: safeJsonArray(it.group_ids).map(Number),
+    group_label: it.group_label || "",
+    common_for_all_groups: itemGroupNames(it).length === 0,
     note: "",
   };
   editConflicts.value = [];
@@ -832,6 +853,7 @@ function newItem() {
     custom_teachers: [],
     group_ids: [],
     group_label: "",
+    common_for_all_groups: !!period.value?.group_mode,
     note: "",
   };
   editConflicts.value = [];
@@ -860,13 +882,25 @@ async function recheck() {
 }
 
 async function saveItem() {
+  const commonForAllGroups =
+    !!period.value?.group_mode && !!editing.value.common_for_all_groups;
+  const groupIds = commonForAllGroups
+    ? []
+    : safeJsonArray(editing.value.group_ids).map((id) => Number(id));
+  if (period.value?.group_mode && !commonForAllGroups && !groupIds.length) {
+    error.value = "Выберите группу или явно отметьте занятие общим для всех групп";
+    return;
+  }
   pushUndo("редактирование занятия");
   try {
-    const groupIds = safeJsonArray(editing.value.group_ids).map((id) => Number(id));
     await api.schedule.saveItem({
       ...editing.value,
       group_ids: groupIds,
-      group_label: groupIds.length ? groupLabelForIds(groupIds) : editing.value.group_label,
+      group_label: groupIds.length
+        ? groupLabelForIds(groupIds)
+        : commonForAllGroups
+          ? null
+          : editing.value.group_label,
       custom_teachers: parseCustomTeachers(customTeacherText.value),
       crossPeriod: crossPeriod.value,
     });
@@ -989,6 +1023,109 @@ async function waitForDragVisual(drag) {
   const remaining = MIN_DRAG_VISUAL_MS - elapsed;
   if (remaining > 0) {
     await new Promise((resolve) => window.setTimeout(resolve, remaining));
+  }
+}
+
+function toggleCommonForAllGroups() {
+  if (!editing.value?.common_for_all_groups) return;
+  editing.value.group_ids = [];
+  editing.value.group_label = "";
+}
+
+async function leaveEmptySlot(it) {
+  error.value = "";
+  try {
+    await api.schedule.saveItem({
+      ...it,
+      topic_id: null,
+      custom_title: null,
+      lesson_type: "empty",
+      teacher_ids: [],
+      custom_teachers: [],
+      room_id: null,
+      group_ids: safeJsonArray(it.group_ids).map(Number),
+      group_label: it.group_label || null,
+      note: null,
+    });
+    info.value = "Слот оставлен пустым и не будет удален отменой заполнения сетки";
+    await load();
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
+async function undoLastGridFill() {
+  error.value = "";
+  try {
+    const preview = await api.schedule.gridFillUndoInfo(periodId.value);
+    if (!preview.available) {
+      info.value = "Нет заполнения сетки, которое можно отменить";
+      return;
+    }
+    const protectedText = preview.protected
+      ? ` Измененных или уже заполненных слотов будет сохранено: ${preview.protected}.`
+      : "";
+    if (
+      !confirm(
+        `Отменить последнее заполнение сетки? Будет удалено пустых слотов: ${preview.removable}.${protectedText}`,
+      )
+    ) return;
+    const result = await api.schedule.undoGridFill({
+      periodId: periodId.value,
+      author: author.value || null,
+    });
+    info.value = `Отмена заполнения завершена: удалено пустых слотов ${result.removed}` +
+      (result.protected ? `; сохранено измененных ${result.protected}` : "");
+    await load();
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
+async function removeDay(date) {
+  error.value = "";
+  try {
+    const preview = await api.schedule.dayRemovalInfo({
+      periodId: periodId.value,
+      date,
+    });
+    const message = preview.realCount
+      ? `В дне ${formatDayHeader(date)} есть занятия или мероприятия: ${preview.realCount}. Они будут удалены, а темы занятий вернутся в очередь УТП. Восстановление даты создаст пустую сетку, но не восстановит удаленные занятия. Продолжить?`
+      : `Удалить ${formatDayHeader(date)} из сетки? Пустых слотов будет удалено: ${preview.placeholderCount}. Дату можно будет восстановить.`;
+    if (!confirm(message)) return;
+    const result = await api.schedule.removeDay({
+      periodId: periodId.value,
+      date,
+      confirmRealItems: preview.realCount > 0,
+      author: author.value || null,
+    });
+    undoStack.value = [];
+    redoStack.value = [];
+    info.value = result.realRemoved
+      ? `День удален. Удалено занятий и мероприятий: ${result.realRemoved}`
+      : "День удален из сетки";
+    await load();
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
+async function restoreDay(date) {
+  error.value = "";
+  try {
+    const result = await api.schedule.restoreDay({
+      periodId: periodId.value,
+      date,
+      author: author.value || null,
+    });
+    undoStack.value = [];
+    redoStack.value = [];
+    info.value = result.created
+      ? `День восстановлен: добавлено пустых слотов ${result.created}`
+      : "День восстановлен в сетке";
+    await load();
+  } catch (e) {
+    error.value = e.message;
   }
 }
 
@@ -2027,6 +2164,7 @@ onUnmounted(() => {
         </label>
         <button class="btn-secondary" @click="openSettings">Настройки периода</button>
         <button class="btn-secondary" @click="fillGrid">Заполнить сетку</button>
+        <button class="btn-secondary" @click="undoLastGridFill">Отменить заполнение сетки</button>
         <button class="btn-secondary" @click="openBulkShift">Сдвинуть вниз…</button>
         <button
           class="btn-secondary"
@@ -2082,6 +2220,23 @@ onUnmounted(() => {
         </div>
       </div>
     </Teleport>
+
+    <div
+      v-if="excludedDates.length"
+      class="mb-5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"
+    >
+      <div class="mb-2 font-semibold">Удаленные из сетки дни</div>
+      <div class="flex flex-wrap gap-2">
+        <button
+          v-for="date in excludedDates"
+          :key="date"
+          class="btn-secondary"
+          @click="restoreDay(date)"
+        >
+          Восстановить {{ formatDayHeader(date) }}
+        </button>
+      </div>
+    </div>
 
     <!-- Индикатор накладок -->
     <div
@@ -2197,6 +2352,11 @@ onUnmounted(() => {
             <option value="" disabled>Сетка дня…</option>
             <option v-for="g in grids" :key="g.id" :value="g.id">{{ g.name }}</option>
           </select>
+          <button
+            class="btn-ghost text-xs font-normal text-red-600"
+            title="Удалить этот день и сохранить дату в исключениях периода"
+            @click="removeDay(row.date)"
+          >Удалить день из сетки</button>
           <span class="h-px flex-1 bg-brand-100"></span>
         </div>
         <!-- Ряд одного таймслота -->
@@ -2235,8 +2395,10 @@ onUnmounted(() => {
               :show-drag="false"
               :show-time="false"
               @edit="openEditor"
-              @delete-empty="deleteEmpty"
               @assign-topic="assignTopic"
+              @add-self-study="addSelfStudySlot"
+              @add-org-event="addOrgEvent"
+              @leave-empty="leaveEmptySlot"
               @toggle-select="toggleSelect"
               @toggle-pin="togglePin"
             />
@@ -2272,8 +2434,10 @@ onUnmounted(() => {
                       :show-group-badge="false"
                       :class="isLessonDragSource(it) ? 'pointer-events-none invisible' : ''"
                       @edit="openEditor"
-                      @delete-empty="deleteEmpty"
                       @assign-topic="assignTopic"
+                      @add-self-study="addSelfStudySlot"
+                      @add-org-event="addOrgEvent"
+                      @leave-empty="leaveEmptySlot"
                       @toggle-select="toggleSelect"
                       @toggle-pin="togglePin"
                       @drag-start="onGroupLessonPointerDown($event, it, row, group)"
@@ -2325,6 +2489,11 @@ onUnmounted(() => {
             <option value="" disabled>Сетка дня…</option>
             <option v-for="g in grids" :key="g.id" :value="g.id">{{ g.name }}</option>
           </select>
+          <button
+            class="btn-ghost text-xs font-normal text-red-600"
+            title="Удалить этот день и сохранить дату в исключениях периода"
+            @click="removeDay(it.date)"
+          >Удалить день из сетки</button>
           <span class="h-px flex-1 bg-brand-100"></span>
         </div>
         <!-- Свободное окошко: пустой слот для вписания занятия -->
@@ -2363,10 +2532,14 @@ onUnmounted(() => {
               </option>
             </optgroup>
           </select>
-          <button class="btn-secondary" @click="addOrgEvent(it)" title="Добавить организационное мероприятие">Орг. мероприятие</button>
           <button class="btn-secondary" @click="addSelfStudySlot(it)" title="Заполнить самоподготовкой">Самоподготовка</button>
+          <button class="btn-secondary" @click="addOrgEvent(it)" title="Добавить организационное мероприятие">Орг. мероприятие</button>
+          <button
+            class="btn-ghost text-slate-500"
+            title="Сохранить этот слот пустым; отмена заполнения сетки его не удалит"
+            @click="leaveEmptySlot(it)"
+          >Оставить пустым</button>
           <button class="btn-secondary" @click="openEditor(it)">Вписать занятие</button>
-          <button class="btn-ghost text-slate-400" @click="deleteEmpty(it)">Удалить</button>
         </div>
         <!-- Обычное занятие -->
         <div
@@ -2520,6 +2693,7 @@ onUnmounted(() => {
             v-model="editing.group_label"
             type="text"
             class="input"
+            :disabled="editing.common_for_all_groups"
             placeholder="напр. 1, 2, А, Б …"
             list="editor-group-datalist"
           />
@@ -2578,9 +2752,20 @@ onUnmounted(() => {
             Эти фамилии сохраняются только в текущем расписании и не проверяются на накладки.
           </p>
         </div>
-        <div>
-          <label class="label">Группы (пусто = все)</label>
-          <div class="max-h-32 overflow-auto rounded-lg border border-slate-200 p-2">
+        <div v-if="period && period.group_mode">
+          <label class="label">Группы занятия</label>
+          <label class="mb-2 flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              v-model="editing.common_for_all_groups"
+              @change="toggleCommonForAllGroups"
+            />
+            Общее занятие или мероприятие для всех групп
+          </label>
+          <div
+            class="max-h-32 overflow-auto rounded-lg border border-slate-200 p-2"
+            :class="{ 'pointer-events-none opacity-50': editing.common_for_all_groups }"
+          >
             <p v-if="!groups.length" class="text-xs text-slate-400">Группы не заданы</p>
             <label
               v-for="g in groups"
@@ -2595,6 +2780,9 @@ onUnmounted(() => {
               {{ g.name }}
             </label>
           </div>
+          <p class="mt-1 text-xs text-slate-400">
+            Действие из пустого слота сохраняет его группу. Общий режим включается только этой отметкой.
+          </p>
         </div>
       </div>
 
