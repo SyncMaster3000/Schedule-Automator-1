@@ -871,6 +871,10 @@ async function deleteItem() {
 const dragSlots = ref([]);
 const dragOrder = ref([]);
 const groupDragBusy = ref(false);
+// SortableJS физически переносит DOM-узел раньше, чем сервер завершает обмен.
+// После ответа пересоздаем групповые контейнеры, чтобы в них не оставалась
+// визуальная копия карточки одновременно в исходном и целевом слотах.
+const groupDragEpoch = ref(0);
 const commonRowDrag = ref(null);
 const commonRowDragTargetKey = ref("");
 const commonRowPointerStart = ref(null);
@@ -950,6 +954,7 @@ async function onGroupDragChange(evt, targetRow, targetGroup) {
   } finally {
     try {
       await load();
+      groupDragEpoch.value += 1;
       if (failMsg) error.value = failMsg;
     } finally {
       groupDragBusy.value = false;
@@ -1865,7 +1870,11 @@ onUnmounted(() => {
               v-if="row.groups.length && !row.hasCommonLesson"
               class="grid grid-flow-row gap-3 xl:grid-flow-col xl:auto-cols-fr"
             >
-              <div v-for="group in row.groups" :key="group.name" class="space-y-2">
+              <div
+                v-for="group in row.groups"
+                :key="`${group.name}-${groupDragEpoch}`"
+                class="space-y-2"
+              >
                 <div class="px-1 text-xs font-semibold text-brand-700">Группа {{ group.name }}</div>
                 <div class="relative">
                   <VueDraggableNext
