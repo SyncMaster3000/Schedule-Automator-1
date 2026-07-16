@@ -122,12 +122,16 @@ function conflictTitle(it) {
     />
     <button
       v-if="showPin"
-      class="shrink-0 text-base leading-none transition"
-      :class="item.is_pinned ? 'text-brand-500' : 'text-slate-200 hover:text-slate-400'"
+      class="flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-1 text-xs font-semibold leading-none transition"
+      :class="item.is_pinned ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-slate-200 bg-white text-slate-500 hover:border-brand-300 hover:text-brand-600'"
       :title="item.is_pinned ? 'Открепить занятие' : 'Закрепить занятие (не смещать при авто-операциях)'"
+      :aria-pressed="Boolean(item.is_pinned)"
       @click.stop="emit('toggle-pin', item)"
-    >📌</button>
-    <span v-if="showDrag" class="drag-handle cursor-grab select-none text-slate-300">⋮⋮</span>
+    >
+      <span aria-hidden="true">{{ item.is_pinned ? "🔒" : "📌" }}</span>
+      <span class="hidden 2xl:inline">{{ item.is_pinned ? "Закреплено" : "Закрепить" }}</span>
+    </button>
+    <span v-if="showDrag && !item.is_pinned" class="drag-handle cursor-grab select-none text-slate-300">⋮⋮</span>
     <div v-if="showTime" class="w-24 shrink-0 text-sm">
       <div class="text-slate-400">{{ item.start_time }}–{{ item.end_time }}</div>
     </div>

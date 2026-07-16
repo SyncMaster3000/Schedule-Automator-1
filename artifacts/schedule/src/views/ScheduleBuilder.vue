@@ -363,6 +363,7 @@ const groupedRows = computed(() => {
         end_time: it.end_time,
         common: [],
         hasCommonLesson: false,
+        hasPinnedCommonLesson: false,
         groups: [],
         groupMap: new Map(),
       };
@@ -381,7 +382,10 @@ const groupedRows = computed(() => {
       bucket.items.push(it);
     } else {
       row.common.push(it);
-      if (!isEmptyItem(it)) row.hasCommonLesson = true;
+      if (!isEmptyItem(it)) {
+        row.hasCommonLesson = true;
+        if (Number(it.is_pinned) === 1) row.hasPinnedCommonLesson = true;
+      }
     }
   }
   const order = new Map(activeGroups.value.map((group, idx) => [group.name, idx]));
@@ -995,7 +999,12 @@ function groupedRowAtPoint(clientX, clientY) {
 }
 
 function onCommonRowPointerDown(evt, row) {
-  if (evt.button !== 0 || !row.hasCommonLesson || groupDragBusy.value) return;
+  if (
+    evt.button !== 0 ||
+    !row.hasCommonLesson ||
+    row.hasPinnedCommonLesson ||
+    groupDragBusy.value
+  ) return;
   commonRowDrag.value = {
     key: row.key,
     slot: groupedRowSlot(row),
@@ -1222,8 +1231,11 @@ async function shiftItems(evt) {
 async function togglePin(it) {
   const pinned = !it.is_pinned;
   try {
-    await api.schedule.setPin({ itemId: it.id, pinned });
-    it.is_pinned = pinned ? 1 : 0;
+    const result = await api.schedule.setPin({ itemId: it.id, pinned });
+    it.is_pinned = result?.is_pinned ?? (pinned ? 1 : 0);
+    info.value = pinned
+      ? "Занятие закреплено и не будет перемещаться"
+      : "Занятие откреплено; его снова можно перемещать";
   } catch (e) {
     error.value = e.message;
   }
@@ -1831,12 +1843,13 @@ onUnmounted(() => {
             <button
               v-if="row.hasCommonLesson"
               type="button"
-              class="group-row-drag-handle flex w-full touch-none cursor-grab select-none items-center justify-center gap-2 rounded-lg border border-brand-200 bg-brand-50 px-3 py-1.5 text-xs font-semibold text-brand-700 shadow-sm transition hover:border-brand-400 hover:bg-brand-100 active:cursor-grabbing"
-              title="Перетащить общую лекцию на другое время или на место занятий двух групп"
+              :disabled="row.hasPinnedCommonLesson || groupDragBusy"
+              class="group-row-drag-handle flex w-full touch-none cursor-grab select-none items-center justify-center gap-2 rounded-lg border border-brand-200 bg-brand-50 px-3 py-1.5 text-xs font-semibold text-brand-700 shadow-sm transition hover:border-brand-400 hover:bg-brand-100 active:cursor-grabbing disabled:cursor-not-allowed disabled:border-amber-200 disabled:bg-amber-50 disabled:text-amber-700"
+              :title="row.hasPinnedCommonLesson ? 'Общая лекция закреплена. Сначала открепите её кнопкой с замком' : 'Перетащить общую лекцию на другое время или на место занятий двух групп'"
               @pointerdown.stop="onCommonRowPointerDown($event, row)"
             >
-              <span aria-hidden="true">⋮⋮</span>
-              Перетащить общую лекцию
+              <span aria-hidden="true">{{ row.hasPinnedCommonLesson ? "🔒" : "⋮⋮" }}</span>
+              {{ row.hasPinnedCommonLesson ? "Общая лекция закреплена" : "Перетащить общую лекцию" }}
             </button>
             <!-- Общие занятия — на всю ширину -->
             <LessonCard
@@ -1993,12 +2006,16 @@ onUnmounted(() => {
             @change="toggleSelect(it.id)"
           />
           <button
-            class="shrink-0 text-base leading-none transition"
-            :class="it.is_pinned ? 'text-brand-500' : 'text-slate-200 hover:text-slate-400'"
+            class="flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-1 text-xs font-semibold leading-none transition"
+            :class="it.is_pinned ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-slate-200 bg-white text-slate-500 hover:border-brand-300 hover:text-brand-600'"
             :title="it.is_pinned ? 'Открепить занятие' : 'Закрепить занятие (не смещать при авто-операциях)'"
+            :aria-pressed="Boolean(it.is_pinned)"
             @click.stop="togglePin(it)"
-          >📌</button>
-          <span class="drag-handle cursor-grab select-none text-slate-300">⋮⋮</span>
+          >
+            <span aria-hidden="true">{{ it.is_pinned ? "🔒" : "📌" }}</span>
+            <span class="hidden 2xl:inline">{{ it.is_pinned ? "Закреплено" : "Закрепить" }}</span>
+          </button>
+          <span v-if="!it.is_pinned" class="drag-handle cursor-grab select-none text-slate-300">⋮⋮</span>
           <div class="w-24 shrink-0 text-sm">
             <div class="text-slate-400">{{ it.start_time }}–{{ it.end_time }}</div>
           </div>
