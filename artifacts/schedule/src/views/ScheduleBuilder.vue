@@ -30,6 +30,29 @@ const crossPeriod = ref(false);
 const groupFilter = ref("");
 const error = ref("");
 const info = ref("");
+const DRAG_NOTICE_MS = 2500;
+let dragNoticeTimer = null;
+let dragNoticeGeneration = 0;
+
+function clearDragNotice() {
+  dragNoticeGeneration += 1;
+  if (dragNoticeTimer != null) {
+    window.clearTimeout(dragNoticeTimer);
+    dragNoticeTimer = null;
+  }
+  info.value = "";
+}
+
+function showDragNotice(message) {
+  if (dragNoticeTimer != null) window.clearTimeout(dragNoticeTimer);
+  const generation = ++dragNoticeGeneration;
+  info.value = message;
+  dragNoticeTimer = window.setTimeout(() => {
+    if (dragNoticeGeneration !== generation) return;
+    if (info.value === message) info.value = "";
+    dragNoticeTimer = null;
+  }, DRAG_NOTICE_MS);
+}
 
 // Имя автора изменений (для журнала). Сохраняем между сессиями в localStorage.
 const author = ref(localStorage.getItem("schedule_author") || "");
@@ -997,6 +1020,7 @@ function onFlatLessonPointerDown(evt, item, index) {
     flatDragBusy.value ||
     lessonPointerDrag.value
   ) return;
+  clearDragNotice();
   onDragStart();
   lessonPointerDrag.value = {
     kind: "flat",
@@ -1024,6 +1048,7 @@ function onGroupLessonPointerDown(evt, item, row, group) {
     lessonPointerDrag.value ||
     commonRowDrag.value
   ) return;
+  clearDragNotice();
   lessonPointerDrag.value = {
     kind: "group",
     item,
@@ -1178,11 +1203,11 @@ async function onGroupLessonDrop(moved, targetRow, targetGroup, groupId) {
         end_time: targetRow.end_time,
       },
     });
-    if (result.swapped) {
-      info.value = `Занятия группы ${targetGroup.name} поменялись местами`;
-    } else {
-      info.value = `Занятие группы ${targetGroup.name} перемещено`;
-    }
+    showDragNotice(
+      result.swapped
+        ? `Занятия группы ${targetGroup.name} поменялись местами`
+        : `Занятие группы ${targetGroup.name} перемещено`,
+    );
   } catch (e) {
     failMsg = e.message;
   } finally {
@@ -1239,6 +1264,7 @@ function onCommonRowPointerDown(evt, row) {
     groupDragBusy.value ||
     lessonPointerDrag.value
   ) return;
+  clearDragNotice();
   const sourceItems = [
     ...(row.common || []),
     ...(row.groups || []).flatMap((group) => group.items || []),
@@ -1339,9 +1365,11 @@ async function onCommonRowDrop(targetRow) {
       source: source.slot,
       target: target.slot,
     });
-    info.value = target.hasCommonLesson
-      ? "Общие лекции поменялись местами"
-      : `Общая лекция поменялась местами с занятиями групп (${result.targetCount})`;
+    showDragNotice(
+      target.hasCommonLesson
+        ? "Общие лекции поменялись местами"
+        : `Общая лекция поменялась местами с занятиями групп (${result.targetCount})`,
+    );
   } catch (e) {
     failMsg = e.message;
   } finally {
@@ -1455,7 +1483,7 @@ async function swapItems(evt) {
     itemId: moved.id,
     targetItemId: target.id,
   });
-  info.value = "Занятия поменялись местами";
+  showDragNotice("Занятия поменялись местами");
 }
 
 // Сместить весь ряд: на исходную позицию перетянутого занятия вставляется
@@ -1971,6 +1999,8 @@ onMounted(() => {
 });
 onUnmounted(() => {
   window.removeEventListener("keydown", handleUndoKey);
+  dragNoticeGeneration += 1;
+  if (dragNoticeTimer != null) window.clearTimeout(dragNoticeTimer);
   onLessonPointerCancel();
   onCommonRowPointerCancel();
 });
