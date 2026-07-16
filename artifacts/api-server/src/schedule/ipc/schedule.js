@@ -336,6 +336,124 @@ const handlers = {
     };
   },
 
+  // Перестановка занятий внутри одной группы должна быть атомарной. Клиентский
+  // drag-and-drop заранее меняет порядок карточек в памяти, поэтому искать
+  // занятие назначения по соседней карточке ненадежно. Сервер сам находит его
+  // по группе и целевому слоту, а затем переносит одну или две записи в одной
+  // транзакции — промежуточное состояние с двумя занятиями в одном слоте
+  // никогда не сохраняется.
+  "schedule:swapGroupSlots": (data) => {
+    const db = getDb();
+    const periodId = Number(data?.periodId);
+    const itemId = Number(data?.itemId);
+    const groupId = Number(data?.groupId);
+    const target = data?.target || {};
+    const period = db.prepare("SELECT * FROM periods WHERE id = ?").get(periodId);
+    if (!period) throw new Error("Период не найден");
+    if (!period.group_mode) {
+      throw new Error("Перестановка занятий по группам доступна только в групповом расписании");
+    }
+    if (!itemId || !groupId) throw new Error("Не указаны занятие и учебная группа");
+    if (!target.date || !target.start_time || !target.end_time) {
+      throw new Error("Не указан целевой временной слот");
+    }
+
+    const group = db
+      .prepare("SELECT * FROM groups WHERE id = ? AND period_id = ? AND is_active = 1")
+      .get(groupId, periodId);
+    if (!group) throw new Error("Учебная группа не найдена в этом периоде");
+
+    const moved = db
+      .prepare("SELECT * FROM schedule_items WHERE id = ? AND period_id = ?")
+      .get(itemId, periodId);
+    if (!moved) throw new Error("Перемещаемое занятие не найдено");
+    const movedGroupIds = JSON.parse(moved.group_ids || "[]").map(Number);
+    if (movedGroupIds.length !== 1 || movedGroupIds[0] !== groupId) {
+      throw new Error("Занятия можно менять местами только внутри одной группы");
+    }
+    if (moved.is_pinned) {
+      throw new Error("Закрепленное занятие нельзя перетаскивать");
+    }
+    if (moved.date === target.date && moved.start_time === target.start_time) {
+      return { moved: 0, swapped: false, targetItemId: null };
+    }
+
+    const targetItems = db
+      .prepare(
+        `SELECT * FROM schedule_items
+         WHERE period_id = ? AND date = ? AND start_time = ?
+         ORDER BY sort_order`,
+      )
+      .all(periodId, target.date, target.start_time)
+      .filter((item) => {
+        const ids = JSON.parse(item.group_ids || "[]").map(Number);
+        return ids.length === 1 && ids[0] === groupId;
+      });
+    if (targetItems.length > 1) {
+      throw new Error(
+        `В целевом слоте уже несколько занятий группы ${group.name}. Устраните дубли и повторите перенос.`,
+      );
+    }
+    const targetItem = targetItems[0] || null;
+    if (targetItem?.is_pinned) {
+      throw new Error(
+        "Нельзя переставить закрепленное занятие. Открепите его (📌) и попробуйте снова.",
+      );
+    }
+
+    const sourceSlot = {
+      date: moved.date,
+      start: moved.start_time,
+      end: moved.end_time,
+    };
+    const targetSlot = {
+      date: target.date,
+      start: target.start_time,
+      end: target.end_time,
+    };
+    const now = new Date().toISOString();
+    const updateItem = db.prepare(
+      `UPDATE schedule_items SET
+         date = ?, start_time = ?, end_time = ?, start_dt = ?, end_dt = ?,
+         is_outside_period = 0, is_modified = 1, modified_at = ?,
+         change_desc = 'Изменено: дата/время'
+       WHERE id = ?`,
+    );
+    const moveToSlot = (item, slot) => {
+      updateItem.run(
+        slot.date,
+        slot.start,
+        slot.end,
+        `${slot.date}T${slot.start}:00`,
+        `${slot.date}T${slot.end}:00`,
+        now,
+        item.id,
+      );
+    };
+
+    const tx = db.transaction(() => {
+      moveToSlot(moved, targetSlot);
+      if (targetItem) moveToSlot(targetItem, sourceSlot);
+      for (const item of [moved, targetItem].filter(Boolean)) {
+        const saved = db.prepare("SELECT * FROM schedule_items WHERE id = ?").get(item.id);
+        rebuildLocksForItem(saved);
+      }
+      audit(period.program_id, periodId, "schedule_group_slots_swapped", {
+        groupId,
+        source: sourceSlot,
+        target: targetSlot,
+        movedItemId: moved.id,
+        targetItemId: targetItem?.id || null,
+      });
+    });
+    tx();
+    return {
+      moved: targetItem ? 2 : 1,
+      swapped: !!targetItem,
+      targetItemId: targetItem?.id || null,
+    };
+  },
+
   "schedule:deleteItem": (id) => {
     const db = getDb();
     const item = db.prepare("SELECT * FROM schedule_items WHERE id = ?").get(id);

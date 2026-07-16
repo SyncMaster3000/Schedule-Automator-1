@@ -924,34 +924,25 @@ async function onGroupDragChange(evt, targetRow, targetGroup) {
       throw new Error("Занятия можно менять местами только внутри одной группы");
     }
 
-    const movedIndex = targetGroup.items.findIndex(
-      (candidate) => Number(candidate.id) === Number(moved.id)
+    const targetGroupRecord = groups.value.find(
+      (candidate) => candidate.name === targetGroup.name
     );
-    const target =
-      targetGroup.items[movedIndex + 1] ||
-      targetGroup.items[movedIndex - 1] ||
-      null;
-    const sourceSlot = itemSlot(moved);
-    const destinationSlot = {
-      date: targetRow.date,
-      start_time: targetRow.start_time,
-      end_time: targetRow.end_time,
-    };
+    if (!targetGroupRecord) throw new Error("Учебная группа не найдена");
 
-    if (target) {
-      const targetGroups = itemGroupNames(target);
-      if (targetGroups.length !== 1 || targetGroups[0] !== targetGroup.name) {
-        throw new Error("Занятия можно менять местами только внутри одной группы");
-      }
-      pushUndo(`перестановка занятий группы ${targetGroup.name}`);
-      await swapItemSlots(moved, target, sourceSlot, itemSlot(target));
+    pushUndo(`перестановка занятий группы ${targetGroup.name}`);
+    const result = await api.schedule.swapGroupSlots({
+      periodId: periodId.value,
+      itemId: moved.id,
+      groupId: targetGroupRecord.id,
+      target: {
+        date: targetRow.date,
+        start_time: targetRow.start_time,
+        end_time: targetRow.end_time,
+      },
+    });
+    if (result.swapped) {
       info.value = `Занятия группы ${targetGroup.name} поменялись местами`;
     } else {
-      if (moved.is_pinned) {
-        throw new Error("Закрепленное занятие нельзя перетаскивать");
-      }
-      pushUndo(`перемещение занятия группы ${targetGroup.name}`);
-      await saveItemInSlot(moved, destinationSlot);
       info.value = `Занятие группы ${targetGroup.name} перемещено`;
     }
   } catch (e) {
