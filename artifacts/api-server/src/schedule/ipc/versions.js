@@ -1,6 +1,7 @@
 // Сохранённые версии расписаний и архив утверждённых расписаний.
 import { getDb, audit } from "../db/index.js";
 import { rebuildLocksForItem } from "../services/conflicts.js";
+import { normalizeScheduleCategory } from "../categories.js";
 
 const HOURS_PER_SLOT = 2; // должно совпадать с логикой автозаполнения периодов
 
@@ -53,13 +54,18 @@ function restoreSnapshotToProgram(db, programId, snap) {
   db.prepare("DELETE FROM program_topics WHERE program_id = ?").run(programId);
 
   if (snap.program) {
+    const currentProgram = db.prepare("SELECT category FROM programs WHERE id = ?").get(programId);
+    const restoredCategory = Object.prototype.hasOwnProperty.call(snap.program, "category")
+      ? normalizeScheduleCategory(snap.program.category)
+      : currentProgram?.category || null;
     db.prepare(
       `UPDATE programs SET
-         description = ?, approver_name = ?, approver_title = ?, approve_date = ?,
+         description = ?, category = ?, approver_name = ?, approver_title = ?, approve_date = ?,
          signer_name = ?, signer_title = ?, sign_date = ?, status = 'draft', updated_at = ?
        WHERE id = ?`
     ).run(
       snap.program.description || null,
+      restoredCategory,
       snap.program.approver_name || null,
       snap.program.approver_title || null,
       snap.program.approve_date || null,
@@ -201,16 +207,20 @@ function createProgramFromSnapshot(db, version, snap) {
   const now = new Date().toISOString();
   const sourceTitle = snap.program?.title || version.version_label || "Расписание";
   const title = `Копия: ${sourceTitle}`;
+  const category =
+    normalizeScheduleCategory(snap.program?.category) ||
+    normalizeScheduleCategory(version.archive_section);
   const info = db
     .prepare(
       `INSERT INTO programs
-        (title, description, approver_name, approver_title, approve_date,
+        (title, description, category, approver_name, approver_title, approve_date,
          signer_name, signer_title, sign_date, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)`
     )
     .run(
       title,
       snap.program?.description || null,
+      category,
       snap.program?.approver_name || null,
       snap.program?.approver_title || null,
       snap.program?.approve_date || null,
@@ -273,8 +283,21 @@ export default {
     const db = getDb();
     const status = data.status || "draft";
     const createdAt = new Date().toISOString();
-    if ((status === "approved" || status === "archived") && data.archive_section) {
-      db.prepare("UPDATE programs SET status = 'approved', updated_at = ? WHERE id = ?").run(
+    const program = db.prepare("SELECT * FROM programs WHERE id = ?").get(data.programId);
+    if (!program) throw new Error("Программа не найдена");
+
+    let archiveSection = null;
+    if (status === "approved" || status === "archived") {
+      archiveSection =
+        normalizeScheduleCategory(data.archive_section) ||
+        normalizeScheduleCategory(program.category);
+      if (!archiveSection) {
+        throw new Error("Перед утверждением выберите папку расписания");
+      }
+      db.prepare(
+        "UPDATE programs SET status = 'approved', category = ?, updated_at = ? WHERE id = ?"
+      ).run(
+        archiveSection,
         createdAt,
         data.programId
       );
@@ -294,14 +317,14 @@ export default {
         status,
         JSON.stringify(snapshot),
         data.note || null,
-        data.archive_section || null,
+        archiveSection,
         createdAt
       );
     audit(
       data.programId,
       null,
       "version_created",
-      { label: data.version_label, status: data.status, archive_section: data.archive_section || null },
+      { label: data.version_label, status: data.status, archive_section: archiveSection },
       data.author || null
     );
     return { id: info.lastInsertRowid };

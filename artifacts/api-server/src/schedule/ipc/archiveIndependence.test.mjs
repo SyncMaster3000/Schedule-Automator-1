@@ -196,6 +196,8 @@ test("архив переживает миграцию, удаление раб�
       .find((foreignKey) => foreignKey.from === "program_id");
     assert.equal(Number(programIdColumn.notnull), 0);
     assert.equal(programForeignKey.on_delete, "SET NULL");
+    const migratedProgram = db.prepare("SELECT * FROM programs WHERE id = 1").get();
+    assert.equal(migratedProgram.category, null);
 
     const migratedArchive = versions["versions:search"]("Архивный курс");
     assert.equal(migratedArchive.length, 1);
@@ -263,6 +265,7 @@ test("архив переживает миграцию, удаление раб�
         exportedItems: exported.count,
         copyId: copy.id,
         copyTitle: copiedProgram.title,
+        copyCategory: copiedProgram.category,
         remaining: remaining.length,
       }));
     `;
@@ -284,6 +287,7 @@ test("архив переживает миграцию, удаление раб�
     assert.ok(restartedState.exportedBytes > 0);
     assert.equal(restartedState.exportedItems, 1);
     assert.match(restartedState.copyTitle, /^Копия: Архивный курс$/);
+    assert.equal(restartedState.copyCategory, null);
     assert.equal(restartedState.remaining, 0);
 
     const persisted = new SQL.Database(

@@ -8,6 +8,10 @@ import AppModal from "../components/AppModal.vue";
 import LessonCard from "../components/LessonCard.vue";
 import UtpSourceBadge from "../components/UtpSourceBadge.vue";
 import {
+  SCHEDULE_CATEGORIES,
+  isScheduleCategory,
+} from "../scheduleCategories";
+import {
   enrichTopicsWithDisciplines,
   groupTopicsByDiscipline,
 } from "../utils/topicDisciplines";
@@ -74,15 +78,10 @@ const newNote = ref("");
 
 // --- Утверждение с выбором раздела архива ---
 const approveOpen = ref(false);
-const approveSection = ref("Повышение квалификации");
+const approveSection = ref("");
 const approveForm = ref({ approve_date: "", sign_date: "" });
 const exportPreview = ref(false);
 const exportProgram = ref(null);
-const ARCHIVE_SECTIONS = [
-  "Повышение квалификации",
-  "Переподготовка",
-  "Обучающие курсы",
-];
 
 // Сетки учебных часов (для выбора другой сетки на отдельный день)
 const grids = ref([]);
@@ -2110,7 +2109,9 @@ async function approve() {
       approve_date: data.program?.approve_date || todayRu(),
       sign_date: data.program?.sign_date || todayRu(),
     };
-    approveSection.value = ARCHIVE_SECTIONS[0];
+    approveSection.value = isScheduleCategory(data.program?.category)
+      ? data.program.category
+      : "";
     approveOpen.value = true;
   } catch (e) {
     error.value = e.message;
@@ -2122,9 +2123,13 @@ async function doApprove() {
     if (!approveForm.value.approve_date || !approveForm.value.sign_date) {
       throw new Error("Укажите дату утверждения и дату подписания");
     }
+    if (!isScheduleCategory(approveSection.value)) {
+      throw new Error("Выберите папку расписания");
+    }
     await api.programs.update({
       ...exportProgram.value,
       status: "approved",
+      category: approveSection.value,
       approve_date: approveForm.value.approve_date,
       sign_date: approveForm.value.sign_date,
     });
@@ -3002,13 +3007,14 @@ onUnmounted(() => {
       </template>
     </AppModal>
 
-    <!-- Утверждение: выбор раздела архива -->
+    <!-- Утверждение: категория рабочей программы становится разделом архива -->
     <AppModal v-if="approveOpen" title="Утверждение расписания" @close="approveOpen = false">
       <div class="space-y-4">
         <div>
-          <label class="label">Раздел архива</label>
+          <label class="label">Папка расписания и раздел архива</label>
           <select v-model="approveSection" class="input">
-            <option v-for="s in ARCHIVE_SECTIONS" :key="s" :value="s">{{ s }}</option>
+            <option value="" disabled>Выберите папку</option>
+            <option v-for="s in SCHEDULE_CATEGORIES" :key="s" :value="s">{{ s }}</option>
           </select>
         </div>
         <div>

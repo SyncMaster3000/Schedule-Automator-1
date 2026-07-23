@@ -39,7 +39,10 @@ function editableItem(item) {
 
 test("отмена заполнения защищает измененные слоты, а исключенный день переживает перезапуск", async () => {
   try {
-    const program = await dispatch("programs:create", { title: "Проверка сетки" });
+    const program = await dispatch("programs:create", {
+      title: "Проверка сетки",
+      category: "Обучающие курсы",
+    });
     const createdPeriod = await dispatch("periods:create", {
       programId: program.id,
       name: "Тестовый день",

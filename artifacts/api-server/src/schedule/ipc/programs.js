@@ -1,7 +1,16 @@
 // CRUD программ повышения квалификации
 import { getDb, audit } from "../db/index.js";
+import {
+  normalizeScheduleCategory,
+  requireScheduleCategory,
+} from "../categories.js";
 
 const now = () => new Date().toISOString();
+
+function nullableValue(data, key, current) {
+  if (data[key] === undefined) return current[key] ?? null;
+  return data[key] || null;
+}
 
 export default {
   "programs:list": () => {
@@ -33,16 +42,18 @@ export default {
   "programs:create": (data) => {
     const db = getDb();
     const ts = now();
+    const category = requireScheduleCategory(data.category);
     const info = db
       .prepare(
         `INSERT INTO programs
-          (title, description, approver_name, approver_title, approve_date,
+          (title, description, category, approver_name, approver_title, approve_date,
            signer_name, signer_title, sign_date, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)`
       )
       .run(
         data.title,
         data.description || null,
+        category,
         data.approver_name || null,
         data.approver_title || null,
         data.approve_date || null,
@@ -52,27 +63,45 @@ export default {
         ts,
         ts
       );
-    audit(info.lastInsertRowid, null, "program_created", { title: data.title });
+    audit(info.lastInsertRowid, null, "program_created", {
+      title: data.title,
+      category,
+    });
     return { id: info.lastInsertRowid };
   },
 
   "programs:update": (data) => {
     const db = getDb();
+    const current = db.prepare("SELECT * FROM programs WHERE id = ?").get(data.id);
+    if (!current) throw new Error("Программа не найдена");
+
+    let category = current.category || null;
+    if (data.category !== undefined) {
+      if (data.category !== null && String(data.category).trim()) {
+        category = normalizeScheduleCategory(data.category);
+        if (!category) throw new Error("Выбрана неизвестная папка расписания");
+      } else {
+        category = null;
+      }
+    }
+
     db.prepare(
       `UPDATE programs SET
-        title = ?, description = ?, approver_name = ?, approver_title = ?, approve_date = ?,
+        title = ?, description = ?, category = ?,
+        approver_name = ?, approver_title = ?, approve_date = ?,
         signer_name = ?, signer_title = ?, sign_date = ?, status = ?, updated_at = ?
        WHERE id = ?`
     ).run(
-      data.title,
-      data.description || null,
-      data.approver_name || null,
-      data.approver_title || null,
-      data.approve_date || null,
-      data.signer_name || null,
-      data.signer_title || null,
-      data.sign_date || null,
-      data.status || "draft",
+      data.title ?? current.title,
+      nullableValue(data, "description", current),
+      category,
+      nullableValue(data, "approver_name", current),
+      nullableValue(data, "approver_title", current),
+      nullableValue(data, "approve_date", current),
+      nullableValue(data, "signer_name", current),
+      nullableValue(data, "signer_title", current),
+      nullableValue(data, "sign_date", current),
+      data.status ?? current.status,
       now(),
       data.id
     );

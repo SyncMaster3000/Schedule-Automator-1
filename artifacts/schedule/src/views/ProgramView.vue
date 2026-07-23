@@ -5,6 +5,10 @@ import { useRouter } from "vue-router";
 import api from "../api";
 import AppModal from "../components/AppModal.vue";
 import {
+  SCHEDULE_CATEGORIES,
+  isScheduleCategory,
+} from "../scheduleCategories";
+import {
   enrichTopicsWithDisciplines,
   groupTopicsByDiscipline,
 } from "../utils/topicDisciplines";
@@ -138,6 +142,7 @@ const grids = ref([]); // именованные сетки учебных ча�
 // создании черновика; они попадают в шапку и подписи экспорта .docx.
 const showApprove = ref(false);
 const approveForm = ref({ approve_date: "", sign_date: "" });
+const approveCategory = ref("");
 
 function todayRu() {
   return new Date().toLocaleDateString("ru-RU"); // формат ДД.ММ.ГГГГ
@@ -578,19 +583,32 @@ function approve() {
     approve_date: program.value?.approve_date || todayRu(),
     sign_date: program.value?.sign_date || todayRu(),
   };
+  approveCategory.value = isScheduleCategory(program.value?.category)
+    ? program.value.category
+    : "";
   showApprove.value = true;
 }
 
 async function confirmApprove() {
   try {
+    if (!isScheduleCategory(approveCategory.value)) {
+      throw new Error("Выберите папку расписания");
+    }
     await api.programs.update({
       ...program.value,
       status: "approved",
+      category: approveCategory.value,
       approve_date: approveForm.value.approve_date || null,
       sign_date: approveForm.value.sign_date || null,
     });
+    await api.versions.create({
+      programId: programId.value,
+      version_label: `Утверждено ${new Date().toLocaleString("ru-RU")}`,
+      status: "approved",
+      archive_section: approveCategory.value,
+    });
     showApprove.value = false;
-    info.value = "Расписание утверждено";
+    info.value = `Расписание утверждено и сохранено в архив (${approveCategory.value})`;
     await loadAll();
   } catch (e) {
     error.value = e.message;
@@ -640,6 +658,9 @@ onMounted(async () => {
         <h1 class="text-2xl font-bold text-slate-800">{{ program.title }}</h1>
         <p class="text-sm text-slate-500">
           {{ program.description || "Без описания" }}
+        </p>
+        <p class="mt-1 text-xs font-medium text-brand-700">
+          {{ isScheduleCategory(program.category) ? program.category : "Без раздела" }}
         </p>
       </div>
       <div class="flex flex-wrap gap-2">
@@ -1376,6 +1397,19 @@ onMounted(async () => {
           Укажите даты — они попадут в шапку и подписи экспортируемого файла
           .docx.
         </p>
+        <div>
+          <label class="label">Папка расписания и раздел архива</label>
+          <select v-model="approveCategory" class="input">
+            <option value="" disabled>Выберите папку</option>
+            <option
+              v-for="category in SCHEDULE_CATEGORIES"
+              :key="category"
+              :value="category"
+            >
+              {{ category }}
+            </option>
+          </select>
+        </div>
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label class="label">Дата утверждения</label>

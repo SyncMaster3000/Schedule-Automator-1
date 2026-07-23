@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS programs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   title TEXT NOT NULL,
   description TEXT,
+  category TEXT,
   approver_name TEXT,
   approver_title TEXT,
   signer_name TEXT,
@@ -436,6 +437,9 @@ function ensureScheduleVersionIndexes() {
 }
 
 function runMigrations() {
+  // Категория рабочей программы совпадает с папкой, в которой она показана.
+  // Старые записи намеренно остаются без категории и попадают в «Без раздела».
+  addColumnIfMissing("programs", "category", "category TEXT");
   // Название дисциплины/УТП позволяет разделять темы при сборке одной программы
   // из нескольких учебно-тематических планов.
   addColumnIfMissing("program_topics", "discipline_name", "discipline_name TEXT");

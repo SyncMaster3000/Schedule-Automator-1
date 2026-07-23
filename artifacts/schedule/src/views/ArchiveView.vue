@@ -19,9 +19,10 @@ const statusLabel = { draft: "Черновик", approved: "Утверждено
 // Папки (вкладки) по разделу архива. Раздел задается при утверждении расписания;
 // для старых версий без раздела определяется по названию расписания.
 const FOLDERS = [
-  { key: "qualification", label: "Повышение квалификации", section: "Повышение квалификации" },
   { key: "retraining", label: "Переподготовка", section: "Переподготовка" },
+  { key: "qualification", label: "Повышение квалификации", section: "Повышение квалификации" },
   { key: "courses", label: "Обучающие курсы", section: "Обучающие курсы" },
+  { key: "unsectioned", label: "Без раздела", section: null },
 ];
 const activeFolder = ref(FOLDERS[0].key);
 
@@ -37,13 +38,13 @@ function folderOf(v) {
   const t = (v.program_title || "").toLowerCase();
   if (t.includes("переподготов")) return "retraining";
   if (t.includes("повышен")) return "qualification";
-  if (t.includes("краткосрочн")) return "courses";
-  return "courses";
+  if (t.includes("обучающ") || t.includes("краткосрочн")) return "courses";
+  return "unsectioned";
 }
 
 // Количество расписаний в каждой папке (с учетом текущего поиска)
 const folderCounts = computed(() => {
-  const counts = { qualification: 0, retraining: 0, courses: 0 };
+  const counts = Object.fromEntries(FOLDERS.map((folder) => [folder.key, 0]));
   for (const v of versions.value) counts[folderOf(v)] += 1;
   return counts;
 });
@@ -263,7 +264,7 @@ onMounted(search);
               Раздел
             </dt>
             <dd class="mt-1 text-slate-700">
-              {{ details.archive_section || "Определён по названию" }}
+              {{ details.archive_section || "Без раздела" }}
             </dd>
           </div>
           <div>

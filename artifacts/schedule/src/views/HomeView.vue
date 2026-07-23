@@ -4,6 +4,13 @@ import { computed, ref, onMounted, watch } from "vue";
 import { useRouter } from "vue-router";
 import api from "../api";
 import AppModal from "../components/AppModal.vue";
+import {
+  SCHEDULE_CATEGORIES,
+  UNSECTIONED_FOLDER_KEY,
+  isScheduleCategory,
+  scheduleDescriptionTemplate,
+  scheduleFolderKey,
+} from "../scheduleCategories";
 
 const router = useRouter();
 const programs = ref([]);
@@ -14,13 +21,16 @@ const editingId = ref(null); // null = новое, число = редактир
 const form = ref(blankForm());
 const query = ref("");
 const activeFolder = ref("all");
+const statusFilter = ref("all");
+const autoDescription = ref("");
+const descriptionWasEdited = ref(false);
 const PAGE_SIZE = 12;
 const visibleLimit = ref(PAGE_SIZE);
 
 const PROGRAM_FOLDERS = [
   { key: "all", label: "Все расписания" },
-  { key: "draft", label: "Проекты" },
-  { key: "approved", label: "Утверждённые" },
+  ...SCHEDULE_CATEGORIES.map((category) => ({ key: category, label: category })),
+  { key: UNSECTIONED_FOLDER_KEY, label: "Без раздела" },
 ];
 
 // Архивные снимки показываются только в отдельном разделе «Архив расписаний».
@@ -29,18 +39,25 @@ const workingPrograms = computed(() =>
   programs.value.filter((program) => program.status !== "archived"),
 );
 
-const folderCounts = computed(() => ({
-  all: workingPrograms.value.length,
-  draft: workingPrograms.value.filter((program) => program.status === "draft").length,
-  approved: workingPrograms.value.filter((program) => program.status === "approved").length,
-}));
+const folderCounts = computed(() => {
+  const counts = Object.fromEntries(PROGRAM_FOLDERS.map((folder) => [folder.key, 0]));
+  counts.all = workingPrograms.value.length;
+  for (const program of workingPrograms.value) {
+    counts[scheduleFolderKey(program.category)] += 1;
+  }
+  return counts;
+});
 
 const filteredPrograms = computed(() => {
   const needle = query.value.trim().toLowerCase();
   return workingPrograms.value.filter((program) => {
-    if (activeFolder.value !== "all" && program.status !== activeFolder.value) return false;
+    if (
+      activeFolder.value !== "all" &&
+      scheduleFolderKey(program.category) !== activeFolder.value
+    ) return false;
+    if (statusFilter.value !== "all" && program.status !== statusFilter.value) return false;
     if (!needle) return true;
-    return [program.title, program.description]
+    return [program.title, program.description, program.category]
       .filter(Boolean)
       .some((value) => String(value).toLowerCase().includes(needle));
   });
@@ -50,14 +67,15 @@ const visiblePrograms = computed(() =>
   filteredPrograms.value.slice(0, visibleLimit.value),
 );
 
-watch([query, activeFolder], () => {
+watch([query, activeFolder, statusFilter], () => {
   visibleLimit.value = PAGE_SIZE;
 });
 
-function blankForm() {
+function blankForm(category = "") {
   return {
     title: "",
     description: "",
+    category,
     approver_name: "",
     approver_title: "",
     approve_date: "",
@@ -65,6 +83,51 @@ function blankForm() {
     signer_title: "",
     sign_date: "",
   };
+}
+
+function setAutomaticDescription(description) {
+  form.value.description = description;
+  autoDescription.value = description;
+  descriptionWasEdited.value = false;
+}
+
+function markDescriptionEdited() {
+  descriptionWasEdited.value = true;
+}
+
+function handleCategoryChange() {
+  const template = scheduleDescriptionTemplate(form.value.category);
+  if (!template) return;
+
+  if (!form.value.description.trim()) {
+    setAutomaticDescription(template);
+    return;
+  }
+
+  if (editingId.value) {
+    if (
+      confirm(
+        "Заменить текущее описание шаблоном выбранной папки? Ручной текст будет заменён.",
+      )
+    ) {
+      setAutomaticDescription(template);
+    }
+    return;
+  }
+
+  if (!descriptionWasEdited.value && form.value.description === autoDescription.value) {
+    setAutomaticDescription(template);
+  }
+}
+
+function replaceDescriptionWithTemplate() {
+  const template = scheduleDescriptionTemplate(form.value.category);
+  if (!template) return;
+  if (
+    form.value.description.trim() &&
+    !confirm("Заменить текущее описание шаблоном выбранной папки?")
+  ) return;
+  setAutomaticDescription(template);
 }
 
 async function load() {
@@ -84,7 +147,13 @@ async function load() {
 function openCreate() {
   editingId.value = null;
   const prev = programs.value[0];
-  form.value = blankForm();
+  const category = isScheduleCategory(activeFolder.value) ? activeFolder.value : "";
+  form.value = blankForm(category);
+  autoDescription.value = "";
+  descriptionWasEdited.value = false;
+  if (category) {
+    setAutomaticDescription(scheduleDescriptionTemplate(category));
+  }
   if (prev) {
     form.value.approver_name = prev.approver_name || "";
     form.value.approver_title = prev.approver_title || "";
@@ -99,6 +168,7 @@ function openEdit(p) {
   form.value = {
     title: p.title || "",
     description: p.description || "",
+    category: isScheduleCategory(p.category) ? p.category : "",
     approver_name: p.approver_name || "",
     approver_title: p.approver_title || "",
     approve_date: p.approve_date || "",
@@ -106,6 +176,8 @@ function openEdit(p) {
     signer_title: p.signer_title || "",
     sign_date: p.sign_date || "",
   };
+  autoDescription.value = "";
+  descriptionWasEdited.value = true;
   error.value = "";
   showCreate.value = true;
 }
@@ -113,6 +185,10 @@ function openEdit(p) {
 async function save() {
   if (!form.value.title.trim()) {
     error.value = "Укажите название";
+    return;
+  }
+  if (!editingId.value && !isScheduleCategory(form.value.category)) {
+    error.value = "Выберите папку расписания";
     return;
   }
   error.value = "";
@@ -201,6 +277,11 @@ onMounted(load);
               @click="query = ''"
             >✕</button>
           </div>
+          <select v-model="statusFilter" class="input w-full lg:w-48">
+            <option value="all">Все статусы</option>
+            <option value="draft">Проекты</option>
+            <option value="approved">Утверждённые</option>
+          </select>
           <div class="text-sm text-slate-500">
             Найдено: {{ filteredPrograms.length }} из {{ workingPrograms.length }}
           </div>
@@ -243,6 +324,9 @@ onMounted(load);
                 {{ statusLabel[p.status] || p.status }}
               </span>
             </div>
+            <div class="mt-2 text-xs font-medium text-brand-700">
+              {{ isScheduleCategory(p.category) ? p.category : "Без раздела" }}
+            </div>
             <p class="mt-1 line-clamp-2 flex-1 text-sm text-slate-500">
               {{ p.description || "Без описания" }}
             </p>
@@ -280,12 +364,51 @@ onMounted(load);
     >
       <div class="space-y-3">
         <div>
+          <label class="label">Папка расписания *</label>
+          <select
+            v-model="form.category"
+            class="input"
+            @change="handleCategoryChange"
+          >
+            <option value="" disabled>
+              {{ editingId ? "Без раздела — выберите папку для переноса" : "Выберите папку" }}
+            </option>
+            <option
+              v-for="category in SCHEDULE_CATEGORIES"
+              :key="category"
+              :value="category"
+            >
+              {{ category }}
+            </option>
+          </select>
+          <p v-if="editingId && !form.category" class="mt-1 text-xs text-amber-600">
+            Расписание пока находится в папке «Без раздела».
+          </p>
+        </div>
+        <div>
           <label class="label">Название программы *</label>
           <input v-model="form.title" class="input" placeholder="Напр.: Повышение квалификации…" />
         </div>
         <div>
           <label class="label">Описание</label>
-          <textarea v-model="form.description" class="input" rows="2" />
+          <textarea
+            v-model="form.description"
+            class="input"
+            rows="3"
+            @input="markDescriptionEdited"
+          />
+          <div v-if="form.category" class="mt-1 flex items-center justify-between gap-3">
+            <span class="text-xs text-slate-400">
+              Текст можно свободно изменить или удалить.
+            </span>
+            <button
+              type="button"
+              class="text-xs font-medium text-brand-700 hover:text-brand-800"
+              @click="replaceDescriptionWithTemplate"
+            >
+              Подставить шаблон
+            </button>
+          </div>
         </div>
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
