@@ -7,7 +7,9 @@ import path from "node:path";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale";
 
-const TEMPLATES_DIR = path.join(process.cwd(), "templates");
+function templatesDir() {
+  return process.env.SCHEDULE_TEMPLATES_DIR || path.join(process.cwd(), "templates");
+}
 const SECOND_GROUP_FILL = "D9D9D9";
 
 // ── Утилиты ───────────────────────────────────────────────────────────────────
@@ -968,7 +970,7 @@ async function exportSchedule(data) {
   const templateFile = groupColumn
     ? "template-groups.docx"
     : "template-no-groups.docx";
-  const templateBuf = fs.readFileSync(path.join(TEMPLATES_DIR, templateFile));
+  const templateBuf = fs.readFileSync(path.join(templatesDir(), templateFile));
 
   const zip = new PizZip(templateBuf);
   let xml = zip.file("word/document.xml").asText();

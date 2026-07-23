@@ -41,6 +41,11 @@ testem.log
 .DS_Store
 Thumbs.db
 
+# Windows desktop build output (generated locally)
+/electron-app/runtime/
+/electron-app/release/
+/electron-app/.cache/
+
 .cursor/rules/nx-rules.mdc
 .github/instructions/nx.instructions.md
 

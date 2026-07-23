@@ -1,0 +1,40 @@
+appId: by.edu.schedule-automator
+productName: Конструктор расписаний
+asar: true
+compression: maximum
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - main.cjs
+  - package.json
+  - runtime/**/*
+  - build/icon.ico
+  - build/icon.png
+
+win:
+  executableName: ScheduleAutomator
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: Schedule-Automator-${version}-Setup.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Конструктор расписаний
+  uninstallDisplayName: Конструктор расписаний
+  deleteAppDataOnUninstall: false
+  runAfterFinish: true
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
+
+publish: null

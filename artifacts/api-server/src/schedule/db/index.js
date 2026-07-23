@@ -307,7 +307,10 @@ function buildWrapper() {
 async function init(dataDir) {
   if (dbWrapper) return dbWrapper;
   if (!SQL) {
-    const wasmBinary = fs.readFileSync(require.resolve("sql.js/dist/sql-wasm.wasm"));
+    const wasmPath =
+      process.env.SCHEDULE_SQL_WASM_PATH ||
+      require.resolve("sql.js/dist/sql-wasm.wasm");
+    const wasmBinary = fs.readFileSync(wasmPath);
     SQL = await initSqlJs({ wasmBinary });
   }
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });

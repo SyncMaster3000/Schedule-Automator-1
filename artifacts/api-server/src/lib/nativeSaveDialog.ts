@@ -16,6 +16,19 @@ type SaveDialogResult =
   | { supported: true; canceled: true }
   | { supported: true; canceled: false; filePath: string; opened: boolean };
 
+export type DesktopSaveHandler = (
+  buffer: Buffer,
+  suggestedFilename: string,
+) => Promise<SaveDialogResult>;
+
+let desktopSaveHandler: DesktopSaveHandler | null = null;
+
+export function setDesktopSaveHandler(
+  handler: DesktopSaveHandler | null,
+): void {
+  desktopSaveHandler = handler;
+}
+
 function toBase64(value: string): string {
   return Buffer.from(value, "utf8").toString("base64");
 }
@@ -141,11 +154,13 @@ export async function saveBufferWithDialog(
   buffer: Buffer,
   suggestedFilename: string,
 ): Promise<SaveDialogResult> {
+  const filename = safeFilename(suggestedFilename);
+  if (desktopSaveHandler) return desktopSaveHandler(buffer, filename);
   if (process.platform !== "win32") return { supported: false };
 
   const selectedPath = await chooseWindowsPath(
     await initialDirectory(),
-    safeFilename(suggestedFilename),
+    filename,
   );
   if (!selectedPath) return { supported: true, canceled: true };
 
