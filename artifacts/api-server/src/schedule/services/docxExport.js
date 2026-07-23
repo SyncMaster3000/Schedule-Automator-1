@@ -535,8 +535,14 @@ function activitySignature(it) {
   });
 }
 
-function secondGroupRowsToShade(items) {
+function secondGroupRowsToShade(items, ctx) {
   const indexesByTime = new Map();
+  const orderedGroups = Object.values(ctx.groupsById || {});
+  const secondGroupId = String(
+    orderedGroups[1]?.id ?? Object.keys(ctx.groupsById || {})[1] ?? "",
+  );
+  if (!secondGroupId) return new Set();
+
   items.forEach((it, index) => {
     const key = `${it.date}|${it.start_time}|${it.end_time}`;
     const indexes = indexesByTime.get(key) || [];
@@ -558,7 +564,11 @@ function secondGroupRowsToShade(items) {
       String(firstGroups[0]) !== String(secondGroups[0]) &&
       activitySignature(first) !== activitySignature(second)
     ) {
-      result.add(secondIndex);
+      if (String(firstGroups[0]) === secondGroupId) {
+        result.add(firstIndex);
+      } else if (String(secondGroups[0]) === secondGroupId) {
+        result.add(secondIndex);
+      }
     }
   }
   return result;
@@ -645,7 +655,7 @@ function buildDataRows(templateRow, items, ctx, hasGroups) {
   );
   const rows = [];
   const shadedRowIndexes = hasGroups
-    ? secondGroupRowsToShade(items)
+    ? secondGroupRowsToShade(items, ctx)
     : new Set();
   const pageStartIndexes = estimatedPageStartIndexes(items, ctx, hasGroups);
   let lastDate = null;

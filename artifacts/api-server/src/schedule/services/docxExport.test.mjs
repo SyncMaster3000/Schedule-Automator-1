@@ -129,6 +129,20 @@ test("grouped Word export shades only a different second-group activity", async 
         end_time: "14:30",
         group_ids: "[2]",
       }),
+      item({
+        start_time: "15:00",
+        end_time: "16:30",
+        group_ids: "[2]",
+        topic_id: 30,
+        topic_title: "Занятие второй группы",
+      }),
+      item({
+        start_time: "15:00",
+        end_time: "16:30",
+        group_ids: "[1]",
+        topic_id: 40,
+        topic_title: "Занятие первой группы",
+      }),
     ],
   });
 
@@ -136,7 +150,7 @@ test("grouped Word export shades only a different second-group activity", async 
   const scheduleTable = findTables(xml).find((table) => table.includes("Дата"));
   assert.ok(scheduleTable);
   const rows = extractRows(scheduleTable);
-  assert.equal(rows.length, 6);
+  assert.equal(rows.length, 8);
 
   assert.doesNotMatch(rows[0], /<w:tblHeader\b/);
   for (const row of rows.slice(1)) {
@@ -156,6 +170,12 @@ test("grouped Word export shades only a different second-group activity", async 
     .flatMap((row) => extractCells(row).map(cellFill));
   assert.ok(sharedActivityFills.every((fill) => fill === null));
   assert.ok(duplicatedCommonFills.every((fill) => fill === null));
+
+  const reverseSecondGroupFills = extractCells(rows[6]).map(cellFill);
+  const reverseFirstGroupFills = extractCells(rows[7]).map(cellFill);
+  assert.deepEqual(reverseSecondGroupFills.slice(0, 3), Array(3).fill(null));
+  assert.deepEqual(reverseSecondGroupFills.slice(3), Array(5).fill("D9D9D9"));
+  assert.ok(reverseFirstGroupFills.every((fill) => fill === null));
 
   const firstTimeCells = extractCells(rows[1]);
   const secondGroupCells = extractCells(rows[2]);
