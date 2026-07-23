@@ -8,6 +8,7 @@ import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale";
 
 const TEMPLATES_DIR = path.join(process.cwd(), "templates");
+const SECOND_GROUP_FILL = "D9D9D9";
 
 // ── Утилиты ───────────────────────────────────────────────────────────────────
 
@@ -63,7 +64,9 @@ function insertProjectBanner(xml) {
     const bodyPos = xml.indexOf("<w:body>");
     return bodyPos === -1
       ? banner + xml
-      : xml.slice(0, bodyPos + "<w:body>".length) + banner + xml.slice(bodyPos + "<w:body>".length);
+      : xml.slice(0, bodyPos + "<w:body>".length) +
+          banner +
+          xml.slice(bodyPos + "<w:body>".length);
   }
 
   let paragraphStart = -1;
@@ -260,7 +263,9 @@ function teacherLines(it, ctx) {
 
 function findTables(xml) {
   const tables = [];
-  let depth = 0, start = -1, pos = 0;
+  let depth = 0,
+    start = -1,
+    pos = 0;
   while (pos < xml.length) {
     const o = xml.indexOf("<w:tbl>", pos);
     const c = xml.indexOf("</w:tbl>", pos);
@@ -342,8 +347,23 @@ function setGridSpan(tcPr, span) {
 
 function setVerticalCenter(tcPr) {
   tcPr = ensureTcPr(tcPr);
-  if (/<w:vAlign\b/.test(tcPr)) return tcPr.replace(/<w:vAlign\b[^/]*\/>/g, '<w:vAlign w:val="center"/>');
+  if (/<w:vAlign\b/.test(tcPr))
+    return tcPr.replace(/<w:vAlign\b[^/]*\/>/g, '<w:vAlign w:val="center"/>');
   return tcPr.replace("</w:tcPr>", '<w:vAlign w:val="center"/></w:tcPr>');
+}
+
+function setNoWrap(tcPr) {
+  tcPr = ensureTcPr(tcPr);
+  if (/<w:noWrap\b/.test(tcPr)) return tcPr;
+  return tcPr.replace("</w:tcPr>", "<w:noWrap/></w:tcPr>");
+}
+
+function setTextDirection(tcPr, direction) {
+  tcPr = ensureTcPr(tcPr).replace(/<w:textDirection\b[^/]*\/>/g, "");
+  return tcPr.replace(
+    "</w:tcPr>",
+    `<w:textDirection w:val="${direction}"/></w:tcPr>`,
+  );
 }
 
 function setSymmetricHorizontalIndent(pPr) {
@@ -358,37 +378,85 @@ function setSymmetricHorizontalIndent(pPr) {
   });
 }
 
-function setKeepNext(pPr) {
-  pPr = pPr || "<w:pPr></w:pPr>";
-  if (/<w:keepNext\b/.test(pPr)) return pPr;
-  return pPr.replace("</w:pPr>", "<w:keepNext/></w:pPr>");
-}
-
-function setCantSplit(trPr) {
-  trPr = trPr || "<w:trPr></w:trPr>";
-  if (/<w:cantSplit\b/.test(trPr)) return trPr;
-  return trPr.replace("</w:trPr>", "<w:cantSplit/></w:trPr>");
-}
-
-function markAsRepeatingHeader(rowXml) {
-  const existing = rowXml.match(/<w:trPr>[\s\S]*?<\/w:trPr>/)?.[0] || "";
-  let trPr = setCantSplit(existing);
-  if (!/<w:tblHeader\b/.test(trPr)) {
-    trPr = trPr.replace("</w:trPr>", "<w:tblHeader/></w:trPr>");
+function setRunFontSize(rPr, halfPoints) {
+  let result = rPr || "<w:rPr></w:rPr>";
+  if (/<w:sz\b/.test(result)) {
+    result = result.replace(
+      /<w:sz\b[^/]*\/>/g,
+      `<w:sz w:val="${halfPoints}"/>`,
+    );
+  } else {
+    result = result.replace(
+      "</w:rPr>",
+      `<w:sz w:val="${halfPoints}"/></w:rPr>`,
+    );
   }
-  if (existing) return rowXml.replace(existing, trPr);
-  return rowXml.replace(/^(<w:tr(?:\s[^>]*)?>)/, `$1${trPr}`);
+  if (/<w:szCs\b/.test(result)) {
+    result = result.replace(
+      /<w:szCs\b[^/]*\/>/g,
+      `<w:szCs w:val="${halfPoints}"/>`,
+    );
+  } else {
+    result = result.replace(
+      "</w:rPr>",
+      `<w:szCs w:val="${halfPoints}"/></w:rPr>`,
+    );
+  }
+  return result;
+}
+
+function setCellFill(tcPr, fill = null) {
+  tcPr = ensureTcPr(tcPr)
+    .replace(/<w:shd\b[^>]*\/>/g, "")
+    .replace(/<w:shd\b[^>]*>[\s\S]*?<\/w:shd>/g, "");
+  if (!fill) return tcPr;
+  return tcPr.replace(
+    "</w:tcPr>",
+    `<w:shd w:val="clear" w:color="auto" w:fill="${fill}"/></w:tcPr>`,
+  );
+}
+
+function removeKeepNext(pPr) {
+  return String(pPr || "")
+    .replace(/<w:keepNext\b[^>]*\/>/g, "")
+    .replace(/<w:keepNext\b[^>]*>[\s\S]*?<\/w:keepNext>/g, "");
+}
+
+function allowRowToSplit(trPr) {
+  return String(trPr || "")
+    .replace(/<w:cantSplit\b[^>]*\/>/g, "")
+    .replace(/<w:cantSplit\b[^>]*>[\s\S]*?<\/w:cantSplit>/g, "");
+}
+
+function disableRepeatingHeader(rowXml) {
+  const existing = rowXml.match(/<w:trPr>[\s\S]*?<\/w:trPr>/)?.[0] || "";
+  if (!existing) return rowXml;
+  const trPr = existing
+    .replace(/<w:tblHeader\b[^>]*\/>/g, "")
+    .replace(/<w:tblHeader\b[^>]*>[\s\S]*?<\/w:tblHeader>/g, "");
+  return rowXml.replace(existing, trPr);
 }
 
 // Собирает XML одной ячейки.
 // vMerge: null | "restart" | "continue"
 function buildCell(style, content, vMerge = null, options = {}) {
   let tcPr = style.tcPr;
-  const pPr = options.symmetricHorizontalIndent
+  const rPr = options.fontSize
+    ? setRunFontSize(style.rPr, options.fontSize)
+    : style.rPr;
+  let pPr = options.symmetricHorizontalIndent
     ? setSymmetricHorizontalIndent(style.pPr)
     : style.pPr;
+  pPr = removeKeepNext(pPr);
   if (options.gridSpan) tcPr = setGridSpan(tcPr, options.gridSpan);
   if (options.vAlignCenter) tcPr = setVerticalCenter(tcPr);
+  if (options.noWrap) tcPr = setNoWrap(tcPr);
+  if (options.textDirection) {
+    tcPr = setTextDirection(tcPr, options.textDirection);
+  }
+  if (Object.prototype.hasOwnProperty.call(options, "fill")) {
+    tcPr = setCellFill(tcPr, options.fill);
+  }
   if (vMerge === "restart") {
     tcPr = ensureTcPr(tcPr)
       .replace(/<w:vMerge[^/]*\/>/g, "")
@@ -411,7 +479,7 @@ function buildCell(style, content, vMerge = null, options = {}) {
       paragraphs = lines
         .map(
           (line) =>
-            `<w:p>${pPr}<w:r>${style.rPr}<w:t xml:space="preserve">${esc(line)}</w:t></w:r></w:p>`
+            `<w:p>${pPr}<w:r>${rPr}<w:t xml:space="preserve">${esc(line)}</w:t></w:r></w:p>`,
         )
         .join("");
     }
@@ -420,6 +488,81 @@ function buildCell(style, content, vMerge = null, options = {}) {
 }
 
 // ── Заполнение таблицы данными ─────────────────────────────────────────────
+
+function groupTextForItem(it, ctx) {
+  const gids = JSON.parse(it.group_ids || "[]");
+  if (gids.length === 1) return ctx.groupsById[gids[0]]?.name || "";
+  if (gids.length > 1) {
+    return gids
+      .map((id) => ctx.groupsById[id]?.name)
+      .filter(Boolean)
+      .join(", ");
+  }
+  return "";
+}
+
+function safeJsonArray(value) {
+  if (Array.isArray(value)) return value;
+  try {
+    const result = JSON.parse(value || "[]");
+    return Array.isArray(result) ? result : [];
+  } catch {
+    return [];
+  }
+}
+
+function normalizedActivityArray(value) {
+  return safeJsonArray(value)
+    .map((entry) => String(entry ?? "").trim())
+    .filter(Boolean)
+    .sort();
+}
+
+function activitySignature(it) {
+  return JSON.stringify({
+    topicId: it.topic_id ?? null,
+    utpNumber: String(it.utp_number || "").trim(),
+    topicTitle: String(it.topic_title || "").trim(),
+    discipline: String(it.discipline_name || "").trim(),
+    customTitle: String(it.custom_title || "").trim(),
+    lessonType: String(it.lesson_type || "")
+      .trim()
+      .toLowerCase()
+      .replace(/ё/g, "е"),
+    teacherIds: normalizedActivityArray(it.teacher_ids),
+    customTeachers: normalizedActivityArray(it.custom_teachers),
+    roomId: it.room_id ?? null,
+  });
+}
+
+function secondGroupRowsToShade(items) {
+  const indexesByTime = new Map();
+  items.forEach((it, index) => {
+    const key = `${it.date}|${it.start_time}|${it.end_time}`;
+    const indexes = indexesByTime.get(key) || [];
+    indexes.push(index);
+    indexesByTime.set(key, indexes);
+  });
+
+  const result = new Set();
+  for (const indexes of indexesByTime.values()) {
+    if (indexes.length !== 2) continue;
+    const [firstIndex, secondIndex] = indexes;
+    const first = items[firstIndex];
+    const second = items[secondIndex];
+    const firstGroups = safeJsonArray(first.group_ids);
+    const secondGroups = safeJsonArray(second.group_ids);
+    if (
+      firstGroups.length === 1 &&
+      secondGroups.length === 1 &&
+      String(firstGroups[0]) !== String(secondGroups[0]) &&
+      activitySignature(first) !== activitySignature(second)
+    ) {
+      result.add(secondIndex);
+    }
+  }
+  return result;
+}
 
 function wrappedLineCount(value, charsPerLine) {
   const values = Array.isArray(value) ? value : [value];
@@ -430,7 +573,8 @@ function wrappedLineCount(value, charsPerLine) {
       return (
         sum +
         lines.reduce(
-          (lineSum, line) => lineSum + Math.max(1, Math.ceil(line.length / charsPerLine)),
+          (lineSum, line) =>
+            lineSum + Math.max(1, Math.ceil(line.length / charsPerLine)),
           0,
         )
       );
@@ -438,26 +582,11 @@ function wrappedLineCount(value, charsPerLine) {
   );
 }
 
-function groupTextForItem(it, ctx) {
-  const gids = JSON.parse(it.group_ids || "[]");
-  if (gids.length === 1) return ctx.groupsById[gids[0]]?.name || "";
-  if (gids.length > 1) {
-    return gids.map((id) => ctx.groupsById[id]?.name).filter(Boolean).join(", ");
-  }
-  return "";
-}
-
-// Word сам рассчитывает высоту строк по переносу текста. Эта оценка нужна лишь
-// для очень длинного дня: делим его на блоки, которые помещаются на отдельной
-// странице, и заново печатаем дату/день в начале следующего блока.
 function estimateRowHeight(it, ctx, hasGroups) {
   const selfStudy = isSelfStudy(it);
   const assessmentLabel = assessmentLessonLabel(it);
-  const assessmentDiscipline = assessmentDisciplineLabel(it);
-  const topic = assessmentLabel && hasGroups
-    ? assessmentDiscipline || topicLabel(it)
-    : assessmentLabel || topicLabel(it);
-  const topicChars = selfStudy || (assessmentLabel && !hasGroups) ? 72 : hasGroups ? 58 : 52;
+  const topic = assessmentLabel || topicLabel(it);
+  const topicChars = selfStudy || assessmentLabel ? 72 : hasGroups ? 58 : 52;
   const topicLines = wrappedLineCount(topic, topicChars);
   const lessonLines = selfStudy
     ? 1
@@ -483,23 +612,23 @@ function estimateRowHeight(it, ctx, hasGroups) {
   return Math.max(hasGroups ? 520 : 705, lines * 240 + 120);
 }
 
-function buildPageChunkIds(items, ctx, hasGroups) {
-  // Полезная высота альбомной страницы шаблона после повторяемой шапки таблицы.
-  const maxChunkHeight = hasGroups ? 9000 : 8500;
-  const result = [];
-  let chunkId = -1;
-  let date = null;
+// Эти границы не управляют пагинацией Word: они лишь заново начинают
+// вертикальное объединение даты/дня рядом с ожидаемым началом страницы.
+// Таблица по-прежнему переносится естественно и остаётся редактируемой.
+function estimatedPageStartIndexes(items, ctx, hasGroups) {
+  const firstPageHeight = hasGroups ? 5400 : 5000;
+  const nextPageHeight = hasGroups ? 9000 : 8500;
+  const result = new Set();
+  let page = 0;
   let height = 0;
-  for (const it of items) {
-    const rowHeight = estimateRowHeight(it, ctx, hasGroups);
-    const newDate = it.date !== date;
-    const overflow = !newDate && height > 0 && height + rowHeight > maxChunkHeight;
-    if (newDate || overflow) {
-      chunkId += 1;
-      date = it.date;
+  for (let index = 0; index < items.length; index += 1) {
+    const rowHeight = estimateRowHeight(items[index], ctx, hasGroups);
+    const pageHeight = page === 0 ? firstPageHeight : nextPageHeight;
+    if (index > 0 && height > 0 && height + rowHeight > pageHeight) {
+      result.add(index);
+      page += 1;
       height = 0;
     }
-    result.push(chunkId);
     height += rowHeight;
   }
   return result;
@@ -511,27 +640,43 @@ function buildDataRows(templateRow, items, ctx, hasGroups) {
   const numCols = hasGroups ? 8 : 7;
   while (styles.length < numCols) styles.push(styles[styles.length - 1] || {});
 
-  const trPr = setCantSplit(
+  const trPr = allowRowToSplit(
     templateRow.match(/<w:trPr>[\s\S]*?<\/w:trPr>/)?.[0] || "",
   );
   const rows = [];
-  const chunkIds = buildPageChunkIds(items, ctx, hasGroups);
-  let lastChunkId = null;
+  const shadedRowIndexes = hasGroups
+    ? secondGroupRowsToShade(items)
+    : new Set();
+  const pageStartIndexes = estimatedPageStartIndexes(items, ctx, hasGroups);
+  let lastDate = null;
   let lastTimeKey = null;
 
   for (let index = 0; index < items.length; index += 1) {
     const it = items[index];
-    const chunkId = chunkIds[index];
-    const isFirst = chunkId !== lastChunkId;
-    const keepNext = chunkIds[index + 1] === chunkId;
-    const rowStyles = keepNext
-      ? styles.map((style) => ({ ...style, pPr: setKeepNext(style.pPr) }))
-      : styles;
-    if (isFirst) lastTimeKey = null;
-    lastChunkId = chunkId;
-    const vm = isFirst ? "restart" : "continue";
+    const startsPage = pageStartIndexes.has(index);
+    const isFirstDateSegment = it.date !== lastDate || startsPage;
+    let dateSegmentRowCount = 1;
+    if (isFirstDateSegment) {
+      while (
+        index + dateSegmentRowCount < items.length &&
+        items[index + dateSegmentRowCount].date === it.date &&
+        !pageStartIndexes.has(index + dateSegmentRowCount)
+      ) {
+        dateSegmentRowCount += 1;
+      }
+    }
+    const isSingleRowDateSegment =
+      isFirstDateSegment && dateSegmentRowCount === 1;
+    if (isFirstDateSegment) lastTimeKey = null;
+    lastDate = it.date;
+    const dayVm = isFirstDateSegment ? "restart" : "continue";
     const timeKey = `${it.date}|${it.start_time}|${it.end_time}`;
-    const timeVm = hasGroups && timeKey === lastTimeKey ? "continue" : hasGroups ? "restart" : null;
+    const timeVm =
+      hasGroups && timeKey === lastTimeKey && !startsPage
+        ? "continue"
+        : hasGroups
+          ? "restart"
+          : null;
     lastTimeKey = timeKey;
 
     const teachers = teacherLines(it, ctx);
@@ -539,78 +684,196 @@ function buildDataRows(templateRow, items, ctx, hasGroups) {
     const room = it.room_id ? ctx.roomsById[it.room_id]?.number || "" : "";
     const time = `${it.start_time}-${it.end_time}`;
     const topic = topicLabel(it);
-    const lessonType = it.lesson_type === "self_study" ? "" : it.lesson_type || "";
+    const lessonType =
+      it.lesson_type === "self_study" ? "" : it.lesson_type || "";
     const wideEvent = isWideEvent(it);
     const selfStudy = isSelfStudy(it);
     const assessmentLabel = assessmentLessonLabel(it);
     const assessmentDiscipline = assessmentDisciplineLabel(it);
+    const groupFill = shadedRowIndexes.has(index) ? SECOND_GROUP_FILL : null;
 
     let colCells;
     if (hasGroups) {
       const groupText = groupTextForItem(it, ctx);
       colCells = [
-        buildCell(rowStyles[0], isFirst ? fmtDate(it.date) : "", vm, { vAlignCenter: true }),
-        buildCell(rowStyles[1], isFirst ? weekdayRu(it.date) : "", vm, { vAlignCenter: true }),
-        buildCell(rowStyles[2], timeVm === "continue" ? "" : time, timeVm, {
+        ...(isSingleRowDateSegment
+          ? [
+              buildCell(
+                styles[0],
+                `${fmtDate(it.date)}, ${weekdayRu(it.date)}`,
+                null,
+                {
+                  gridSpan: 2,
+                  vAlignCenter: true,
+                  fill: null,
+                  noWrap: true,
+                  fontSize: 18,
+                  textDirection: "lrTb",
+                },
+              ),
+            ]
+          : [
+              buildCell(
+                styles[0],
+                isFirstDateSegment ? fmtDate(it.date) : "",
+                dayVm,
+                {
+                  vAlignCenter: true,
+                  fill: null,
+                },
+              ),
+              buildCell(
+                styles[1],
+                isFirstDateSegment ? weekdayRu(it.date) : "",
+                dayVm,
+                {
+                  vAlignCenter: true,
+                  fill: null,
+                },
+              ),
+            ]),
+        buildCell(styles[2], timeVm === "continue" ? "" : time, timeVm, {
           vAlignCenter: true,
           symmetricHorizontalIndent: true,
+          fill: null,
         }),
       ];
       if (selfStudy) {
         colCells.push(
-          buildCell(rowStyles[3], groupText, null, { vAlignCenter: true }),
-          buildCell(rowStyles[4], topic, null, {
+          buildCell(styles[3], groupText, null, {
+            vAlignCenter: true,
+            fill: groupFill,
+          }),
+          buildCell(styles[4], topic, null, {
             gridSpan: 2,
             vAlignCenter: true,
+            fill: groupFill,
           }),
-          buildCell(rowStyles[6], ""),
-          buildCell(rowStyles[7], "", null, { vAlignCenter: true }),
+          buildCell(styles[6], "", null, { fill: groupFill }),
+          buildCell(styles[7], "", null, {
+            vAlignCenter: true,
+            fill: groupFill,
+          }),
         );
       } else if (assessmentLabel) {
         colCells.push(
-          buildCell(rowStyles[3], groupText, null, { vAlignCenter: true }),
-          buildCell(rowStyles[4], assessmentDiscipline || topic),
-          buildCell(rowStyles[5], assessmentLabel),
-          buildCell(rowStyles[6], teacherContent),
-          buildCell(rowStyles[7], room, null, { vAlignCenter: true }),
+          buildCell(styles[3], groupText, null, {
+            vAlignCenter: true,
+            fill: groupFill,
+          }),
+          buildCell(styles[4], assessmentDiscipline || topic, null, {
+            fill: groupFill,
+          }),
+          buildCell(styles[5], assessmentLabel, null, { fill: groupFill }),
+          buildCell(styles[6], teacherContent, null, { fill: groupFill }),
+          buildCell(styles[7], room, null, {
+            vAlignCenter: true,
+            fill: groupFill,
+          }),
         );
       } else if (wideEvent) {
-        colCells.push(buildCell(rowStyles[3], topic, null, { gridSpan: 5, vAlignCenter: true }));
+        colCells.push(
+          buildCell(styles[3], topic, null, {
+            gridSpan: 5,
+            vAlignCenter: true,
+            fill: groupFill,
+          }),
+        );
       } else {
         colCells.push(
-          buildCell(rowStyles[3], groupText, null, { vAlignCenter: true }),
-          buildCell(rowStyles[4], topic),
-          buildCell(rowStyles[5], lessonType),
-          buildCell(rowStyles[6], teachers.length ? teachers : [""]),
-          buildCell(rowStyles[7], room, null, { vAlignCenter: true }),
+          buildCell(styles[3], groupText, null, {
+            vAlignCenter: true,
+            fill: groupFill,
+          }),
+          buildCell(styles[4], topic, null, { fill: groupFill }),
+          buildCell(styles[5], lessonType, null, { fill: groupFill }),
+          buildCell(styles[6], teachers.length ? teachers : [""], null, {
+            fill: groupFill,
+          }),
+          buildCell(styles[7], room, null, {
+            vAlignCenter: true,
+            fill: groupFill,
+          }),
         );
       }
     } else {
       colCells = [
-        buildCell(rowStyles[0], isFirst ? fmtDate(it.date) : "", vm, { vAlignCenter: true }),
-        buildCell(rowStyles[1], isFirst ? weekdayRu(it.date) : "", vm, { vAlignCenter: true }),
-        buildCell(rowStyles[2], time, null, {
+        ...(isSingleRowDateSegment
+          ? [
+              buildCell(
+                styles[0],
+                `${fmtDate(it.date)}, ${weekdayRu(it.date)}`,
+                null,
+                {
+                  gridSpan: 2,
+                  vAlignCenter: true,
+                  fill: null,
+                  noWrap: true,
+                  fontSize: 18,
+                  textDirection: "lrTb",
+                },
+              ),
+            ]
+          : [
+              buildCell(
+                styles[0],
+                isFirstDateSegment ? fmtDate(it.date) : "",
+                dayVm,
+                {
+                  vAlignCenter: true,
+                  fill: null,
+                },
+              ),
+              buildCell(
+                styles[1],
+                isFirstDateSegment ? weekdayRu(it.date) : "",
+                dayVm,
+                {
+                  vAlignCenter: true,
+                  fill: null,
+                },
+              ),
+            ]),
+        buildCell(styles[2], time, null, {
           vAlignCenter: true,
           symmetricHorizontalIndent: true,
+          fill: null,
         }),
       ];
       if (selfStudy || assessmentLabel) {
         colCells.push(
-          buildCell(rowStyles[3], assessmentLabel || topic, null, {
+          buildCell(styles[3], assessmentLabel || topic, null, {
             gridSpan: 2,
             vAlignCenter: true,
+            fill: null,
           }),
-          buildCell(rowStyles[5], selfStudy ? "" : teacherContent),
-          buildCell(rowStyles[6], selfStudy ? "" : room, null, { vAlignCenter: true }),
+          buildCell(styles[5], selfStudy ? "" : teacherContent, null, {
+            fill: null,
+          }),
+          buildCell(styles[6], selfStudy ? "" : room, null, {
+            vAlignCenter: true,
+            fill: null,
+          }),
         );
       } else if (wideEvent) {
-        colCells.push(buildCell(rowStyles[3], topic, null, { gridSpan: 4, vAlignCenter: true }));
+        colCells.push(
+          buildCell(styles[3], topic, null, {
+            gridSpan: 4,
+            vAlignCenter: true,
+            fill: null,
+          }),
+        );
       } else {
         colCells.push(
-          buildCell(rowStyles[3], topic),
-          buildCell(rowStyles[4], lessonType),
-          buildCell(rowStyles[5], teachers.length ? teachers : [""]),
-          buildCell(rowStyles[6], room, null, { vAlignCenter: true }),
+          buildCell(styles[3], topic, null, { fill: null }),
+          buildCell(styles[4], lessonType, null, { fill: null }),
+          buildCell(styles[5], teachers.length ? teachers : [""], null, {
+            fill: null,
+          }),
+          buildCell(styles[6], room, null, {
+            vAlignCenter: true,
+            fill: null,
+          }),
         );
       }
     }
@@ -633,7 +896,7 @@ function fillScheduleTable(xml, items, ctx, hasGroups) {
   if (!rows.length) return xml;
 
   // Строка 0 — заголовок; образцовая строка — первая строка данных с нужным кол-вом ячеек.
-  const headerRow = markAsRepeatingHeader(rows[0]);
+  const headerRow = disableRepeatingHeader(rows[0]);
   const numCols = hasGroups ? 8 : 7;
   const templateRow =
     rows.slice(1).find((r) => extractCells(r).length === numCols) || rows[1];
@@ -672,10 +935,17 @@ async function exportSchedule(data) {
 
   // Период обучения берется из выбранных периодов, а не из первого/последнего
   // фактически заполненного занятия: в расписании могут быть свободные дни.
-  let dateBegin = "", dateEnd = "";
+  let dateBegin = "",
+    dateEnd = "";
   if (periods?.length) {
-    const starts = periods.map((p) => p.start_date).filter(Boolean).sort();
-    const ends = periods.map((p) => p.end_date).filter(Boolean).sort();
+    const starts = periods
+      .map((p) => p.start_date)
+      .filter(Boolean)
+      .sort();
+    const ends = periods
+      .map((p) => p.end_date)
+      .filter(Boolean)
+      .sort();
     dateBegin = fmtDate(starts[0]);
     dateEnd = fmtDate(ends[ends.length - 1]);
   } else if (items.length) {
@@ -725,6 +995,3 @@ async function exportSchedule(data) {
 }
 
 export { exportSchedule };
-
-
-
