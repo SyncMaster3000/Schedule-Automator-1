@@ -8,6 +8,10 @@ import {
   enrichTopicsWithDisciplines,
   groupTopicsByDiscipline,
 } from "../utils/topicDisciplines";
+import {
+  humanizeUtpFileName,
+  uniqueUtpName,
+} from "../utils/utpSources";
 
 const props = defineProps({ id: { type: [String, Number], required: true } });
 const router = useRouter();
@@ -90,7 +94,7 @@ const importPreviewRows = computed(() => {
   return rows;
 });
 
-function prepareImportPreview(result) {
+function prepareImportPreview(result, mode) {
   const fallbackName =
     String(result.disciplineName || "").trim() || "Без названия дисциплины";
   const normalizedTopics = result.topics.map((topic) => ({
@@ -101,8 +105,17 @@ function prepareImportPreview(result) {
   const detectedNames = [
     ...new Set(normalizedTopics.map((topic) => topic.discipline_name)),
   ];
+  const suggestedUtpName =
+    String(result.utpName || "").trim() ||
+    humanizeUtpFileName(result.sourceFileName) ||
+    fallbackName;
+  const utpName =
+    mode === "append"
+      ? uniqueUtpName(suggestedUtpName, topics.value)
+      : suggestedUtpName;
   return {
     ...result,
+    utpName,
     topics: normalizedTopics,
     disciplines: detectedNames.map((name) => ({ sourceName: name, name })),
   };
@@ -170,7 +183,7 @@ async function runImport(mode = "replace") {
     const res = await api.importUtp();
     if (res.canceled) return;
     importMode.value = mode;
-    importPreview.value = prepareImportPreview(res);
+    importPreview.value = prepareImportPreview(res, mode);
   } catch (e) {
     error.value = e.message;
   }
@@ -184,12 +197,25 @@ async function confirmImport() {
         String(discipline.name || "").trim() || discipline.sourceName,
       ]),
     );
+    const requestedUtpName =
+      String(importPreview.value.utpName || "").trim() ||
+      humanizeUtpFileName(importPreview.value.sourceFileName) ||
+      "Без названия УТП";
+    const utpName =
+      importMode.value === "append"
+        ? uniqueUtpName(requestedUtpName, topics.value)
+        : requestedUtpName;
+    const sourceFileName =
+      String(importPreview.value.sourceFileName || "").trim() || null;
     const importedTopics = importPreview.value.topics.map((topic) => ({
       ...topic,
       discipline_name:
         renamedDisciplines.get(topic.discipline_name) ||
         topic.discipline_name ||
         "Без названия дисциплины",
+      utp_source: utpName,
+      utp_name: utpName,
+      utp_source_file: topic.utp_source_file || sourceFileName,
     }));
     const importedDisciplineNames = [
       ...new Set(importedTopics.map((topic) => topic.discipline_name)),
@@ -1117,6 +1143,17 @@ onMounted(async () => {
       @close="importPreview = null"
     >
       <div class="mb-4 rounded-lg border border-brand-100 bg-brand-50/60 p-3">
+        <label class="label">Название УТП</label>
+        <input
+          v-model.trim="importPreview.utpName"
+          class="input"
+          placeholder="Например: Тактика 2026"
+        />
+        <p class="mt-1 text-xs text-slate-500">
+          Это название будет показано на карточках занятий. При добавлении
+          одноимённых планов к названию автоматически добавится номер.
+        </p>
+        <div class="mt-3 border-t border-brand-100 pt-3">
         <div class="mb-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <span class="label mb-0">Найденные дисциплины</span>
           <span class="badge bg-brand-100 text-brand-700">
@@ -1146,6 +1183,7 @@ onMounted(async () => {
             >Файл: {{ importPreview.sourceFileName }}</span
           >
         </p>
+        </div>
       </div>
       <p class="mb-3 text-sm text-slate-500">
         <span v-if="importMode === 'append'" class="font-medium text-slate-600">

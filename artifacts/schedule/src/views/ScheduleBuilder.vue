@@ -6,6 +6,7 @@ import { eachDayOfInterval, parseISO, format, getDay } from "date-fns";
 import api from "../api";
 import AppModal from "../components/AppModal.vue";
 import LessonCard from "../components/LessonCard.vue";
+import UtpSourceBadge from "../components/UtpSourceBadge.vue";
 import {
   enrichTopicsWithDisciplines,
   groupTopicsByDiscipline,
@@ -465,14 +466,20 @@ const moveTargetSlots = computed(() =>
 );
 
 function applyScheduleData(data) {
-  const disciplineByTopicId = new Map(
-    topics.value.map((topic) => [Number(topic.id), topic.discipline_name]),
+  const sourceByTopicId = new Map(
+    topics.value.map((topic) => [Number(topic.id), topic]),
   );
-  const nextItems = data.items.map(normalize).map((item) => ({
-    ...item,
-    discipline_name:
-      item.discipline_name || disciplineByTopicId.get(Number(item.topic_id)) || null,
-  }));
+  const nextItems = data.items.map(normalize).map((item) => {
+    const topic = sourceByTopicId.get(Number(item.topic_id));
+    return {
+      ...item,
+      discipline_name: item.discipline_name || topic?.discipline_name || null,
+      utp_source: item.utp_source || topic?.utp_source || null,
+      utp_name: item.utp_name || topic?.utp_name || null,
+      utp_source_file:
+        item.utp_source_file || topic?.utp_source_file || null,
+    };
+  });
 
   period.value = data.period;
   dayGrid.value = JSON.parse(data.period.day_grids_json || "{}");
@@ -2542,15 +2549,11 @@ onUnmounted(() => {
               ></span>
               {{ itemTitle(it) }}
               <span
-                v-if="it.discipline_name"
-                class="badge ml-1 max-w-64 truncate bg-violet-50 align-middle text-violet-700"
-                :title="it.discipline_name"
-              >{{ it.discipline_name }}</span>
-              <span
                 v-if="itemGroupLabel(it)"
                 class="badge ml-1 bg-brand-50 text-brand-700"
               >Группа {{ itemGroupLabel(it) }}</span>
             </div>
+            <UtpSourceBadge :item="it" />
             <div v-if="isSelfStudy(it)" class="truncate text-xs text-slate-400">
               Самостоятельная подготовка
             </div>

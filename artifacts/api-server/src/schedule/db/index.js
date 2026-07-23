@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS program_topics (
   title TEXT NOT NULL,
   discipline_name TEXT,
   utp_source TEXT,
+  utp_name TEXT,
+  utp_source_file TEXT,
   total_hours REAL NOT NULL DEFAULT 0,
   lecture_hours REAL NOT NULL DEFAULT 0,
   practice_hours REAL NOT NULL DEFAULT 0,
@@ -336,6 +338,10 @@ function runMigrations() {
   // Это нужно для чередования планов и допуска аттестации только после всех
   // тем того же загруженного учебно-тематического плана.
   addColumnIfMissing("program_topics", "utp_source", "utp_source TEXT");
+  // Отдельно храним понятное пользователю название УТП и исходное имя файла.
+  // Старые строки не переписываем: интерфейс строит для них безопасный fallback.
+  addColumnIfMissing("program_topics", "utp_name", "utp_name TEXT");
+  addColumnIfMissing("program_topics", "utp_source_file", "utp_source_file TEXT");
   addColumnIfMissing("program_topics", "roundtable_hours", "roundtable_hours REAL NOT NULL DEFAULT 0");
   // Один номер темы может иметь несколько сущностей — по одной на каждый вид занятия.
   raw.run("DROP INDEX IF EXISTS ux_topic_program_number");

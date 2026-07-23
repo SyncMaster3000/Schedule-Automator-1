@@ -298,6 +298,54 @@ function suggestedDisciplineName(root, layout, sourceTopics, sourceName) {
   );
 }
 
+const WINDOWS_1252_CHARACTERS = "€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ";
+const WINDOWS_1252_BYTES = [
+  0x80, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89,
+  0x8a, 0x8b, 0x8c, 0x8e, 0x91, 0x92, 0x93, 0x94, 0x95,
+  0x96, 0x97, 0x98, 0x99, 0x9a, 0x9b, 0x9c, 0x9e, 0x9f,
+];
+
+function encodedSourceByte(character) {
+  const code = character.charCodeAt(0);
+  if (code <= 255) return code;
+  const index = WINDOWS_1252_CHARACTERS.indexOf(character);
+  return index >= 0 ? WINDOWS_1252_BYTES[index] : null;
+}
+
+function normalizeSourceFileName(value) {
+  const sourceName = String(value || "").trim();
+  if (!/[ÐÑ]/u.test(sourceName)) return sourceName;
+
+  const bytes = Array.from(sourceName, encodedSourceByte);
+  if (bytes.some((byte) => byte == null)) return sourceName;
+  const decoded = Buffer.from(bytes).toString("utf8");
+  return decoded && !decoded.includes("\uFFFD") ? decoded : sourceName;
+}
+
+function utpNameFromSourceName(sourceName) {
+  const fileName = String(sourceName || "").split(/[\\/]/).pop() || "";
+  return cleanDisciplineName(
+    fileName
+      .replace(/\.docx$/i, "")
+      .replace(/_+/g, " ")
+      .replace(/\s+/g, " "),
+  );
+}
+
+function suggestedUtpName(root, layout, fallbackName, sourceName) {
+  const documentName =
+    disciplineFromLayout(layout) || disciplineFromDocument(root);
+  const fileName = utpNameFromSourceName(sourceName);
+  const meaningfulFileName =
+    /^(?:утп|учебно[- ]тематический план)$/iu.test(fileName) ? "" : fileName;
+  return (
+    cleanDisciplineName(documentName) ||
+    cleanDisciplineName(meaningfulFileName) ||
+    cleanDisciplineName(fallbackName) ||
+    "Без названия УТП"
+  );
+}
+
 function describeSourceTopics(sourceTopics) {
   return sourceTopics.map((source, index) => {
     const next = sourceTopics[index + 1];
@@ -347,6 +395,7 @@ function assignDisciplines(describedTopics, fallbackName) {
 }
 
 async function importUtp(input, { sourceName = "" } = {}) {
+  const normalizedSourceName = normalizeSourceFileName(sourceName);
   const options = Buffer.isBuffer(input) ? { buffer: input } : { path: input };
   const result = await mammoth.convertToHtml(options);
   const root = parse(result.value);
@@ -403,8 +452,16 @@ async function importUtp(input, { sourceName = "" } = {}) {
     root,
     layout,
     sourceTopics,
-    sourceName,
+    normalizedSourceName,
   );
+  const utpName = suggestedUtpName(
+    root,
+    layout,
+    fallbackDisciplineName,
+    normalizedSourceName,
+  );
+  const sourceFileName = normalizedSourceName;
+  const utpSource = sourceFileName || utpName;
   const describedTopics = assignDisciplines(
     describeSourceTopics(sourceTopics),
     fallbackDisciplineName,
@@ -440,7 +497,9 @@ async function importUtp(input, { sourceName = "" } = {}) {
         title: source.title,
         discipline_name: disciplineName,
         utp_source:
-          String(sourceName || "").trim() || fallbackDisciplineName,
+          utpSource,
+        utp_name: utpName,
+        utp_source_file: sourceFileName || null,
         total_hours: hours,
         ...legacyHours(entity.type, hours),
         note: source.note,
@@ -472,7 +531,8 @@ async function importUtp(input, { sourceName = "" } = {}) {
     rawTableCount: tables.length,
     disciplineName: disciplines[0] || fallbackDisciplineName,
     disciplines,
-    sourceFileName: sourceName || null,
+    utpName,
+    sourceFileName: sourceFileName || null,
   };
 }
 

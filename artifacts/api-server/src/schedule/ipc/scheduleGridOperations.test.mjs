@@ -12,9 +12,10 @@ const dbUrl = new URL("../db/index.js", import.meta.url).href;
 const scheduleUrl = new URL("./schedule.js", import.meta.url).href;
 const { ensureDb, getDb, persist } = await import("../db/index.js");
 const programs = (await import("./programs.js")).default;
+const topics = (await import("./topics.js")).default;
 const periods = (await import("./periods.js")).default;
 const schedule = (await import("./schedule.js")).default;
-const handlers = { ...programs, ...periods, ...schedule };
+const handlers = { ...programs, ...topics, ...periods, ...schedule };
 await ensureDb(dataDir);
 
 async function dispatch(channel, payload) {
@@ -52,14 +53,28 @@ test("отмена заполнения защищает измененные с
       ],
     });
     const periodId = Number(createdPeriod.periodId);
+    await dispatch("topics:save", {
+      programId: program.id,
+      topics: [{
+        utp_number: "1",
+        title: "Тестовая тема",
+        discipline_name: "Тактика",
+        utp_source: "Тактика 2026",
+        utp_name: "Тактика 2026",
+        utp_source_file: "УТП_Тактика_2026.docx",
+        total_hours: 2,
+        sort_order: 1,
+      }],
+    });
     const db = getDb();
     const topic = db
       .prepare(
-        `INSERT INTO program_topics
-          (program_id, utp_number, title, total_hours, sort_order)
-         VALUES (?, '1', 'Тестовая тема', 2, 1)`,
+        `SELECT * FROM program_topics
+         WHERE program_id = ? AND utp_number = '1'`,
       )
-      .run(program.id);
+      .get(program.id);
+    assert.equal(topic.utp_name, "Тактика 2026");
+    assert.equal(topic.utp_source_file, "УТП_Тактика_2026.docx");
 
     const fill = await dispatch("schedule:fillGrid", { periodId });
     assert.equal(fill.created, 4);
@@ -75,7 +90,7 @@ test("отмена заполнения защищает измененные с
     });
     await dispatch("schedule:assignTopic", {
       itemId: initial[2].id,
-      topic_id: topic.lastInsertRowid,
+      topic_id: topic.id,
       lesson_type: "Лекция",
     });
 
@@ -89,8 +104,17 @@ test("отмена заполнения защищает измененные с
       .all(periodId);
     assert.equal(protectedItems.length, 3);
     assert.ok(protectedItems.some((item) => item.custom_title === "Организационное мероприятие"));
-    assert.ok(protectedItems.some((item) => Number(item.topic_id) === Number(topic.lastInsertRowid)));
+    assert.ok(protectedItems.some((item) => Number(item.topic_id) === Number(topic.id)));
     assert.ok(protectedItems.some((item) => item.lesson_type === "empty"));
+    const sourceItems = await dispatch("schedule:listByPeriod", periodId);
+    const importedItem = sourceItems.items.find(
+      (item) => Number(item.topic_id) === Number(topic.id),
+    );
+    assert.equal(importedItem.utp_source, "Тактика 2026");
+    assert.equal(importedItem.utp_name, "Тактика 2026");
+    assert.equal(importedItem.utp_source_file, "УТП_Тактика_2026.docx");
+    const manualItem = sourceItems.items.find((item) => item.custom_title);
+    assert.equal(manualItem.utp_name, null);
 
     const secondFill = await dispatch("schedule:fillGrid", { periodId });
     assert.equal(secondFill.created, 1);
@@ -171,7 +195,7 @@ test("отмена заполнения защищает измененные с
 
     await dispatch("schedule:assignTopic", {
       itemId: groupSlots[0].id,
-      topic_id: topic.lastInsertRowid,
+      topic_id: topic.id,
       lesson_type: "Лекция",
     });
     await dispatch("schedule:restoreToQueue", { itemId: groupSlots[0].id });

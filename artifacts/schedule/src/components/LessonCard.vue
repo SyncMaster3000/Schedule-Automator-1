@@ -2,6 +2,8 @@
 // Карточка одного занятия (или пустого «окошка»). Используется как в плоском
 // списке с drag-and-drop, так и в групповом режиме (две колонки A/B), поэтому
 // время, ручка переноса, чекбокс и бейдж группы скрываются через пропсы.
+import UtpSourceBadge from "./UtpSourceBadge.vue";
+
 const props = defineProps({
   item: { type: Object, required: true },
   selected: { type: Boolean, default: false },
@@ -167,15 +169,11 @@ function conflictTitle(it) {
       >
         {{ itemTitle(item) }}
         <span
-          v-if="item.discipline_name"
-          class="badge ml-1 max-w-64 truncate bg-violet-50 align-middle text-violet-700"
-          :title="item.discipline_name"
-        >{{ item.discipline_name }}</span>
-        <span
           v-if="showGroupBadge && item.group_label"
           class="badge ml-1 bg-brand-50 text-brand-700"
         >Группа {{ item.group_label }}</span>
       </div>
+      <UtpSourceBadge :item="item" />
       <div v-if="isSelfStudy(item)" class="truncate text-xs text-slate-400">
         Самостоятельная подготовка
       </div>
