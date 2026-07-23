@@ -1,6 +1,6 @@
 <script setup>
 // Конструктор расписания: drag-and-drop занятий + контроль накладок в реальном времени
-import { ref, computed, onMounted, onUnmounted } from "vue";
+import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { useRouter } from "vue-router";
 import { eachDayOfInterval, parseISO, format, getDay } from "date-fns";
 import api from "../api";
@@ -11,6 +11,11 @@ import {
   enrichTopicsWithDisciplines,
   groupTopicsByDiscipline,
 } from "../utils/topicDisciplines";
+import {
+  itemMatchesGroupFilter,
+  selectedIdsInScope,
+  visibleSelectableItems,
+} from "../utils/scheduleSelection";
 
 const props = defineProps({
   id: { type: [String, Number], required: true },
@@ -238,14 +243,11 @@ function isSelected(id) {
   return selected.value.includes(id);
 }
 function toggleSelect(id) {
+  if (!selectableItemIds.value.has(id)) return;
   const i = selected.value.indexOf(id);
   if (i >= 0) selected.value.splice(i, 1);
   else selected.value.push(id);
 }
-const selectableItems = computed(() => items.value.filter((it) => !isEmptyItem(it)));
-const allSelected = computed(
-  () => selectableItems.value.length > 0 && selected.value.length === selectableItems.value.length
-);
 const usedGroupLabels = computed(() =>
   groups.value.filter((group) => group.is_active).map((group) => group.name)
 );
@@ -272,19 +274,51 @@ function groupLabelForIds(ids) {
     .join("; ");
 }
 function matchesGroupFilter(it) {
-  if (!groupFilter.value) return true;
-  const id = Number(groupFilter.value);
-  return safeJsonArray(it.group_ids).map((groupId) => Number(groupId)).includes(id);
+  return itemMatchesGroupFilter(it, groupFilter.value);
 }
 const visibleItems = computed(() => items.value.filter(matchesGroupFilter));
 const displayedItems = computed(() =>
   period.value?.group_mode ? visibleItems.value : items.value
 );
+const selectableItems = computed(() =>
+  visibleSelectableItems(items.value, {
+    groupMode: Boolean(period.value?.group_mode),
+    groupFilter: groupFilter.value,
+    isEmptyItem,
+  }),
+);
+const selectableItemIds = computed(() => new Set(selectableItems.value.map((it) => it.id)));
+const selectedVisibleIds = computed(() =>
+  selectedIdsInScope(selected.value, selectableItems.value),
+);
+const selectedVisibleItems = computed(() => {
+  const selectedIds = new Set(selectedVisibleIds.value);
+  return selectableItems.value.filter((it) => selectedIds.has(it.id));
+});
+const selectedCount = computed(() => selectedVisibleIds.value.length);
+const allSelected = computed(
+  () =>
+    selectableItems.value.length > 0 &&
+    selectableItems.value.every((it) => selected.value.includes(it.id))
+);
+
+function reconcileSelectionWithVisibleItems() {
+  const next = selectedVisibleIds.value;
+  if (
+    next.length !== selected.value.length ||
+    next.some((id, index) => id !== selected.value[index])
+  ) {
+    selected.value = next;
+  }
+}
+
+watch(groupFilter, reconcileSelectionWithVisibleItems, { flush: "sync" });
+
 function toggleSelectAll() {
   selected.value = allSelected.value ? [] : selectableItems.value.map((it) => it.id);
 }
 function selectableItemsForDay(date) {
-  return displayedItems.value.filter((it) => it.date === date && !isEmptyItem(it));
+  return selectableItems.value.filter((it) => it.date === date);
 }
 function isDaySelected(date) {
   const dayItems = selectableItemsForDay(date);
@@ -293,13 +327,13 @@ function isDaySelected(date) {
 function toggleSelectDay(date) {
   const ids = selectableItemsForDay(date).map((it) => it.id);
   const allDaySelected = ids.length > 0 && ids.every((id) => selected.value.includes(id));
-  const next = new Set(selected.value);
+  const next = new Set(selectedVisibleIds.value);
   for (const id of ids) allDaySelected ? next.delete(id) : next.add(id);
   selected.value = [...next];
 }
 
 function openBulk() {
-  const chosen = items.value.filter((it) => selected.value.includes(it.id));
+  const chosen = selectedVisibleItems.value;
   if (!chosen.length) return;
   const teacherSets = chosen.map((it) => [...(it.teacher_ids || [])].sort((a, b) => a - b));
   const firstTeachers = teacherSets[0] || [];
@@ -335,6 +369,11 @@ function bulkToggleTeacher(id) {
   else arr.push(id);
 }
 async function applyBulk() {
+  const ids = [...selectedVisibleIds.value];
+  if (!ids.length) {
+    bulkOpen.value = false;
+    return;
+  }
   pushUndo("массовое назначение");
   error.value = "";
   try {
@@ -344,13 +383,13 @@ async function applyBulk() {
     if (bulk.value.applyLessonType) fields.lesson_type = bulk.value.lesson_type;
     if (bulk.value.applyGroupLabel) fields.group_label = bulk.value.group_label;
     const res = await api.schedule.bulkUpdate({
-      ids: [...selected.value],
+      ids,
       fields,
       crossPeriod: crossPeriod.value,
       author: author.value || null,
     });
     bulkOpen.value = false;
-    const count = res && res.updated != null ? res.updated : selected.value.length;
+    const count = res && res.updated != null ? res.updated : ids.length;
     selected.value = [];
     info.value = `Изменено занятий: ${count}`;
     await load();
@@ -484,8 +523,7 @@ function applyScheduleData(data) {
   period.value = data.period;
   dayGrid.value = JSON.parse(data.period.day_grids_json || "{}");
   items.value = nextItems;
-  const currentIds = new Set(nextItems.map((it) => it.id));
-  selected.value = selected.value.filter((id) => currentIds.has(id));
+  reconcileSelectionWithVisibleItems();
 }
 
 // После перетаскивания меняются только дата и время занятий. Перечитываем одну
@@ -1521,8 +1559,9 @@ async function onDragEnd(evt) {
   error.value = "";
   const dragged = dragOrder.value[oldIndex];
   const targetSlot = dragSlots.value[newIndex];
+  const selectedIds = [...selectedVisibleIds.value];
   const multiSelectionDrag = Boolean(
-    dragged && targetSlot && selected.value.length > 1 && selected.value.includes(dragged.id)
+    dragged && targetSlot && selectedIds.length > 1 && selectedIds.includes(dragged.id)
   );
   pushUndo(
     multiSelectionDrag
@@ -1534,7 +1573,7 @@ async function onDragEnd(evt) {
     if (multiSelectionDrag) {
       if (dragged.is_pinned) throw new Error("Закрепленное занятие нельзя перетаскивать");
       const res = await api.schedule.moveSelected({
-        itemIds: [...selected.value],
+        itemIds: selectedIds,
         targetDate: targetSlot.date,
         targetStartTime: targetSlot.start_time,
         periodId: periodId.value,
@@ -1674,25 +1713,28 @@ async function togglePin(it) {
 
 // Массовое закрепление / открепление выбранных занятий
 async function bulkPin(pinned) {
-  if (!selected.value.length) return;
+  const ids = [...selectedVisibleIds.value];
+  if (!ids.length) return;
   error.value = "";
   try {
-    await api.schedule.bulkSetPin({ itemIds: [...selected.value], pinned });
+    await api.schedule.bulkSetPin({ itemIds: ids, pinned });
+    const idSet = new Set(ids);
     // Обновить локально без полного reload
     for (const it of items.value) {
-      if (selected.value.includes(it.id)) it.is_pinned = pinned ? 1 : 0;
+      if (idSet.has(it.id)) it.is_pinned = pinned ? 1 : 0;
     }
     info.value = pinned
-      ? `Закреплено занятий: ${selected.value.length}`
-      : `Откреплено занятий: ${selected.value.length}`;
+      ? `Закреплено занятий: ${ids.length}`
+      : `Откреплено занятий: ${ids.length}`;
   } catch (e) {
     error.value = e.message;
   }
 }
 
 async function bulkDeleteSelected() {
-  if (!selected.value.length) return;
-  const chosen = items.value.filter((it) => selected.value.includes(it.id));
+  const ids = [...selectedVisibleIds.value];
+  if (!ids.length) return;
+  const chosen = selectedVisibleItems.value;
   const pinnedCount = chosen.filter((it) => it.is_pinned).length;
   const deletableCount = chosen.length - pinnedCount;
   if (!deletableCount) {
@@ -1705,7 +1747,7 @@ async function bulkDeleteSelected() {
   error.value = "";
   try {
     const res = await api.schedule.bulkDelete({
-      itemIds: [...selected.value],
+      itemIds: ids,
       author: author.value || null,
     });
     selected.value = [];
@@ -1749,7 +1791,8 @@ async function applyBulkShift() {
 
 // --- T1: Переместить выделенные к указанному слоту ---
 function openMoveSelected() {
-  const first = items.value.find((it) => isSelected(it.id));
+  const first = selectedVisibleItems.value[0];
+  if (!first) return;
   moveTarget.value = {
     date: first?.date || period.value?.start_date || "",
     start_time: first?.start_time || "",
@@ -1759,11 +1802,16 @@ function openMoveSelected() {
 }
 
 async function applyMoveSelected() {
+  const ids = [...selectedVisibleIds.value];
+  if (!ids.length) {
+    moveOpen.value = false;
+    return;
+  }
   pushUndo("перемещение выделенных занятий");
   try {
     error.value = "";
     const res = await api.schedule.moveSelected({
-      itemIds: [...selected.value],
+      itemIds: ids,
       targetDate: moveTarget.value.date,
       targetStartTime: moveTarget.value.start_time,
       periodId: periodId.value,
@@ -2221,19 +2269,19 @@ onUnmounted(() => {
         Выбрать все
       </label>
       <button
-        v-if="selected.length"
+        v-if="selectedCount"
         class="btn-danger"
         title="Удалить выбранные незакрепленные занятия и вернуть их темы в очередь УТП"
         @click="bulkDeleteSelected"
       >
         Удалить выбранные
       </button>
-      <span class="text-slate-500">Выбрано: {{ selected.length }}</span>
-      <button class="btn-secondary ml-auto" :disabled="!selected.length" @click="openBulk">
+      <span class="text-slate-500">Выбрано: {{ selectedCount }}</span>
+      <button class="btn-secondary ml-auto" :disabled="!selectedCount" @click="openBulk">
         Назначить преподавателей / аудиторию
       </button>
       <button
-        v-if="selected.length"
+        v-if="selectedCount"
         class="btn-secondary"
         @click="openMoveSelected"
         title="Переместить выделенные занятия к выбранному слоту, сохраняя взаимный порядок"
@@ -2241,18 +2289,18 @@ onUnmounted(() => {
         Переместить выделенные…
       </button>
       <button
-        v-if="selected.length"
+        v-if="selectedCount"
         class="btn-secondary"
         title="Закрепить выбранные занятия — они не будут смещаться при авто-операциях"
         @click="bulkPin(true)"
       >📌 Закрепить</button>
       <button
-        v-if="selected.length"
+        v-if="selectedCount"
         class="btn-secondary"
         title="Открепить выбранные занятия"
         @click="bulkPin(false)"
       >📌 Открепить</button>
-      <button v-if="selected.length" class="btn-ghost text-slate-500" @click="selected = []">
+      <button v-if="selectedCount" class="btn-ghost text-slate-500" @click="selected = []">
         Сбросить
       </button>
       <div class="flex items-center gap-2 border-l border-slate-200 pl-3 text-slate-600">
@@ -2789,7 +2837,7 @@ onUnmounted(() => {
     <!-- Массовое назначение -->
     <AppModal v-if="bulkOpen" title="Массовое назначение" @close="bulkOpen = false">
       <p class="mb-4 text-sm text-slate-500">
-        Будет применено к {{ selected.length }} выбранным занятиям. Отметьте, что именно
+        Будет применено к {{ selectedCount }} выбранным занятиям. Отметьте, что именно
         назначить.
       </p>
 
@@ -3323,7 +3371,7 @@ onUnmounted(() => {
     <AppModal v-if="moveOpen" title="Переместить выделенные занятия" @close="moveOpen = false">
       <div class="space-y-4 text-sm">
         <p class="text-slate-600">
-          Выбрано <strong>{{ selected.length }}</strong> занятий. Они будут размещены подряд
+          Выбрано <strong>{{ selectedCount }}</strong> занятий. Они будут размещены подряд
           начиная с указанного слота, сохраняя взаимный порядок. Занятия на освободившихся
           местах сдвигаются на освободившиеся позиции.
         </p>
