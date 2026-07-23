@@ -250,16 +250,23 @@ export default {
     return db
       .prepare(
         `SELECT v.id, v.program_id, v.version_label, v.status, v.note,
-                v.archive_section, v.created_at, p.title AS program_title
+                v.archive_section, v.created_at,
+                COALESCE(NULLIF(v.program_title, ''), p.title, v.version_label) AS program_title
          FROM schedule_versions v
-         JOIN programs p ON p.id = v.program_id
-         WHERE (p.title LIKE ? OR v.version_label LIKE ? OR v.status LIKE ? OR v.created_at LIKE ?)
-           AND v.archive_section IS NOT NULL
+         LEFT JOIN programs p ON p.id = v.program_id
+         WHERE (
+             COALESCE(NULLIF(v.program_title, ''), p.title, v.version_label) LIKE ?
+             OR v.version_label LIKE ?
+             OR v.status LIKE ?
+             OR v.created_at LIKE ?
+             OR COALESCE(v.archive_section, '') LIKE ?
+             OR COALESCE(v.note, '') LIKE ?
+           )
            AND v.status IN ('approved', 'archived')
            AND (? IS NULL OR v.archive_section = ?)
          ORDER BY datetime(v.created_at) DESC`
       )
-      .all(q, q, q, q, section, section);
+      .all(q, q, q, q, q, q, section, section);
   },
 
   "versions:create": (data) => {
@@ -276,11 +283,13 @@ export default {
     const info = db
       .prepare(
         `INSERT INTO schedule_versions
-          (program_id, version_label, status, snapshot_json, note, archive_section, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+          (program_id, program_title, version_label, status, snapshot_json, note,
+           archive_section, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         data.programId,
+        snapshot.program?.title || data.version_label || "Расписание",
         data.version_label,
         status,
         JSON.stringify(snapshot),
@@ -352,7 +361,7 @@ export default {
       .prepare("SELECT * FROM schedule_versions WHERE id = ?")
       .get(id);
     if (!version) throw new Error("Архивная запись не найдена");
-    if (!version.archive_section || !["approved", "archived"].includes(version.status)) {
+    if (!["approved", "archived"].includes(version.status)) {
       throw new Error("Как шаблон можно использовать только запись из архива");
     }
     const snap = JSON.parse(version.snapshot_json);
@@ -360,4 +369,3 @@ export default {
     return tx();
   },
 };
-

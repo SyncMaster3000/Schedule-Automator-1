@@ -145,13 +145,15 @@ CREATE INDEX IF NOT EXISTS ix_locks_lookup
 
 CREATE TABLE IF NOT EXISTS schedule_versions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  program_id INTEGER NOT NULL,
+  program_id INTEGER,
+  program_title TEXT NOT NULL DEFAULT '',
   version_label TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'draft',
   snapshot_json TEXT NOT NULL,
   note TEXT,
+  archive_section TEXT,
   created_at TEXT NOT NULL,
-  FOREIGN KEY (program_id) REFERENCES programs(id) ON DELETE CASCADE
+  FOREIGN KEY (program_id) REFERENCES programs(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS schedule_audit (
@@ -330,6 +332,109 @@ function addColumnIfMissing(table, column, ddl) {
   if (!names.includes(column)) raw.run(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
 }
 
+function rawRows(sql) {
+  const result = raw.exec(sql);
+  if (!result.length) return [];
+  const { columns, values } = result[0];
+  return values.map((row) =>
+    Object.fromEntries(columns.map((column, index) => [column, row[index]]))
+  );
+}
+
+// Старые БД связывали версии с рабочей программой через ON DELETE CASCADE.
+// Перестраиваем таблицу без потери идентификаторов и снимков: архив сможет жить
+// самостоятельно, а обычные версии черновика удалит обработчик programs:delete.
+function migrateScheduleVersionsToIndependentArchive() {
+  const columns = rawRows("PRAGMA table_info(schedule_versions)");
+  const programIdColumn = columns.find((column) => column.name === "program_id");
+  const foreignKeys = rawRows("PRAGMA foreign_key_list(schedule_versions)");
+  const programForeignKey = foreignKeys.find(
+    (foreignKey) => foreignKey.from === "program_id" && foreignKey.table === "programs"
+  );
+  const needsRebuild =
+    Number(programIdColumn?.notnull || 0) !== 0 ||
+    String(programForeignKey?.on_delete || "").toUpperCase() !== "SET NULL";
+  if (!needsRebuild) return;
+
+  const foreignKeysEnabled = Number(rawRows("PRAGMA foreign_keys")[0]?.foreign_keys || 0) !== 0;
+  raw.run("PRAGMA foreign_keys = OFF");
+  raw.run("BEGIN");
+  try {
+    raw.run("DROP TABLE IF EXISTS schedule_versions_independent");
+    raw.run(`
+      CREATE TABLE schedule_versions_independent (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        program_id INTEGER,
+        program_title TEXT NOT NULL DEFAULT '',
+        version_label TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'draft',
+        snapshot_json TEXT NOT NULL,
+        note TEXT,
+        archive_section TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (program_id) REFERENCES programs(id) ON DELETE SET NULL
+      )
+    `);
+    raw.run(`
+      INSERT INTO schedule_versions_independent
+        (id, program_id, program_title, version_label, status, snapshot_json,
+         note, archive_section, created_at)
+      SELECT id, program_id, COALESCE(program_title, ''), version_label, status,
+             snapshot_json, note, archive_section, created_at
+      FROM schedule_versions
+    `);
+    raw.run("DROP TABLE schedule_versions");
+    raw.run("ALTER TABLE schedule_versions_independent RENAME TO schedule_versions");
+    raw.run("COMMIT");
+  } catch (error) {
+    raw.run("ROLLBACK");
+    throw error;
+  } finally {
+    raw.run(`PRAGMA foreign_keys = ${foreignKeysEnabled ? "ON" : "OFF"}`);
+  }
+}
+
+function backfillScheduleVersionTitles() {
+  const rows = rawRows(`
+    SELECT v.id, v.program_title, v.version_label, v.snapshot_json,
+           p.title AS live_program_title
+    FROM schedule_versions v
+    LEFT JOIN programs p ON p.id = v.program_id
+    WHERE v.program_title IS NULL OR TRIM(v.program_title) = ''
+  `);
+  if (!rows.length) return;
+
+  const update = raw.prepare("UPDATE schedule_versions SET program_title = ? WHERE id = ?");
+  try {
+    for (const row of rows) {
+      let snapshotTitle = "";
+      try {
+        snapshotTitle = JSON.parse(row.snapshot_json || "{}")?.program?.title || "";
+      } catch {
+        // Поврежденный JSON не должен останавливать миграцию остальных записей.
+      }
+      const title =
+        String(row.live_program_title || "").trim() ||
+        String(snapshotTitle).trim() ||
+        String(row.version_label || "").trim() ||
+        "Расписание";
+      update.bind([title, row.id]);
+      update.step();
+      update.reset();
+    }
+  } finally {
+    update.free();
+  }
+}
+
+function ensureScheduleVersionIndexes() {
+  raw.run("CREATE INDEX IF NOT EXISTS ix_schedule_versions_program ON schedule_versions(program_id)");
+  raw.run(
+    `CREATE INDEX IF NOT EXISTS ix_schedule_versions_archive
+     ON schedule_versions(status, archive_section, created_at)`
+  );
+}
+
 function runMigrations() {
   // Название дисциплины/УТП позволяет разделять темы при сборке одной программы
   // из нескольких учебно-тематических планов.
@@ -371,6 +476,11 @@ function runMigrations() {
   addColumnIfMissing("periods", "separate_lectures", "separate_lectures INTEGER NOT NULL DEFAULT 0");
   // Раздел архива при утверждении: qualification | retraining | courses.
   addColumnIfMissing("schedule_versions", "archive_section", "archive_section TEXT");
+  // Название и сам архивный снимок не должны зависеть от существования рабочей программы.
+  addColumnIfMissing("schedule_versions", "program_title", "program_title TEXT");
+  migrateScheduleVersionsToIndependentArchive();
+  backfillScheduleVersionTitles();
+  ensureScheduleVersionIndexes();
   // Автор записи в журнале изменений.
   addColumnIfMissing("schedule_audit", "author", "author TEXT");
   // Номер учебной группы для нелекционных занятий в групповом режиме (А/Б).
@@ -429,4 +539,3 @@ function audit(programId, periodId, action, details, author = null) {
 }
 
 export { ensureDb, getDb, audit, persist };
-

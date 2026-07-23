@@ -4,12 +4,14 @@
 import { ref, computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import api from "../api";
+import AppModal from "../components/AppModal.vue";
 
 const query = ref("");
 const versions = ref([]);
 const error = ref("");
 const loading = ref(false);
 const info = ref("");
+const details = ref(null);
 const router = useRouter();
 
 const statusLabel = { draft: "Черновик", approved: "Утверждено", archived: "Архив" };
@@ -93,6 +95,16 @@ async function deleteArchived(v) {
     await api.versions.delete(v.id);
     versions.value = versions.value.filter((item) => item.id !== v.id);
     info.value = "Расписание удалено из архива";
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
+async function openDetails(v) {
+  error.value = "";
+  info.value = "";
+  try {
+    details.value = await api.versions.get(v.id);
   } catch (e) {
     error.value = e.message;
   }
@@ -206,6 +218,9 @@ onMounted(search);
                 </div>
               </div>
               <div class="flex w-full shrink-0 flex-wrap gap-2 lg:w-auto lg:justify-end">
+                <button class="btn-secondary" @click="openDetails(v)">
+                  Сведения
+                </button>
                 <button class="btn-secondary" @click="openWord(v)">
                   Открыть Word
                 </button>
@@ -222,6 +237,86 @@ onMounted(search);
       </section>
     </div>
 
+    <AppModal
+      v-if="details"
+      title="Сведения об архивном расписании"
+      @close="details = null"
+    >
+      <div class="space-y-4 text-sm">
+        <dl class="grid gap-3 sm:grid-cols-2">
+          <div>
+            <dt class="text-xs font-medium uppercase tracking-wide text-slate-400">
+              Исходное расписание
+            </dt>
+            <dd class="mt-1 font-medium text-slate-800">
+              {{ details.program_title || details.snapshot?.program?.title || "Расписание" }}
+            </dd>
+          </div>
+          <div>
+            <dt class="text-xs font-medium uppercase tracking-wide text-slate-400">
+              Архивная запись
+            </dt>
+            <dd class="mt-1 text-slate-700">{{ details.version_label }}</dd>
+          </div>
+          <div>
+            <dt class="text-xs font-medium uppercase tracking-wide text-slate-400">
+              Раздел
+            </dt>
+            <dd class="mt-1 text-slate-700">
+              {{ details.archive_section || "Определён по названию" }}
+            </dd>
+          </div>
+          <div>
+            <dt class="text-xs font-medium uppercase tracking-wide text-slate-400">
+              Сохранено
+            </dt>
+            <dd class="mt-1 text-slate-700">{{ fmt(details.created_at) }}</dd>
+          </div>
+          <div>
+            <dt class="text-xs font-medium uppercase tracking-wide text-slate-400">
+              Периоды
+            </dt>
+            <dd class="mt-1 text-slate-700">{{ details.snapshot?.periods?.length || 0 }}</dd>
+          </div>
+          <div>
+            <dt class="text-xs font-medium uppercase tracking-wide text-slate-400">
+              Занятия
+            </dt>
+            <dd class="mt-1 text-slate-700">{{ details.snapshot?.items?.length || 0 }}</dd>
+          </div>
+        </dl>
+
+        <div
+          v-if="details.snapshot?.program?.approver_name || details.snapshot?.program?.signer_name"
+          class="rounded-lg bg-slate-50 p-3 text-slate-600"
+        >
+          <div v-if="details.snapshot?.program?.approver_name">
+            <span class="font-medium text-slate-700">Утверждает:</span>
+            {{ details.snapshot.program.approver_title }}
+            {{ details.snapshot.program.approver_name }}
+            <template v-if="details.snapshot.program.approve_date">
+              · {{ details.snapshot.program.approve_date }}
+            </template>
+          </div>
+          <div v-if="details.snapshot?.program?.signer_name" class="mt-1">
+            <span class="font-medium text-slate-700">Подписывает:</span>
+            {{ details.snapshot.program.signer_title }}
+            {{ details.snapshot.program.signer_name }}
+            <template v-if="details.snapshot.program.sign_date">
+              · {{ details.snapshot.program.sign_date }}
+            </template>
+          </div>
+        </div>
+
+        <div v-if="details.note" class="rounded-lg border border-slate-200 p-3 text-slate-600">
+          {{ details.note }}
+        </div>
+      </div>
+
+      <template #footer>
+        <button class="btn-secondary" @click="details = null">Закрыть</button>
+      </template>
+    </AppModal>
   </div>
 </template>
 
@@ -233,4 +328,3 @@ onMounted(search);
   @apply border-brand-600 text-brand-700;
 }
 </style>
-

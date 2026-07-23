@@ -133,7 +133,7 @@ async function save() {
 }
 
 async function remove(id) {
-  if (!confirm("Удалить программу со всеми расписаниями?")) return;
+  if (!confirm("Удалить рабочее расписание, его темы, периоды, занятия и обычные сохранённые версии? Утверждённые и архивные копии сохранятся в архиве.")) return;
   try {
     await api.programs.remove(id);
     await load();

@@ -80,7 +80,41 @@ export default {
   },
 
   "programs:delete": (id) => {
-    getDb().prepare("DELETE FROM programs WHERE id = ?").run(id);
-    return { id };
+    const db = getDb();
+    const program = db.prepare("SELECT id, title FROM programs WHERE id = ?").get(id);
+    if (!program) {
+      return { id, preservedArchiveCount: 0, deletedDraftVersionCount: 0 };
+    }
+
+    const tx = db.transaction(() => {
+      const preserved = db
+        .prepare(
+          `UPDATE schedule_versions
+           SET program_title = CASE
+                 WHEN program_title IS NULL OR TRIM(program_title) = '' THEN ?
+                 ELSE program_title
+               END,
+               program_id = NULL
+           WHERE program_id = ?
+             AND (archive_section IS NOT NULL OR status IN ('approved', 'archived'))`
+        )
+        .run(program.title, id);
+      const deletedDrafts = db
+        .prepare("DELETE FROM schedule_versions WHERE program_id = ?")
+        .run(id);
+
+      audit(id, null, "program_deleted", {
+        title: program.title,
+        preservedArchiveCount: preserved.changes,
+        deletedDraftVersionCount: deletedDrafts.changes,
+      });
+      db.prepare("DELETE FROM programs WHERE id = ?").run(id);
+      return {
+        id,
+        preservedArchiveCount: preserved.changes,
+        deletedDraftVersionCount: deletedDrafts.changes,
+      };
+    });
+    return tx();
   },
 };
