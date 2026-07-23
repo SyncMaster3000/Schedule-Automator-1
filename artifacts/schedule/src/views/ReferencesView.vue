@@ -370,9 +370,24 @@ onMounted(loadAll);
 
 <style scoped>
 .tab {
-  @apply -mb-px border-b-2 border-transparent px-4 py-2 text-sm font-medium text-slate-500 hover:text-slate-700;
+  @apply -mb-px border-b-2 border-transparent px-4 py-2 text-sm font-semibold;
+  border-radius: 0.625rem 0.625rem 0 0;
+  color: var(--text-muted);
+  transition:
+    color 150ms ease,
+    border-color 150ms ease,
+    background-color 150ms ease;
+}
+.tab:hover {
+  color: var(--text-strong);
+  background: var(--surface-subtle);
 }
 .tab-active {
-  @apply border-brand-600 text-brand-700;
+  border-color: var(--brand-600);
+  color: var(--brand-700);
+  background: var(--brand-soft);
+}
+:global(:root[data-theme="dark"]) .tab-active {
+  color: var(--brand-200);
 }
 </style>

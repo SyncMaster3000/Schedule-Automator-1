@@ -70,24 +70,44 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+  <div class="app-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4">
     <div
       ref="modalRef"
-      :class="['card w-full max-h-[90vh] overflow-auto', wide ? 'max-w-4xl' : 'max-w-lg']"
+      role="dialog"
+      aria-modal="true"
+      :aria-label="title || 'Диалоговое окно'"
+      :class="[
+        'app-modal-panel card w-full max-h-[90vh] overflow-auto',
+        wide ? 'max-w-4xl' : 'max-w-lg',
+      ]"
       :style="modalStyle"
     >
       <div
-        class="flex cursor-move select-none items-center justify-between border-b border-slate-100 px-5 py-4"
+        class="app-modal-header flex cursor-move select-none items-center justify-between border-b border-slate-100 px-5 py-4"
         title="Перетащите окно"
         @mousedown="startDrag"
       >
         <h3 class="text-base font-semibold text-slate-800">{{ title }}</h3>
-        <button class="btn-ghost px-2 py-1" @mousedown.stop @click="emit('close')">✕</button>
+        <button
+          class="app-modal-close btn-ghost"
+          type="button"
+          aria-label="Закрыть окно"
+          title="Закрыть"
+          @mousedown.stop
+          @click="emit('close')"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M18 6 6 18M6 6l12 12" />
+          </svg>
+        </button>
       </div>
-      <div class="px-5 py-4">
+      <div class="app-modal-body px-5 py-4">
         <slot />
       </div>
-      <div v-if="$slots.footer" class="flex justify-end gap-2 border-t border-slate-100 px-5 py-4">
+      <div
+        v-if="$slots.footer"
+        class="app-modal-footer flex flex-wrap justify-end gap-2 border-t border-slate-100 px-5 py-4"
+      >
         <slot name="footer" />
       </div>
     </div>

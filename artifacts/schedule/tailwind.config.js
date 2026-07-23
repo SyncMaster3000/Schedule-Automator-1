@@ -1,49 +1,48 @@
 /** @type {import('tailwindcss').Config} */
 export default {
+  darkMode: "class",
   content: ["./index.html", "./src/**/*.{vue,js,ts,jsx,tsx,html}"],
   theme: {
     extend: {
       colors: {
-        // «Чернильный кобальт» — приглушённый официальный синий (не дефолтный
-        // яркий blue-600). Спокойный при долгой работе, хорошо читаемый.
+        // Спокойный кобальт: уверенный акцент без излишней яркости.
         brand: {
-          50: "#eef1f9",
-          100: "#dbe1f2",
-          200: "#bcc8e6",
-          300: "#93a5d4",
-          400: "#6a80bf",
-          500: "#4a61a6",
-          600: "#384e8c", // основная кнопка / акцент
-          700: "#2f4074", // hover
-          800: "#29375f",
-          900: "#1f2a49", // тёмная боковая панель
+          50: "#f0f4ff",
+          100: "#e0e8fb",
+          200: "#c4d2f4",
+          300: "#9eb3e8",
+          400: "#7891d8",
+          500: "#5b73c2",
+          600: "#465ca8",
+          700: "#394a89",
+          800: "#303e70",
+          900: "#263258",
+          950: "#19213c",
         },
       },
       fontFamily: {
-        // Дисплейная гарнитура для заголовков и логотипа — «инструментальный»
-        // характер, при этом хорошо читаема. Тело интерфейса — Inter.
         display: [
-          "Space Grotesk",
-          "Inter",
-          "-apple-system",
-          "BlinkMacSystemFont",
+          "Segoe UI Variable",
           "Segoe UI",
+          "Noto Sans",
+          "DejaVu Sans",
+          "Arial",
           "sans-serif",
         ],
         sans: [
-          "Inter",
-          "-apple-system",
-          "BlinkMacSystemFont",
+          "Segoe UI Variable",
           "Segoe UI",
-          "Roboto",
+          "Noto Sans",
+          "DejaVu Sans",
+          "Arial",
           "sans-serif",
         ],
       },
       boxShadow: {
-        // Мягкая многослойная тень для карточек — чётче дефолтной, но не тяжёлая.
-        card: "0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.06)",
+        card:
+          "0 1px 2px rgba(21, 31, 51, 0.04), 0 8px 24px rgba(31, 42, 73, 0.06)",
         "card-hover":
-          "0 4px 12px rgba(15, 23, 42, 0.08), 0 2px 4px rgba(15, 23, 42, 0.05)",
+          "0 2px 5px rgba(21, 31, 51, 0.06), 0 14px 32px rgba(31, 42, 73, 0.1)",
       },
     },
   },
