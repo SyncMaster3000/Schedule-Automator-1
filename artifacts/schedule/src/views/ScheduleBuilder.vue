@@ -108,6 +108,13 @@ const bulkTeacherFilter = ref("");
 const bulkTeacherMixed = ref(false);
 const bulkRoomMixed = ref(false);
 
+// --- Групповой обмен двух явно выбранных наборов ---
+const groupExchangeActive = ref(false);
+const groupExchangeSourceIds = ref([]);
+const groupExchangeTargetIds = ref([]);
+const groupExchangeConfirmOpen = ref(false);
+const groupExchangeBusy = ref(false);
+
 // --- Массовое смещение (T5) ---
 const bulkShiftOpen = ref(false);
 const bulkShiftForm = ref({ scope: "all", date: "", n: 1 });
@@ -251,6 +258,12 @@ const usedGroupLabels = computed(() =>
   groups.value.filter((group) => group.is_active).map((group) => group.name)
 );
 const activeGroups = computed(() => groups.value.filter((group) => group.is_active));
+const displayedGroups = computed(() => {
+  const filterId = Number(groupFilter.value || 0);
+  return filterId
+    ? activeGroups.value.filter((group) => Number(group.id) === filterId)
+    : activeGroups.value;
+});
 
 function itemGroupNames(it) {
   const ids = safeJsonArray(it.group_ids).map((id) => Number(id));
@@ -300,6 +313,239 @@ const allSelected = computed(
     selectableItems.value.length > 0 &&
     selectableItems.value.every((it) => selected.value.includes(it.id))
 );
+const groupExchangeSourceIdSet = computed(
+  () => new Set(groupExchangeSourceIds.value.map(Number)),
+);
+const groupExchangeTargetIdSet = computed(
+  () => new Set(groupExchangeTargetIds.value.map(Number)),
+);
+const groupExchangeSourceItems = computed(() =>
+  items.value.filter((item) => groupExchangeSourceIdSet.value.has(Number(item.id))),
+);
+const groupExchangeTargetItems = computed(() =>
+  items.value.filter((item) => groupExchangeTargetIdSet.value.has(Number(item.id))),
+);
+const groupExchangeSourceCount = computed(() => groupExchangeSourceIds.value.length);
+const groupExchangeTargetCount = computed(() => groupExchangeTargetIds.value.length);
+const groupExchangeReady = computed(
+  () =>
+    groupExchangeActive.value &&
+    groupExchangeSourceCount.value >= 2 &&
+    groupExchangeTargetCount.value === groupExchangeSourceCount.value,
+);
+const exchangeVisiblePositionIds = computed(
+  () =>
+    new Set(
+      (period.value?.group_mode ? visibleItems.value : items.value).map((item) =>
+        Number(item.id),
+      ),
+    ),
+);
+
+function isCommonGroupItem(item) {
+  return Boolean(period.value?.group_mode && itemGroupNames(item).length !== 1);
+}
+
+function exchangePositionRank(item) {
+  if (!period.value?.group_mode) return 0;
+  const names = itemGroupNames(item);
+  if (names.length !== 1) return -1;
+  const index = activeGroups.value.findIndex((group) => group.name === names[0]);
+  return index >= 0 ? index : Number.MAX_SAFE_INTEGER;
+}
+
+function orderedExchangeItems(list) {
+  return [...list].sort((left, right) => {
+    const dateCompare = String(left.date).localeCompare(String(right.date));
+    if (dateCompare) return dateCompare;
+    const timeCompare = String(left.start_time).localeCompare(String(right.start_time));
+    if (timeCompare) return timeCompare;
+    const rankCompare = exchangePositionRank(left) - exchangePositionRank(right);
+    if (rankCompare) return rankCompare;
+    const sortCompare = Number(left.sort_order || 0) - Number(right.sort_order || 0);
+    return sortCompare || Number(left.id) - Number(right.id);
+  });
+}
+
+const groupExchangeCompatibilityError = computed(() => {
+  if (!groupExchangeReady.value || !period.value?.group_mode) return "";
+  const source = orderedExchangeItems(groupExchangeSourceItems.value);
+  const target = orderedExchangeItems(groupExchangeTargetItems.value);
+  for (let index = 0; index < source.length; index += 1) {
+    if (isCommonGroupItem(source[index]) !== isCommonGroupItem(target[index])) {
+      return `Позиции №${index + 1} несовместимы: общее мероприятие можно обменять только с общей позицией для обеих групп.`;
+    }
+  }
+  return "";
+});
+const groupExchangeTouchesCommon = computed(() =>
+  [...groupExchangeSourceItems.value, ...groupExchangeTargetItems.value].some(
+    isCommonGroupItem,
+  ),
+);
+
+function groupExchangeRole(item) {
+  const id = Number(item?.id);
+  if (groupExchangeSourceIdSet.value.has(id)) return "source";
+  if (groupExchangeTargetIdSet.value.has(id)) return "target";
+  return "";
+}
+
+function lessonCountWord(count) {
+  const mod100 = Math.abs(Number(count)) % 100;
+  const mod10 = mod100 % 10;
+  if (mod100 >= 11 && mod100 <= 14) return "занятий";
+  if (mod10 === 1) return "занятие";
+  if (mod10 >= 2 && mod10 <= 4) return "занятия";
+  return "занятий";
+}
+
+function positionCountWord(count) {
+  const mod100 = Math.abs(Number(count)) % 100;
+  const mod10 = mod100 % 10;
+  if (mod100 >= 11 && mod100 <= 14) return "целевых позиций";
+  if (mod10 === 1) return "целевую позицию";
+  if (mod10 >= 2 && mod10 <= 4) return "целевые позиции";
+  return "целевых позиций";
+}
+
+function isGroupExchangeTargetAllowed(item) {
+  if (!groupExchangeActive.value || !item) return false;
+  const id = Number(item.id);
+  if (!exchangeVisiblePositionIds.value.has(id)) return false;
+  if (groupExchangeSourceIdSet.value.has(id) || Number(item.is_pinned) === 1) return false;
+  return (
+    groupExchangeTargetIdSet.value.has(id) ||
+    groupExchangeTargetCount.value < groupExchangeSourceCount.value
+  );
+}
+
+function resetGroupExchange() {
+  groupExchangeActive.value = false;
+  groupExchangeSourceIds.value = [];
+  groupExchangeTargetIds.value = [];
+  groupExchangeConfirmOpen.value = false;
+}
+
+function cancelGroupExchange(message = "Групповой обмен отменен. Расписание не изменено.") {
+  if (groupExchangeBusy.value) return;
+  resetGroupExchange();
+  resetLessonPointerDrag();
+  info.value = message;
+  error.value = "";
+}
+
+function startGroupExchange() {
+  const source = [...selectedVisibleIds.value];
+  if (source.length < 2) {
+    error.value = "Для группового обмена выберите не менее двух исходных занятий";
+    return;
+  }
+  const sourceItems = selectedVisibleItems.value;
+  if (sourceItems.some((item) => Number(item.is_pinned) === 1)) {
+    error.value =
+      "В исходном наборе есть закрепленное занятие. Сначала открепите его.";
+    return;
+  }
+  groupExchangeSourceIds.value = source;
+  groupExchangeTargetIds.value = [];
+  groupExchangeActive.value = true;
+  groupExchangeConfirmOpen.value = false;
+  selected.value = [];
+  error.value = "";
+  info.value = sourceItems.some(isCommonGroupItem)
+    ? "Исходный набор зафиксирован. Общее мероприятие затрагивает обе группы."
+    : "Исходный набор зафиксирован. Выберите такое же количество целевых позиций.";
+}
+
+function toggleGroupExchangeTarget(item) {
+  if (!groupExchangeActive.value || !item) return;
+  const id = Number(item.id);
+  const currentIndex = groupExchangeTargetIds.value.findIndex(
+    (candidate) => Number(candidate) === id,
+  );
+  if (currentIndex >= 0) {
+    groupExchangeTargetIds.value.splice(currentIndex, 1);
+    error.value = "";
+    return;
+  }
+  if (!isGroupExchangeTargetAllowed(item)) {
+    if (groupExchangeSourceIdSet.value.has(id)) {
+      error.value = "Исходный и целевой наборы не должны пересекаться";
+    } else if (Number(item.is_pinned) === 1) {
+      error.value = "Закрепленную позицию нельзя включить в групповой обмен";
+    } else {
+      error.value =
+        `Нужно выбрать ровно ${groupExchangeSourceCount.value} ` +
+        positionCountWord(groupExchangeSourceCount.value);
+    }
+    return;
+  }
+  groupExchangeTargetIds.value.push(id);
+  error.value = groupExchangeCompatibilityError.value;
+}
+
+function requestGroupExchangeConfirmation() {
+  if (!groupExchangeReady.value) {
+    error.value =
+      `Нужно выбрать ${groupExchangeSourceCount.value} ` +
+      `${positionCountWord(groupExchangeSourceCount.value)}. ` +
+      `Сейчас выбрано: ${groupExchangeTargetCount.value}.`;
+    return;
+  }
+  if (groupExchangeCompatibilityError.value) {
+    error.value = groupExchangeCompatibilityError.value;
+    return;
+  }
+  error.value = "";
+  groupExchangeConfirmOpen.value = true;
+}
+
+async function executeGroupExchange() {
+  if (!groupExchangeReady.value || groupExchangeBusy.value) return;
+  groupExchangeConfirmOpen.value = false;
+  groupExchangeBusy.value = true;
+  error.value = "";
+  const sourceCount = groupExchangeSourceCount.value;
+  const targetCount = groupExchangeTargetCount.value;
+  pushUndo("групповой обмен занятий");
+  const exchangeUndoEntry = undoStack.value[undoStack.value.length - 1];
+  let committed = false;
+  try {
+    const result = await api.schedule.exchangeItemSets({
+      periodId: periodId.value,
+      sourceItemIds: [...groupExchangeSourceIds.value],
+      targetItemIds: [...groupExchangeTargetIds.value],
+      visibleGroupId: Number(groupFilter.value || 0) || null,
+      author: author.value || null,
+    });
+    committed = true;
+    resetGroupExchange();
+    await refreshSchedule();
+    showDragNotice(
+      `Поменялись местами ${result.sourceCount || sourceCount} ` +
+        `${lessonCountWord(result.sourceCount || sourceCount)} и ` +
+        `${result.targetCount || targetCount} ${positionCountWord(result.targetCount || targetCount)}`,
+    );
+  } catch (e) {
+    // Сервер гарантирует откат всей транзакции. Удаляем только снимок неуспешной
+    // операции, чтобы в истории отмены не появлялось действие без изменений.
+    if (
+      !committed &&
+      undoStack.value[undoStack.value.length - 1] === exchangeUndoEntry
+    ) {
+      undoStack.value.pop();
+    }
+    error.value = e.message;
+    try {
+      await refreshSchedule();
+    } catch (refreshError) {
+      error.value += ` Не удалось синхронизировать расписание: ${refreshError.message}`;
+    }
+  } finally {
+    groupExchangeBusy.value = false;
+  }
+}
 
 function reconcileSelectionWithVisibleItems() {
   const next = selectedVisibleIds.value;
@@ -444,9 +690,9 @@ const groupedRows = computed(() => {
       }
     }
   }
-  const order = new Map(activeGroups.value.map((group, idx) => [group.name, idx]));
+  const order = new Map(displayedGroups.value.map((group, idx) => [group.name, idx]));
   for (const row of rows) {
-    for (const group of activeGroups.value) {
+    for (const group of displayedGroups.value) {
       if (!row.groupMap.has(group.name)) {
         const bucket = { name: group.name, items: [] };
         row.groupMap.set(group.name, bucket);
@@ -946,6 +1192,7 @@ const groupDragBusy = ref(false);
 const lessonPointerDrag = ref(null);
 const flatDragTargetIndex = ref(-1);
 const groupLessonDragTargetKey = ref("");
+const groupExchangeDragTargetId = ref(null);
 const commonRowDrag = ref(null);
 const commonRowDragTargetKey = ref("");
 const commonRowPointerStart = ref(null);
@@ -1141,6 +1388,7 @@ function resetLessonPointerDrag() {
   lessonPointerDrag.value = null;
   flatDragTargetIndex.value = -1;
   groupLessonDragTargetKey.value = "";
+  groupExchangeDragTargetId.value = null;
 }
 
 function startLessonPointerTracking() {
@@ -1150,7 +1398,47 @@ function startLessonPointerTracking() {
   window.addEventListener("blur", onLessonPointerCancel);
 }
 
+function onGroupExchangePointerDown(evt, item) {
+  if (
+    evt.button !== 0 ||
+    evt.isPrimary === false ||
+    !groupExchangeActive.value ||
+    groupExchangeBusy.value ||
+    lessonPointerDrag.value ||
+    !groupExchangeSourceIdSet.value.has(Number(item?.id))
+  ) return;
+  if (!groupExchangeReady.value) {
+    error.value =
+      `Нужно выбрать ${groupExchangeSourceCount.value} ` +
+      `${positionCountWord(groupExchangeSourceCount.value)}. ` +
+      `Сейчас выбрано: ${groupExchangeTargetCount.value}.`;
+    return;
+  }
+  if (groupExchangeCompatibilityError.value) {
+    error.value = groupExchangeCompatibilityError.value;
+    return;
+  }
+  clearDragNotice();
+  error.value = "";
+  lessonPointerDrag.value = {
+    kind: "exchange",
+    item,
+    pointerId: evt.pointerId,
+    startX: evt.clientX,
+    startY: evt.clientY,
+    clientX: evt.clientX,
+    clientY: evt.clientY,
+    active: false,
+  };
+  startLessonPointerTracking();
+  evt.preventDefault();
+}
+
 function onFlatLessonPointerDown(evt, item, index) {
+  if (groupExchangeActive.value) {
+    onGroupExchangePointerDown(evt, item);
+    return;
+  }
   if (
     evt.button !== 0 ||
     evt.isPrimary === false ||
@@ -1176,6 +1464,10 @@ function onFlatLessonPointerDown(evt, item, index) {
 }
 
 function onGroupLessonPointerDown(evt, item, row, group) {
+  if (groupExchangeActive.value) {
+    onGroupExchangePointerDown(evt, item);
+    return;
+  }
   const groupId = groupIdByName(group.name);
   if (
     evt.button !== 0 ||
@@ -1227,6 +1519,16 @@ function groupDropAtPoint(clientX, clientY, source) {
   return { row, group, key: groupDropKey(row.key, groupId) };
 }
 
+function groupExchangePositionAtPoint(clientX, clientY) {
+  const element = document
+    .elementFromPoint(clientX, clientY)
+    ?.closest?.("[data-exchange-position-id]");
+  const itemId = Number(element?.dataset?.exchangePositionId || 0);
+  if (!itemId || !groupExchangeTargetIdSet.value.has(itemId)) return null;
+  const item = items.value.find((candidate) => Number(candidate.id) === itemId);
+  return item ? { itemId, item } : null;
+}
+
 function scrollDuringPointerDrag(clientY) {
   const edge = 70;
   if (clientY < edge) window.scrollBy(0, -24);
@@ -1244,7 +1546,10 @@ function onLessonPointerMove(evt) {
     drag.activatedAt = Date.now();
   }
   scrollDuringPointerDrag(evt.clientY);
-  if (drag.kind === "flat") {
+  if (drag.kind === "exchange") {
+    const target = groupExchangePositionAtPoint(evt.clientX, evt.clientY);
+    groupExchangeDragTargetId.value = target?.itemId || null;
+  } else if (drag.kind === "flat") {
     const target = flatDropAtPoint(evt.clientX, evt.clientY);
     flatDragTargetIndex.value = target && target.index !== drag.oldIndex ? target.index : -1;
   } else {
@@ -1259,9 +1564,12 @@ async function onLessonPointerUp(evt) {
   if (!drag || (drag.pointerId != null && evt.pointerId !== drag.pointerId)) return;
   drag.clientX = evt.clientX;
   drag.clientY = evt.clientY;
-  const target = drag.kind === "flat"
-    ? flatDropAtPoint(evt.clientX, evt.clientY)
-    : groupDropAtPoint(evt.clientX, evt.clientY, drag);
+  const target =
+    drag.kind === "exchange"
+      ? groupExchangePositionAtPoint(evt.clientX, evt.clientY)
+      : drag.kind === "flat"
+        ? flatDropAtPoint(evt.clientX, evt.clientY)
+        : groupDropAtPoint(evt.clientX, evt.clientY, drag);
   stopLessonPointerTracking();
 
   const validFlatTarget = Boolean(
@@ -1270,22 +1578,34 @@ async function onLessonPointerUp(evt) {
   const validGroupTarget = Boolean(
     drag.active && drag.kind === "group" && target && target.key !== drag.sourceKey,
   );
-  if (!validFlatTarget && !validGroupTarget) {
+  const validExchangeTarget = Boolean(
+    drag.active &&
+      drag.kind === "exchange" &&
+      target &&
+      groupExchangeTargetIdSet.value.has(Number(target.itemId)),
+  );
+  if (!validFlatTarget && !validGroupTarget && !validExchangeTarget) {
     resetLessonPointerDrag();
     if (drag.kind === "flat") {
       dragSlots.value = [];
       dragOrder.value = [];
+    }
+    if (drag.kind === "exchange" && drag.active) {
+      error.value = "Перетащите исходное занятие на одну из выбранных целевых позиций";
     }
     return;
   }
 
   // Сохраняем исчезнувший источник и подсветку цели до авторитетного ответа
   // сервера. Карточка не вспыхивает на старом месте во время refreshSchedule().
-  if (validFlatTarget) flatDragTargetIndex.value = target.index;
+  if (validExchangeTarget) groupExchangeDragTargetId.value = target.itemId;
+  else if (validFlatTarget) flatDragTargetIndex.value = target.index;
   else groupLessonDragTargetKey.value = target.key;
   drag.released = true;
   try {
-    if (validFlatTarget) {
+    if (validExchangeTarget) {
+      requestGroupExchangeConfirmation();
+    } else if (validFlatTarget) {
       await onDragEnd({ oldIndex: drag.oldIndex, newIndex: target.index });
     } else {
       await onGroupLessonDrop(drag.item, target.row, target.group, drag.groupId);
@@ -2264,9 +2584,55 @@ onUnmounted(() => {
       <button class="btn-primary" @click="newItem">+ Занятие</button>
     </div>
 
+    <!-- Панель группового обмена: исходный и целевой наборы остаются визуально
+         раздельными до подтверждения или явной отмены. -->
+    <div
+      v-if="groupExchangeActive"
+      class="mb-3 rounded-xl border border-brand-200 bg-brand-50/70 px-4 py-3 text-sm shadow-sm"
+    >
+      <div class="flex flex-wrap items-center gap-3">
+        <strong class="text-brand-800">Групповой обмен</strong>
+        <span class="rounded-full bg-amber-100 px-2.5 py-1 font-medium text-amber-800">
+          Исходные занятия: {{ groupExchangeSourceCount }}
+        </span>
+        <span class="rounded-full bg-emerald-100 px-2.5 py-1 font-medium text-emerald-800">
+          Целевые позиции: {{ groupExchangeTargetCount }} из {{ groupExchangeSourceCount }}
+        </span>
+        <button
+          class="btn-secondary ml-auto"
+          :disabled="groupExchangeBusy"
+          @click="cancelGroupExchange()"
+        >
+          Отменить режим
+        </button>
+      </div>
+      <p class="mt-2 text-slate-600">
+        Выберите целевые занятия или свободные слоты, затем перетащите любое исходное
+        занятие на выбранный целевой набор.
+      </p>
+      <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+        <span class="text-amber-800">● исходный набор</span>
+        <span class="text-emerald-800">● выбранный целевой набор</span>
+        <span class="text-emerald-600">○ допустимая позиция</span>
+        <span class="text-rose-600">○ перенос запрещен</span>
+      </div>
+      <div
+        v-if="groupExchangeTouchesCommon"
+        class="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 font-medium text-amber-800"
+      >
+        ⚠ В наборе есть общее мероприятие. При обмене будут затронуты обе группы.
+      </div>
+      <div
+        v-if="groupExchangeCompatibilityError"
+        class="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-red-700"
+      >
+        {{ groupExchangeCompatibilityError }}
+      </div>
+    </div>
+
     <!-- Панель массовых действий -->
     <div
-      v-if="items.length"
+      v-if="items.length && !groupExchangeActive"
       class="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-2 text-sm"
     >
       <label class="flex items-center gap-2 text-slate-600">
@@ -2292,6 +2658,15 @@ onUnmounted(() => {
         title="Переместить выделенные занятия к выбранному слоту, сохраняя взаимный порядок"
       >
         Переместить выделенные…
+      </button>
+      <button
+        v-if="selectedCount"
+        class="btn-secondary border-brand-300 text-brand-700"
+        :disabled="selectedCount < 2"
+        title="Зафиксировать выбранные занятия и обменять их с таким же количеством занятий или свободных слотов"
+        @click="startGroupExchange"
+      >
+        Групповой обмен
       </button>
       <button
         v-if="selectedCount"
@@ -2351,7 +2726,11 @@ onUnmounted(() => {
         >
           <span class="h-px flex-1 bg-brand-100"></span>
           {{ formatDayHeader(row.date) }}
-          <label class="flex items-center gap-1 text-xs font-normal text-slate-600" title="Выбрать или снять все занятия этого дня">
+          <label
+            v-if="!groupExchangeActive"
+            class="flex items-center gap-1 text-xs font-normal text-slate-600"
+            title="Выбрать или снять все занятия этого дня"
+          >
             <input
               type="checkbox"
               :checked="isDaySelected(row.date)"
@@ -2388,7 +2767,7 @@ onUnmounted(() => {
             :class="isCommonRowDragSource(row) ? 'pointer-events-none invisible' : ''"
           >
             <button
-              v-if="row.hasCommonLesson"
+              v-if="row.hasCommonLesson && !groupExchangeActive"
               type="button"
               :disabled="row.hasPinnedCommonLesson || groupDragBusy"
               class="group-row-drag-handle flex w-full touch-none cursor-grab select-none items-center justify-center gap-2 rounded-lg border border-brand-200 bg-brand-50 px-3 py-1.5 text-xs font-semibold text-brand-700 shadow-sm transition hover:border-brand-400 hover:bg-brand-100 active:cursor-grabbing disabled:cursor-not-allowed disabled:border-amber-200 disabled:bg-amber-50 disabled:text-amber-700"
@@ -2403,13 +2782,23 @@ onUnmounted(() => {
               v-for="it in row.common"
               :key="it.id"
               :item="it"
+              :data-exchange-position-id="it.id"
               :selected="isSelected(it.id)"
               :unallocated-topics="unallocatedTopics"
               :unallocated-topic-groups="unallocatedTopicGroups"
               :teachers="teachers"
               :rooms="rooms"
-              :show-drag="false"
+              :show-drag="groupExchangeActive && groupExchangeSourceIdSet.has(Number(it.id))"
               :show-time="false"
+              :exchange-mode="groupExchangeActive"
+              :exchange-role="groupExchangeRole(it)"
+              :exchange-allowed="isGroupExchangeTargetAllowed(it)"
+              :class="[
+                isLessonDragSource(it) ? 'pointer-events-none invisible' : '',
+                groupExchangeDragTargetId === Number(it.id)
+                  ? 'ring-2 ring-brand-500 shadow-sm'
+                  : '',
+              ]"
               @edit="openEditor"
               @assign-topic="assignTopic"
               @add-self-study="addSelfStudySlot"
@@ -2417,6 +2806,8 @@ onUnmounted(() => {
               @leave-empty="leaveEmptySlot"
               @toggle-select="toggleSelect"
               @toggle-pin="togglePin"
+              @toggle-exchange-target="toggleGroupExchangeTarget"
+              @drag-start="onGroupExchangePointerDown($event, it)"
             />
             <!-- Группы периода — отдельными колонками -->
             <div
@@ -2440,6 +2831,7 @@ onUnmounted(() => {
                       v-for="it in group.items"
                       :key="it.id"
                       :item="it"
+                      :data-exchange-position-id="it.id"
                       :selected="isSelected(it.id)"
                       :unallocated-topics="unallocatedTopics"
                       :unallocated-topic-groups="unallocatedTopicGroups"
@@ -2448,7 +2840,15 @@ onUnmounted(() => {
                       :show-drag="true"
                       :show-time="false"
                       :show-group-badge="false"
-                      :class="isLessonDragSource(it) ? 'pointer-events-none invisible' : ''"
+                      :exchange-mode="groupExchangeActive"
+                      :exchange-role="groupExchangeRole(it)"
+                      :exchange-allowed="isGroupExchangeTargetAllowed(it)"
+                      :class="[
+                        isLessonDragSource(it) ? 'pointer-events-none invisible' : '',
+                        groupExchangeDragTargetId === Number(it.id)
+                          ? 'ring-2 ring-brand-500 shadow-sm'
+                          : '',
+                      ]"
                       @edit="openEditor"
                       @assign-topic="assignTopic"
                       @add-self-study="addSelfStudySlot"
@@ -2456,6 +2856,7 @@ onUnmounted(() => {
                       @leave-empty="leaveEmptySlot"
                       @toggle-select="toggleSelect"
                       @toggle-pin="togglePin"
+                      @toggle-exchange-target="toggleGroupExchangeTarget"
                       @drag-start="onGroupLessonPointerDown($event, it, row, group)"
                     />
                   </div>
@@ -2479,6 +2880,7 @@ onUnmounted(() => {
         v-for="(it, idx) in items"
         :key="flatSlotKey(it, idx)"
         :data-flat-drag-index="idx"
+        :data-exchange-position-id="it.id"
         class="rounded-xl"
       >
         <!-- Заголовок дня -->
@@ -2488,7 +2890,11 @@ onUnmounted(() => {
         >
           <span class="h-px flex-1 bg-brand-100"></span>
           {{ formatDayHeader(it.date) }}
-          <label class="flex items-center gap-1 text-xs font-normal text-slate-600" title="Выбрать или снять все занятия этого дня">
+          <label
+            v-if="!groupExchangeActive"
+            class="flex items-center gap-1 text-xs font-normal text-slate-600"
+            title="Выбрать или снять все занятия этого дня"
+          >
             <input
               type="checkbox"
               :checked="isDaySelected(it.date)"
@@ -2519,9 +2925,31 @@ onUnmounted(() => {
           :class="{
             'pointer-events-none invisible': isLessonDragSource(it),
             'ring-2 ring-brand-400 shadow-sm': flatDragTargetIndex === idx,
+            'border-amber-400 bg-amber-50 ring-2 ring-amber-300':
+              groupExchangeRole(it) === 'source',
+            'border-emerald-400 bg-emerald-50 ring-2 ring-emerald-300':
+              groupExchangeRole(it) === 'target',
+            'border-emerald-200 bg-emerald-50/40':
+              groupExchangeActive && isGroupExchangeTargetAllowed(it) && !groupExchangeRole(it),
+            'border-rose-200 bg-rose-50/40 opacity-70':
+              groupExchangeActive &&
+              !isGroupExchangeTargetAllowed(it) &&
+              groupExchangeRole(it) !== 'source',
+            'ring-2 ring-brand-500 shadow-sm':
+              groupExchangeDragTargetId === Number(it.id),
           }"
         >
+          <input
+            v-if="groupExchangeActive"
+            type="checkbox"
+            class="shrink-0 accent-emerald-600"
+            :checked="groupExchangeRole(it) === 'target'"
+            :disabled="!isGroupExchangeTargetAllowed(it)"
+            aria-label="Выбрать целевую позицию"
+            @change="toggleGroupExchangeTarget(it)"
+          />
           <span
+            v-if="!groupExchangeActive || groupExchangeRole(it) === 'source'"
             class="drag-handle touch-none cursor-grab select-none text-slate-300 active:cursor-grabbing"
             @pointerdown.stop="onFlatLessonPointerDown($event, it, idx)"
           >⋮⋮</span>
@@ -2563,17 +2991,32 @@ onUnmounted(() => {
           class="card flex flex-wrap items-center gap-3 px-4 py-3 transition-[background-color,border-color,box-shadow] duration-100"
           :class="{
             'conflict-row border-red-200': it.conflicts && it.conflicts.length,
-            'ring-2 ring-brand-300': isSelected(it.id),
+            'ring-2 ring-brand-300': isSelected(it.id) && !groupExchangeActive,
             'pointer-events-none invisible': isLessonDragSource(it),
             'ring-2 ring-brand-400 shadow-sm': flatDragTargetIndex === idx,
+            'border-amber-400 bg-amber-50 ring-2 ring-amber-300':
+              groupExchangeRole(it) === 'source',
+            'border-emerald-400 bg-emerald-50 ring-2 ring-emerald-300':
+              groupExchangeRole(it) === 'target',
+            'border-emerald-200 bg-emerald-50/40':
+              groupExchangeActive && isGroupExchangeTargetAllowed(it) && !groupExchangeRole(it),
+            'border-rose-200 bg-rose-50/40 opacity-70':
+              groupExchangeActive &&
+              !isGroupExchangeTargetAllowed(it) &&
+              groupExchangeRole(it) !== 'source',
+            'ring-2 ring-brand-500 shadow-sm':
+              groupExchangeDragTargetId === Number(it.id),
           }"
           :title="changeTitle(it)"
         >
           <input
             type="checkbox"
             class="shrink-0"
-            :checked="isSelected(it.id)"
-            @change="toggleSelect(it.id)"
+            :class="groupExchangeActive ? 'accent-emerald-600' : ''"
+            :checked="groupExchangeActive ? groupExchangeRole(it) === 'target' : isSelected(it.id)"
+            :disabled="groupExchangeActive && !isGroupExchangeTargetAllowed(it)"
+            :aria-label="groupExchangeActive ? 'Выбрать целевую позицию' : 'Выбрать занятие'"
+            @change="groupExchangeActive ? toggleGroupExchangeTarget(it) : toggleSelect(it.id)"
           />
           <button
             class="flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-1 text-xs font-semibold leading-none transition"
@@ -2586,7 +3029,10 @@ onUnmounted(() => {
             <span class="hidden 2xl:inline">{{ it.is_pinned ? "Закреплено" : "Закрепить" }}</span>
           </button>
           <span
-            v-if="!it.is_pinned"
+            v-if="
+              !it.is_pinned &&
+              (!groupExchangeActive || groupExchangeRole(it) === 'source')
+            "
             class="drag-handle touch-none cursor-grab select-none text-slate-300 active:cursor-grabbing"
             @pointerdown.stop="onFlatLessonPointerDown($event, it, idx)"
           >⋮⋮</span>
@@ -2836,6 +3282,48 @@ onUnmounted(() => {
         </button>
         <button class="btn-secondary" @click="editing = null">Отмена</button>
         <button class="btn-primary" @click="saveItem">Сохранить</button>
+      </template>
+    </AppModal>
+
+    <AppModal
+      v-if="groupExchangeConfirmOpen"
+      title="Подтверждение группового обмена"
+      @close="groupExchangeConfirmOpen = false"
+    >
+      <div class="space-y-4 text-sm">
+        <p class="text-base text-slate-800">
+          Поменять местами {{ groupExchangeSourceCount }}
+          {{ lessonCountWord(groupExchangeSourceCount) }} и
+          {{ groupExchangeTargetCount }}
+          {{ positionCountWord(groupExchangeTargetCount) }}?
+        </p>
+        <p class="text-slate-600">
+          Соответствие определяется по порядку расположения в сетке. Операция
+          выполнится целиком или не применится вовсе.
+        </p>
+        <div
+          v-if="groupExchangeTouchesCommon"
+          class="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 font-medium text-amber-800"
+        >
+          ⚠ Отдельное предупреждение: обмен затрагивает общее мероприятие, поэтому
+          изменения коснутся обеих учебных групп.
+        </div>
+      </div>
+      <template #footer>
+        <button
+          class="btn-secondary"
+          :disabled="groupExchangeBusy"
+          @click="groupExchangeConfirmOpen = false"
+        >
+          Вернуться к выбору
+        </button>
+        <button
+          class="btn-primary"
+          :disabled="groupExchangeBusy"
+          @click="executeGroupExchange"
+        >
+          {{ groupExchangeBusy ? "Выполняется…" : "Поменять местами" }}
+        </button>
       </template>
     </AppModal>
 

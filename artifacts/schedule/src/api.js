@@ -196,6 +196,7 @@ export const api = {
     swapSlotRows: (data) => call("schedule:swapSlotRows", data),
     swapItems: (data) => call("schedule:swapItems", data),
     swapGroupSlots: (data) => call("schedule:swapGroupSlots", data),
+    exchangeItemSets: (data) => call("schedule:exchangeItemSets", data),
     deleteItem: (id) => call("schedule:deleteItem", id),
     bulkDelete: (data) => call("schedule:bulkDelete", data),
     fillGrid: (periodId) => call("schedule:fillGrid", { periodId }),

@@ -73,6 +73,21 @@ function isGridPlaceholder(it) {
   );
 }
 
+// Для группового обмена пустой слот является полноценной целевой позицией, но
+// не может входить в исходный набор. Самоподготовка и организационные
+// мероприятия, напротив, считаются содержимым расписания и переносятся целиком.
+function isEmptyExchangePosition(it) {
+  return (
+    !it.topic_id &&
+    !it.custom_title &&
+    (!it.lesson_type || it.lesson_type === "empty") &&
+    !it.room_id &&
+    safeJsonArray(it.teacher_ids).length === 0 &&
+    safeJsonArray(it.custom_teachers).length === 0 &&
+    !it.note
+  );
+}
+
 function gridPlaceholderSignature(it) {
   return JSON.stringify({
     date: it.date,
@@ -752,6 +767,300 @@ const handlers = {
       moved: targetItem ? 2 : 1,
       swapped: !!targetItem,
       targetItemId: targetItem?.id || null,
+    };
+  },
+
+  // Групповой обмен фиксирует два явно выбранных набора одинакового размера и
+  // меняет только их позиции. Все проверки выполняются до первой записи, а сами
+  // обновления, перестроение блокировок и аудит — в одной транзакции.
+  "schedule:exchangeItemSets": (data) => {
+    const db = getDb();
+    const periodId = Number(data?.periodId);
+    const sourceIds = [
+      ...new Set((Array.isArray(data?.sourceItemIds) ? data.sourceItemIds : []).map(Number)),
+    ].filter(Boolean);
+    const targetIds = [
+      ...new Set((Array.isArray(data?.targetItemIds) ? data.targetItemIds : []).map(Number)),
+    ].filter(Boolean);
+    const visibleGroupId = Number(data?.visibleGroupId || 0) || null;
+    const period = db.prepare("SELECT * FROM periods WHERE id = ?").get(periodId);
+    if (!period) throw new Error("Период не найден");
+    if (sourceIds.length < 2) {
+      throw new Error("Для группового обмена выберите не менее двух исходных занятий");
+    }
+    if (sourceIds.length !== targetIds.length) {
+      throw new Error(
+        `Требуется целевых позиций: ${sourceIds.length}. Сейчас выбрано: ${targetIds.length}.`,
+      );
+    }
+
+    const sourceIdSet = new Set(sourceIds);
+    if (targetIds.some((id) => sourceIdSet.has(id))) {
+      throw new Error("Исходный и целевой наборы не должны пересекаться");
+    }
+
+    const activeGroups = period.group_mode
+      ? db
+          .prepare(
+            "SELECT id, name FROM groups WHERE period_id = ? AND is_active = 1 ORDER BY id",
+          )
+          .all(periodId)
+          .slice(0, 2)
+      : [];
+    const activeGroupIds = activeGroups.map((group) => Number(group.id));
+    const activeGroupIdSet = new Set(activeGroupIds);
+    const groupIdByName = new Map(
+      activeGroups.map((group) => [String(group.name).trim(), Number(group.id)]),
+    );
+    const groupOrder = new Map(activeGroupIds.map((id, index) => [id, index]));
+    if (visibleGroupId && !period.group_mode) {
+      throw new Error("Фильтр группы нельзя применять к обычному расписанию");
+    }
+    if (visibleGroupId && !activeGroupIdSet.has(visibleGroupId)) {
+      throw new Error("Выбранная видимая группа не найдена в этом периоде");
+    }
+
+    const allItems = db
+      .prepare(
+        `SELECT * FROM schedule_items
+         WHERE period_id = ?
+         ORDER BY date, start_time, sort_order, id`,
+      )
+      .all(periodId);
+    const itemsById = new Map(allItems.map((item) => [Number(item.id), item]));
+    const readSelectedItems = (ids, label) =>
+      ids.map((id) => {
+        const item = itemsById.get(id);
+        if (!item) {
+          throw new Error(`${label} набор изменился: позиция ${id} больше не найдена`);
+        }
+        return item;
+      });
+    const sourceItems = readSelectedItems(sourceIds, "Исходный");
+    const targetItems = readSelectedItems(targetIds, "Целевой");
+    if (sourceItems.some(isEmptyExchangePosition)) {
+      throw new Error("В исходный набор можно включать только занятия и мероприятия");
+    }
+    if ([...sourceItems, ...targetItems].some((item) => Number(item.is_pinned) === 1)) {
+      throw new Error(
+        "Групповой обмен не выполняется с закрепленными занятиями или слотами. Сначала открепите их.",
+      );
+    }
+
+    const resolvedGroupIds = (item) => {
+      const ids = safeJsonArray(item.group_ids)
+        .map(Number)
+        .filter((id) => activeGroupIdSet.has(id));
+      if (ids.length) return [...new Set(ids)];
+      return String(item.group_label || "")
+        .split(";")
+        .map((name) => groupIdByName.get(name.trim()))
+        .filter(Boolean);
+    };
+    const positionFor = (item) => {
+      if (!period.group_mode) {
+        return {
+          item,
+          type: "flat",
+          groupId: null,
+          key: `${item.date}|${item.start_time}|flat`,
+          rowKey: `${item.date}|${item.start_time}`,
+          groupIdsJson: item.group_ids || "[]",
+          groupLabel: item.group_label || null,
+        };
+      }
+      const ids = resolvedGroupIds(item);
+      if (ids.length === 1) {
+        const groupId = ids[0];
+        return {
+          item,
+          type: "group",
+          groupId,
+          key: `${item.date}|${item.start_time}|group:${groupId}`,
+          rowKey: `${item.date}|${item.start_time}`,
+          groupIdsJson: JSON.stringify([groupId]),
+          groupLabel:
+            activeGroups.find((group) => Number(group.id) === groupId)?.name ||
+            item.group_label ||
+            null,
+        };
+      }
+      if (ids.length !== 0 && ids.length !== activeGroupIds.length) {
+        throw new Error(
+          `У позиции ${item.id} некорректная привязка к учебным группам`,
+        );
+      }
+      return {
+        item,
+        type: "common",
+        groupId: null,
+        key: `${item.date}|${item.start_time}|common`,
+        rowKey: `${item.date}|${item.start_time}`,
+        groupIdsJson: item.group_ids || "[]",
+        groupLabel: item.group_label || null,
+      };
+    };
+    const allPositions = allItems.map(positionFor);
+    const positionsById = new Map(
+      allPositions.map((position) => [Number(position.item.id), position]),
+    );
+    const sourcePositions = sourceIds.map((id) => positionsById.get(id));
+    const targetPositions = targetIds.map((id) => positionsById.get(id));
+
+    const assertUniquePositions = (positions, label) => {
+      const seen = new Set();
+      for (const position of positions) {
+        if (seen.has(position.key)) {
+          throw new Error(
+            `${label} набор содержит несколько записей в одной позиции сетки`,
+          );
+        }
+        seen.add(position.key);
+      }
+    };
+    assertUniquePositions(sourcePositions, "Исходный");
+    assertUniquePositions(targetPositions, "Целевой");
+    const sourcePositionKeys = new Set(sourcePositions.map((position) => position.key));
+    if (targetPositions.some((position) => sourcePositionKeys.has(position.key))) {
+      throw new Error("Исходный и целевой наборы занимают пересекающиеся позиции");
+    }
+
+    const positionsByKey = new Map();
+    const rowPositions = new Map();
+    for (const position of allPositions) {
+      if (!positionsByKey.has(position.key)) positionsByKey.set(position.key, []);
+      positionsByKey.get(position.key).push(position);
+      if (!rowPositions.has(position.rowKey)) rowPositions.set(position.rowKey, []);
+      rowPositions.get(position.rowKey).push(position);
+    }
+    for (const position of [...sourcePositions, ...targetPositions]) {
+      if (positionsByKey.get(position.key).length > 1) {
+        throw new Error(
+          `В позиции ${position.item.date} ${position.item.start_time} найдено несколько занятий. Устраните дубли и повторите обмен.`,
+        );
+      }
+      const row = rowPositions.get(position.rowKey) || [];
+      const rowHasCommon = row.some((candidate) => candidate.type === "common");
+      if (
+        period.group_mode &&
+        ((position.type === "common" && row.length > 1) ||
+          (position.type === "group" && rowHasCommon))
+      ) {
+        throw new Error(
+          `Общее мероприятие в слоте ${position.item.date} ${position.item.start_time} пересекается с занятиями групп`,
+        );
+      }
+      if (
+        visibleGroupId &&
+        position.type === "group" &&
+        position.groupId !== visibleGroupId
+      ) {
+        throw new Error(
+          "В набор попало скрытое занятие другой группы. Обновите выбор и повторите обмен.",
+        );
+      }
+    }
+
+    const comparePositions = (left, right) => {
+      const dateCompare = String(left.item.date).localeCompare(String(right.item.date));
+      if (dateCompare) return dateCompare;
+      const timeCompare = String(left.item.start_time).localeCompare(
+        String(right.item.start_time),
+      );
+      if (timeCompare) return timeCompare;
+      const leftRank =
+        left.type === "common" ? -1 : left.type === "group" ? groupOrder.get(left.groupId) : 0;
+      const rightRank =
+        right.type === "common"
+          ? -1
+          : right.type === "group"
+            ? groupOrder.get(right.groupId)
+            : 0;
+      if (leftRank !== rightRank) return leftRank - rightRank;
+      const sortCompare =
+        Number(left.item.sort_order || 0) - Number(right.item.sort_order || 0);
+      return sortCompare || Number(left.item.id) - Number(right.item.id);
+    };
+    sourcePositions.sort(comparePositions);
+    targetPositions.sort(comparePositions);
+    for (let index = 0; index < sourcePositions.length; index += 1) {
+      const sourceIsCommon = sourcePositions[index].type === "common";
+      const targetIsCommon = targetPositions[index].type === "common";
+      if (sourceIsCommon !== targetIsCommon) {
+        throw new Error(
+          `Позиции №${index + 1} несовместимы: общее мероприятие можно обменять только с общей позицией для обеих групп.`,
+        );
+      }
+    }
+
+    const affectsAllGroups = [...sourcePositions, ...targetPositions].some(
+      (position) => position.type === "common",
+    );
+    const now = new Date().toISOString();
+    const updateItem = db.prepare(
+      `UPDATE schedule_items SET
+         date = ?, start_time = ?, end_time = ?, start_dt = ?, end_dt = ?,
+         group_ids = ?, group_label = ?, is_outside_period = 0,
+         grid_fill_id = NULL, grid_fill_signature = NULL,
+         is_modified = 1, modified_at = ?,
+         change_desc = 'Изменено: дата/время/групповая позиция'
+       WHERE id = ?`,
+    );
+    const moveToPosition = (item, position) => {
+      const groupIdsJson = period.group_mode
+        ? position.groupIdsJson
+        : item.group_ids || "[]";
+      const groupLabel = period.group_mode
+        ? position.groupLabel
+        : item.group_label || null;
+      updateItem.run(
+        position.item.date,
+        position.item.start_time,
+        position.item.end_time,
+        `${position.item.date}T${position.item.start_time}:00`,
+        `${position.item.date}T${position.item.end_time}:00`,
+        groupIdsJson,
+        groupLabel,
+        now,
+        item.id,
+      );
+    };
+
+    const pairs = sourcePositions.map((source, index) => ({
+      source,
+      target: targetPositions[index],
+    }));
+    const tx = db.transaction(() => {
+      for (const { source, target } of pairs) {
+        moveToPosition(source.item, target);
+        moveToPosition(target.item, source);
+      }
+      for (const position of [...sourcePositions, ...targetPositions]) {
+        const saved = db
+          .prepare("SELECT * FROM schedule_items WHERE id = ?")
+          .get(position.item.id);
+        rebuildLocksForItem(saved);
+      }
+      audit(
+        period.program_id,
+        periodId,
+        "schedule_item_sets_exchanged",
+        {
+          sourceItemIds: sourcePositions.map((position) => position.item.id),
+          targetItemIds: targetPositions.map((position) => position.item.id),
+          visibleGroupId,
+          affectsAllGroups,
+        },
+        data?.author || null,
+      );
+    });
+    tx();
+    return {
+      sourceCount: sourcePositions.length,
+      targetCount: targetPositions.length,
+      movedRecords: sourcePositions.length + targetPositions.length,
+      emptyTargetCount: targetItems.filter(isEmptyExchangePosition).length,
+      affectsAllGroups,
     };
   },
 

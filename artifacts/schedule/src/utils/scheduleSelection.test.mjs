@@ -24,6 +24,13 @@ const items = [
     group_ids: JSON.stringify([groupA]),
     title: "Группа А",
   },
+  {
+    id: 6,
+    date: "2026-07-21",
+    group_ids: [],
+    group_label: null,
+    title: "Общее мероприятие без явных group_ids",
+  },
 ];
 const isEmptyItem = (item) => Boolean(item.empty);
 
@@ -38,22 +45,26 @@ function selectable(groupFilter = "", scopedItems = items) {
 test("массовый выбор группы А исключает скрытую группу Б и пустые слоты", () => {
   assert.deepEqual(
     selectable(groupA).map((item) => item.id),
-    [1, 3, 5],
+    [1, 3, 5, 6],
   );
   assert.deepEqual(
-    selectedIdsInScope([1, 2, 3, 4, 5], selectable(groupA)),
-    [1, 3, 5],
+    selectedIdsInScope([1, 2, 3, 4, 5, 6], selectable(groupA)),
+    [1, 3, 5, 6],
   );
 });
 
 test("массовый выбор группы Б включает её занятие и ту же общую запись", () => {
   assert.deepEqual(
     selectable(groupB).map((item) => item.id),
-    [2, 3],
+    [2, 3, 6],
   );
   assert.equal(
     selectable(groupB).find((item) => item.id === 3),
     items[2],
+  );
+  assert.equal(
+    selectable(groupB).find((item) => item.id === 6),
+    items[5],
   );
 });
 
@@ -72,7 +83,7 @@ test("выбор дня учитывает активный фильтр гру�
 test("режим всех групп сохраняет выбор обеих групп и общей записи", () => {
   assert.deepEqual(
     selectable().map((item) => item.id),
-    [1, 2, 3, 5],
+    [1, 2, 3, 5, 6],
   );
 });
 
@@ -84,7 +95,7 @@ test("в негрупповом режиме фильтр группы не ог
   });
   assert.deepEqual(
     result.map((item) => item.id),
-    [1, 2, 3, 5],
+    [1, 2, 3, 5, 6],
   );
 });
 

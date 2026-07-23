@@ -16,6 +16,9 @@ const props = defineProps({
   showSelect: { type: Boolean, default: true },
   showPin: { type: Boolean, default: true },
   showGroupBadge: { type: Boolean, default: true },
+  exchangeMode: { type: Boolean, default: false },
+  exchangeRole: { type: String, default: "" }, // '' | 'source' | 'target'
+  exchangeAllowed: { type: Boolean, default: false },
 });
 const emit = defineEmits([
   "edit",
@@ -26,6 +29,7 @@ const emit = defineEmits([
   "toggle-select",
   "toggle-pin",
   "drag-start",
+  "toggle-exchange-target",
 ]);
 
 function isSelfStudy(it) {
@@ -68,6 +72,10 @@ function roomNumber(id) {
 function conflictTitle(it) {
   return (it.conflicts || []).map((c) => c.message).join("\n");
 }
+function handleSelectionChange() {
+  if (props.exchangeMode) emit("toggle-exchange-target", props.item);
+  else emit("toggle-select", props.item.id);
+}
 </script>
 
 <template>
@@ -75,9 +83,25 @@ function conflictTitle(it) {
   <div
     v-if="isEmptyItem(item)"
     class="card flex flex-wrap items-center gap-3 border-2 border-dashed border-slate-300 bg-slate-50/70 px-4 py-3 transition-colors duration-100"
+    :class="{
+      'border-amber-400 bg-amber-50 ring-2 ring-amber-300': exchangeRole === 'source',
+      'border-emerald-400 bg-emerald-50 ring-2 ring-emerald-300': exchangeRole === 'target',
+      'border-emerald-200 bg-emerald-50/40': exchangeMode && exchangeAllowed && !exchangeRole,
+      'border-rose-200 bg-rose-50/40 opacity-70':
+        exchangeMode && !exchangeAllowed && exchangeRole !== 'source',
+    }"
   >
+    <input
+      v-if="exchangeMode"
+      type="checkbox"
+      class="shrink-0 accent-emerald-600"
+      :checked="exchangeRole === 'target'"
+      :disabled="!exchangeAllowed"
+      aria-label="Выбрать целевую позицию"
+      @change="handleSelectionChange"
+    />
     <span
-      v-if="showDrag"
+      v-if="showDrag && (!exchangeMode || exchangeRole === 'source')"
       class="drag-handle touch-none cursor-grab select-none text-slate-300 active:cursor-grabbing"
       @pointerdown.stop="emit('drag-start', $event)"
     >⋮⋮</span>
@@ -132,16 +156,24 @@ function conflictTitle(it) {
     :class="{
       'border-red-400 bg-red-50': item.is_outside_period,
       'conflict-row border-red-200': !item.is_outside_period && item.conflicts && item.conflicts.length,
-      'ring-2 ring-brand-300': selected,
+      'ring-2 ring-brand-300': selected && !exchangeMode,
+      'border-amber-400 bg-amber-50 ring-2 ring-amber-300': exchangeRole === 'source',
+      'border-emerald-400 bg-emerald-50 ring-2 ring-emerald-300': exchangeRole === 'target',
+      'border-emerald-200 bg-emerald-50/40': exchangeMode && exchangeAllowed && !exchangeRole,
+      'border-rose-200 bg-rose-50/40 opacity-70':
+        exchangeMode && !exchangeAllowed && exchangeRole !== 'source',
     }"
     :title="item.is_outside_period ? 'Занятие вне рабочего расписания — попало в нерабочий день при сдвиге. Перенесите вручную или удалите.' : conflictTitle(item)"
   >
     <input
-      v-if="showSelect"
+      v-if="showSelect || exchangeMode"
       type="checkbox"
       class="shrink-0"
-      :checked="selected"
-      @change="emit('toggle-select', item.id)"
+      :class="exchangeMode ? 'accent-emerald-600' : ''"
+      :checked="exchangeMode ? exchangeRole === 'target' : selected"
+      :disabled="exchangeMode && !exchangeAllowed"
+      :aria-label="exchangeMode ? 'Выбрать целевую позицию' : 'Выбрать занятие'"
+      @change="handleSelectionChange"
     />
     <button
       v-if="showPin"
@@ -155,7 +187,7 @@ function conflictTitle(it) {
       <span class="hidden 2xl:inline">{{ item.is_pinned ? "Закреплено" : "Закрепить" }}</span>
     </button>
     <span
-      v-if="showDrag && !item.is_pinned"
+      v-if="showDrag && !item.is_pinned && (!exchangeMode || exchangeRole === 'source')"
       class="drag-handle touch-none cursor-grab select-none text-slate-300 active:cursor-grabbing"
       @pointerdown.stop="emit('drag-start', $event)"
     >⋮⋮</span>
