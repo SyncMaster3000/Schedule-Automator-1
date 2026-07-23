@@ -1,7 +1,7 @@
 {
   "name": "@workspace/desktop",
   "productName": "Конструктор расписаний",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Настольное приложение для автоматизации учебных расписаний",
   "author": "Schedule Automator",
   "license": "MIT",
@@ -9,7 +9,8 @@
   "main": "main.cjs",
   "scripts": {
     "prepare:runtime": "node ./scripts/prepare-runtime.mjs",
-    "test:smoke": "node ./scripts/prepare-runtime.mjs && node ./scripts/smoke-test.mjs",
+    "test:storage": "node --test ./scripts/storage-selection.test.mjs",
+    "test:smoke": "node ./scripts/prepare-runtime.mjs && node --test ./scripts/storage-selection.test.mjs && node ./scripts/smoke-test.mjs",
     "start": "node ./scripts/prepare-runtime.mjs && electron .",
     "pack:win": "node ./scripts/prepare-runtime.mjs && node ./scripts/build-windows.mjs dir",
     "dist:offline": "node ./scripts/prepare-runtime.mjs && node ./scripts/build-windows.mjs dir && node ./scripts/build-offline-installer.mjs",

@@ -9,6 +9,7 @@ directories:
 
 files:
   - main.cjs
+  - storage.cjs
   - package.json
   - runtime/**/*
   - build/icon.ico

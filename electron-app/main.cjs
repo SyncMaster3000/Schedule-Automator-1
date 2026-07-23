@@ -12,6 +12,13 @@ const { promises: fsPromises } = fs;
 const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
+const {
+  copyExistingDataDirectory,
+  databaseExists,
+  ensureWritableDirectory,
+  isPathInside,
+  isSamePath,
+} = require("./storage.cjs");
 
 const APP_ID = "by.edu.schedule-automator";
 const APP_DATA_NAME = "ScheduleAutomator";
@@ -34,11 +41,11 @@ if (!hasSingleInstanceLock) {
   app.quit();
 }
 
-const dataDir =
-  process.env.SCHEDULE_DESKTOP_DATA_DIR || path.join(userDataDir, "data");
 const settingsDir = path.join(userDataDir, "settings");
 const exportSettingsFile = path.join(userDataDir, "export-settings.json");
 const windowStateFile = path.join(settingsDir, "window-state.json");
+const storageSettingsFile = path.join(settingsDir, "storage.json");
+const defaultDataDir = path.join(userDataDir, "data");
 const runtimeDir = path.join(__dirname, "runtime");
 const desktopEntry = path.join(runtimeDir, "api-server", "desktop.mjs");
 const frontendDir = path.join(runtimeDir, "frontend");
@@ -51,6 +58,7 @@ let serverInfo = null;
 let shutdownPromise = null;
 let allowQuit = false;
 let windowStateWrite = Promise.resolve();
+let dataDir = process.env.SCHEDULE_DESKTOP_DATA_DIR || defaultDataDir;
 
 async function readJson(filePath) {
   try {
@@ -67,6 +75,179 @@ async function writeJson(filePath, value) {
     JSON.stringify(value, null, 2),
     "utf8",
   );
+}
+
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function saveStorageSettings(directory, previousDirectory = null) {
+  await writeJson(storageSettingsFile, {
+    dataDirectory: path.resolve(directory),
+    previousDataDirectory: previousDirectory
+      ? path.resolve(previousDirectory)
+      : null,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+async function pickDataDirectory(sourceDirectory, allowKeepCurrent) {
+  const sourceHasDatabase = await databaseExists(sourceDirectory);
+
+  while (true) {
+    const selection = await dialog.showOpenDialog({
+      title: "Выберите папку для базы расписаний",
+      buttonLabel: "Хранить базу здесь",
+      defaultPath: sourceHasDatabase
+        ? sourceDirectory
+        : app.getPath("documents"),
+      properties: ["openDirectory", "promptToCreate"],
+    });
+    if (selection.canceled || !selection.filePaths[0]) {
+      return allowKeepCurrent ? sourceDirectory : null;
+    }
+
+    const selectedDirectory = path.resolve(selection.filePaths[0]);
+    if (
+      isPathInside(__dirname, selectedDirectory) ||
+      isSamePath(__dirname, selectedDirectory)
+    ) {
+      dialog.showErrorBox(
+        "Нельзя хранить базу внутри приложения",
+        "При обновлении эта папка заменяется. Выберите отдельную папку, например D:\\ScheduleAutomatorData.",
+      );
+      continue;
+    }
+
+    try {
+      await ensureWritableDirectory(selectedDirectory);
+    } catch (error) {
+      dialog.showErrorBox(
+        "Папка недоступна для записи",
+        `${selectedDirectory}\n\n${errorMessage(error)}`,
+      );
+      continue;
+    }
+
+    if (isSamePath(sourceDirectory, selectedDirectory)) {
+      return selectedDirectory;
+    }
+
+    if (await databaseExists(selectedDirectory)) {
+      const existingChoice = await dialog.showMessageBox({
+        type: "question",
+        title: "В папке уже есть база",
+        message: "Использовать найденную базу расписаний?",
+        detail: `${selectedDirectory}\n\nТекущая база не будет перезаписана.`,
+        buttons: [
+          "Использовать найденную базу",
+          "Выбрать другую папку",
+          "Оставить текущее место",
+        ],
+        defaultId: 0,
+        cancelId: 2,
+        noLink: true,
+      });
+      if (existingChoice.response === 0) return selectedDirectory;
+      if (existingChoice.response === 1) continue;
+      return allowKeepCurrent ? sourceDirectory : null;
+    }
+
+    try {
+      const migration = await copyExistingDataDirectory(
+        sourceDirectory,
+        selectedDirectory,
+      );
+      if (migration.copied && migration.sourceDatabaseFound) {
+        await dialog.showMessageBox({
+          type: "info",
+          title: "База перенесена",
+          message: "Рабочая копия базы создана в выбранной папке.",
+          detail:
+            `${selectedDirectory}\n\n` +
+            `Исходная база оставлена как резервная копия:\n${sourceDirectory}`,
+          buttons: ["Продолжить"],
+          defaultId: 0,
+          noLink: true,
+        });
+      }
+      return selectedDirectory;
+    } catch (error) {
+      dialog.showErrorBox(
+        "Не удалось подготовить папку данных",
+        `${selectedDirectory}\n\n${errorMessage(error)}`,
+      );
+    }
+  }
+}
+
+async function resolveDataDirectory() {
+  if (process.env.SCHEDULE_DESKTOP_DATA_DIR) {
+    return ensureWritableDirectory(process.env.SCHEDULE_DESKTOP_DATA_DIR);
+  }
+
+  const saved = await readJson(storageSettingsFile);
+  if (typeof saved?.dataDirectory === "string" && saved.dataDirectory.trim()) {
+    try {
+      return await ensureWritableDirectory(saved.dataDirectory);
+    } catch (error) {
+      const unavailable = await dialog.showMessageBox({
+        type: "warning",
+        title: "Папка базы недоступна",
+        message: "Ранее выбранная папка базы сейчас недоступна.",
+        detail:
+          `${saved.dataDirectory}\n\n` +
+          `${errorMessage(error)}\n\n` +
+          "Подключите нужный диск или выберите другую папку. Новая пустая база автоматически не создаётся.",
+        buttons: ["Выбрать другую папку", "Завершить работу"],
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true,
+      });
+      if (unavailable.response !== 0) {
+        throw new Error(`Папка базы недоступна: ${saved.dataDirectory}`);
+      }
+
+      const replacement = await pickDataDirectory(defaultDataDir, false);
+      if (!replacement) {
+        throw new Error("Новая папка базы не выбрана");
+      }
+      await saveStorageSettings(replacement, saved.dataDirectory);
+      return replacement;
+    }
+  }
+
+  await ensureWritableDirectory(defaultDataDir);
+  const currentHasDatabase = await databaseExists(defaultDataDir);
+  const firstChoice = await dialog.showMessageBox({
+    type: "info",
+    title: "Место хранения базы",
+    message: currentHasDatabase
+      ? "Выберите, где хранить существующую базу расписаний."
+      : "Выберите, где хранить базу расписаний.",
+    detail:
+      `Текущее место: ${defaultDataDir}\n\n` +
+      "Можно выбрать другой локальный диск, например D:\\ScheduleAutomatorData. Выбранный путь сохранится после обновлений.",
+    buttons: [
+      "Выбрать другой диск или папку",
+      currentHasDatabase
+        ? "Оставить текущее место"
+        : "Использовать место по умолчанию",
+    ],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+  });
+
+  let selectedDirectory = defaultDataDir;
+  if (firstChoice.response === 0) {
+    selectedDirectory = await pickDataDirectory(defaultDataDir, true);
+  }
+  const previousDirectory = isSamePath(defaultDataDir, selectedDirectory)
+    ? null
+    : defaultDataDir;
+  await saveStorageSettings(selectedDirectory, previousDirectory);
+  return selectedDirectory;
 }
 
 function safeDocxFilename(value) {
@@ -313,6 +494,7 @@ async function launch() {
     (_webContents, _permission, callback) => callback(false),
   );
 
+  dataDir = await resolveDataDirectory();
   await Promise.all([
     fsPromises.mkdir(dataDir, { recursive: true }),
     fsPromises.mkdir(settingsDir, { recursive: true }),
@@ -355,7 +537,7 @@ if (hasSingleInstanceLock) {
     const message = error instanceof Error ? error.stack || error.message : String(error);
     dialog.showErrorBox(
       "Не удалось запустить Конструктор расписаний",
-      `${message}\n\nДанные пользователя не изменены.\nКаталог: ${userDataDir}`,
+      `${message}\n\nДанные пользователя не изменены.\nНастройки: ${userDataDir}\nБаза: ${dataDir}`,
     );
     try {
       await closeServer();
