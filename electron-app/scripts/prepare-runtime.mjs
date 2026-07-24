@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 const desktopDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const repoDir = path.dirname(desktopDir);
 const runtimeDir = path.join(desktopDir, "runtime");
+const apiDistDir = path.join(repoDir, "artifacts", "api-server", "dist");
+const apiRuntimeDir = path.join(runtimeDir, "api-server");
 
 async function runNode(script, args = [], extraEnv = {}, cwd = repoDir) {
   await new Promise((resolve, reject) => {
@@ -36,6 +38,21 @@ async function assertFile(filePath, label) {
   if (!stat.isFile()) throw new Error(`${label} не найден: ${filePath}`);
 }
 
+async function assertPortableBundle(filePath) {
+  const contents = await fs.readFile(filePath, "utf8");
+  const forbiddenPaths = [
+    repoDir,
+    repoDir.replaceAll("\\", "\\\\"),
+    repoDir.replaceAll("\\", "/"),
+  ];
+  const leakedPath = forbiddenPaths.find((value) => contents.includes(value));
+  if (leakedPath) {
+    throw new Error(
+      `Desktop API содержит абсолютный путь компьютера сборки: ${leakedPath}`,
+    );
+  }
+}
+
 await runNode(
   path.join(repoDir, "artifacts", "api-server", "build.mjs"),
 );
@@ -59,12 +76,14 @@ await runNode(
 );
 
 await fs.rm(runtimeDir, { recursive: true, force: true });
-await fs.mkdir(runtimeDir, { recursive: true });
 await Promise.all([
-  fs.cp(
-    path.join(repoDir, "artifacts", "api-server", "dist"),
-    path.join(runtimeDir, "api-server"),
-    { recursive: true },
+  fs.mkdir(runtimeDir, { recursive: true }),
+  fs.mkdir(apiRuntimeDir, { recursive: true }),
+]);
+await Promise.all([
+  fs.copyFile(
+    path.join(apiDistDir, "desktop.mjs"),
+    path.join(apiRuntimeDir, "desktop.mjs"),
   ),
   fs.cp(
     path.join(repoDir, "artifacts", "schedule", "dist", "public"),
@@ -106,5 +125,6 @@ await Promise.all([
   assertFile(path.join(runtimeDir, "sql-wasm.wasm"), "sql.js WebAssembly"),
   assertFile(path.join(desktopDir, "build", "icon.ico"), "Значок Windows"),
 ]);
+await assertPortableBundle(path.join(apiRuntimeDir, "desktop.mjs"));
 
 console.log(`Desktop runtime подготовлен: ${runtimeDir}`);

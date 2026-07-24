@@ -15,7 +15,7 @@
 ## Установка
 
 1. Откройте файл
-   `electron-app\release\Schedule-Automator-1.0.1-Offline-Setup.exe`.
+   `electron-app\release\Schedule-Automator-1.0.2-Offline-Setup.exe`.
 2. Дождитесь автоматической распаковки и первого запуска программы.
 3. При первом запуске выберите папку для базы. Можно оставить стандартное
    место или создать, например, `D:\ScheduleAutomatorData`.
@@ -42,6 +42,11 @@ Windows с рамкой и стандартными кнопками; его м�
 
 База, настройки и документы не находятся в каталоге установки и не
 перезаписываются обновлением. Выбранная папка базы также сохраняется.
+
+Версия 1.0.2 обязательна для установки на другом компьютере: в ней удалена
+зависимость desktop-логирования от абсолютного пути компьютера сборки. Ошибки
+`Cannot find module ... thread-stream-worker.mjs` и повторяющиеся окна
+`The worker has exited` в этой версии не должны появляться.
 
 Для удаления приложения закройте его, удалите каталог
 `%LOCALAPPDATA%\Programs\ScheduleAutomator` и созданные ярлыки. Пользовательские
@@ -85,7 +90,7 @@ pnpm desktop:dist:offline
 Готовый установщик:
 
 ```text
-electron-app\release\Schedule-Automator-1.0.1-Offline-Setup.exe
+electron-app\release\Schedule-Automator-1.0.2-Offline-Setup.exe
 ```
 
 Команда создаёт распакованную Electron-сборку и упаковывает её штатным

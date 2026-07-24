@@ -377,6 +377,8 @@ async function waitForServer(url, timeoutMs = 15000) {
 }
 
 async function startServer() {
+  process.env.NODE_ENV = "production";
+  process.env.SCHEDULE_DESKTOP = "1";
   process.env.SCHEDULE_DATA_DIR = dataDir;
   process.env.SCHEDULE_SQL_WASM_PATH = sqlWasmPath;
   process.env.SCHEDULE_TEMPLATES_DIR = templatesDir;

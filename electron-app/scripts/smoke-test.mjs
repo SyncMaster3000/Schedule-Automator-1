@@ -6,7 +6,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const desktopDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const repoDir = path.dirname(desktopDir);
-const runtimeDir = path.join(desktopDir, "runtime");
+const runtimeDir =
+  process.env.SCHEDULE_DESKTOP_RUNTIME_DIR ||
+  path.join(desktopDir, "runtime");
 const action = process.argv[2];
 const suppliedDataDir = process.argv[3];
 const testTitle = "Desktop smoke persistence";
@@ -25,6 +27,8 @@ async function apiCall(baseUrl, channel, payload) {
 }
 
 async function runWorker() {
+  process.env.NODE_ENV = "production";
+  process.env.SCHEDULE_DESKTOP = "1";
   process.env.SCHEDULE_SQL_WASM_PATH = path.join(runtimeDir, "sql-wasm.wasm");
   const { startDesktopServer } = await import(
     pathToFileURL(path.join(runtimeDir, "api-server", "desktop.mjs")).href
