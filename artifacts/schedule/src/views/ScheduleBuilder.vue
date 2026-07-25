@@ -931,10 +931,35 @@ async function redo() {
   }
 }
 
+function isEditableTarget(target) {
+  return (
+    target instanceof Element &&
+    target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')
+  );
+}
+
 function handleUndoKey(e) {
-  if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-  if (e.key === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
-  if (e.key === "y" || (e.key === "z" && e.shiftKey)) { e.preventDefault(); redo(); }
+  // Не перехватываем системное редактирование текста. Раньше Ctrl/Cmd+Z внутри
+  // поля запускал восстановление всего расписания через API, из-за чего форма
+  // могла надолго перестать реагировать на ввод.
+  if (
+    e.defaultPrevented ||
+    e.isComposing ||
+    isEditableTarget(e.target) ||
+    !(e.ctrlKey || e.metaKey) ||
+    e.altKey
+  ) {
+    return;
+  }
+
+  const key = e.key.toLowerCase();
+  if (key === "z" && !e.shiftKey && undoStack.value.length) {
+    e.preventDefault();
+    void undo();
+  } else if ((key === "y" || (key === "z" && e.shiftKey)) && redoStack.value.length) {
+    e.preventDefault();
+    void redo();
+  }
 }
 
 // --- T4: Временные изменения ───────────────────────────────────────────────
