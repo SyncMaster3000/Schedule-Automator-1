@@ -330,7 +330,8 @@ function runMigrations() {
   addColumnIfMissing("teachers", "is_guest", "is_guest INTEGER NOT NULL DEFAULT 0");
   // Учебная неделя периода: 'mon-fri' (Пн–Пт) | 'mon-sat' (Пн–Сб).
   addColumnIfMissing("periods", "work_week", "work_week TEXT NOT NULL DEFAULT 'mon-fri'");
-  // Как показывать пустые слоты: 'empty' (пустой блок) | 'self_study' (Самоподготовка).
+  // Как обрабатывать пустые слоты: 'empty' (пустой блок) |
+  // 'self_study' (Самоподготовка) | 'delete' (не хранить в расписании).
   addColumnIfMissing("periods", "empty_slot_mode", "empty_slot_mode TEXT NOT NULL DEFAULT 'empty'");
   // Групповое расписание на две группы и раздельные лекции.
   addColumnIfMissing("periods", "group_mode", "group_mode INTEGER NOT NULL DEFAULT 0");
