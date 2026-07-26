@@ -345,11 +345,7 @@ async function fillGrid() {
   error.value = "";
   try {
     const res = await api.schedule.fillGrid(periodId.value);
-    info.value = period.value.empty_slot_mode === "delete"
-      ? res.deleted
-        ? `Режим удаления: удалено пустых слотов ${res.deleted}`
-        : "Режим удаления: пустые слоты не создаются"
-      : res.created
+    info.value = res.created
       ? `Сетка заполнена: добавлено пустых слотов ${res.created}`
       : "Все слоты сетки уже заняты";
     await load();
@@ -371,7 +367,7 @@ function openSettings() {
 async function saveSettings() {
   error.value = "";
   try {
-    const res = await api.periods.updateSettings({
+    await api.periods.updateSettings({
       id: periodId.value,
       work_week: settings.value.work_week,
       empty_slot_mode: settings.value.empty_slot_mode,
@@ -379,9 +375,7 @@ async function saveSettings() {
       separate_lectures: settings.value.separate_lectures ? 1 : 0,
     });
     settingsOpen.value = false;
-    info.value = res.deletedEmptySlots
-      ? `Настройки сохранены. Удалено пустых слотов: ${res.deletedEmptySlots}`
-      : "Настройки периода сохранены";
+    info.value = "Настройки периода сохранены";
     await load();
   } catch (e) {
     error.value = e.message;
@@ -470,13 +464,8 @@ async function restoreToQueue(it) {
   pushUndo("возврат в очередь нераспределённых");
   error.value = "";
   try {
-    const res = await api.schedule.restoreToQueue({
-      itemId: it.id,
-      author: author.value || null,
-    });
-    info.value = res.deleted
-      ? "Занятие возвращено в очередь, освободившийся слот удален"
-      : "Занятие возвращено в очередь нераспределенных";
+    await api.schedule.restoreToQueue({ itemId: it.id, author: author.value || null });
+    info.value = "Занятие возвращено в очередь нераспределенных";
     if (editing.value && editing.value.id === it.id) editing.value = null;
     await load();
   } catch (e) {
@@ -733,9 +722,7 @@ async function shiftItems(evt) {
   // items.value уже переставлен draggable. Вставляем пустое окошко (null)
   // на исходную позицию перетянутого занятия.
   const ordered = [...items.value];
-  if (period.value.empty_slot_mode !== "delete") {
-    ordered.splice(oldIndex, 0, null);
-  }
+  ordered.splice(oldIndex, 0, null);
 
   if (ordered.length > cells.length) {
     throw new Error(
@@ -1789,11 +1776,7 @@ onUnmounted(() => {
           <select v-model="settings.empty_slot_mode" class="input">
             <option value="empty">Оставлять пустыми</option>
             <option value="self_study">Помечать «Самоподготовка»</option>
-            <option value="delete">Удалять из расписания</option>
           </select>
-          <p class="mt-1 text-xs text-slate-400">
-            При удалении свободные ячейки не показываются и не создаются заново.
-          </p>
         </div>
         <label class="flex items-center gap-2 text-sm text-slate-700">
           <input type="checkbox" v-model="settings.group_mode" />

@@ -1,12 +1,7 @@
 // Конструктор расписания — занятия + проверка накладок в реальном времени
 import { getDb, audit } from "../db/index.js";
 import { checkScheduleItem, rebuildLocksForItem } from "../services/conflicts.js";
-import {
-  buildCells,
-  buildExtendedCells,
-  normalizeEmptySlotMode,
-  removeEmptySlots,
-} from "./periods.js";
+import { buildCells, buildExtendedCells } from "./periods.js";
 
 // Список занятий периода с расчётом конфликтов для каждого
 function listByPeriod(periodId, crossPeriod = false) {
@@ -163,18 +158,13 @@ export default {
 
   // Заполнить сетку периода: создать пустые занятия для всех ячеек (дата × слот),
   // где ещё ничего не стоит. Режим period.empty_slot_mode задаёт подпись пустых
-  // ячеек ('self_study' → «Самоподготовка», 'delete' → не создавать,
-  // иначе остаются пустыми блоками).
+  // ячеек ('self_study' → «Самоподготовка», иначе остаются пустыми блоками).
   // Существующие занятия (в т.ч. из УТП) не трогаются.
   "schedule:fillGrid": (payload) => {
     const db = getDb();
     const periodId = typeof payload === "object" ? payload.periodId : payload;
     const period = db.prepare("SELECT * FROM periods WHERE id = ?").get(periodId);
     if (!period) throw new Error("Период не найден");
-    const emptySlotMode = normalizeEmptySlotMode(period.empty_slot_mode);
-    if (emptySlotMode === "delete") {
-      return { created: 0, deleted: removeEmptySlots(db, periodId) };
-    }
 
     const timeGrid = JSON.parse(period.time_grid_json || "[]");
     const cells = buildCells(
@@ -189,7 +179,7 @@ export default {
       .all(periodId);
     const taken = new Set(existing.map((e) => `${e.date} ${e.start_time}`));
 
-    const selfStudy = emptySlotMode === "self_study";
+    const selfStudy = period.empty_slot_mode === "self_study";
     const insert = db.prepare(
       `INSERT INTO schedule_items
         (period_id, program_id, topic_id, date, start_time, end_time, start_dt, end_dt,
@@ -254,30 +244,16 @@ export default {
   },
 
   // Вернуть занятие в очередь нераспределённых: очистить тему/преподавателей,
-  // ячейка снова становится пустой, «Самоподготовкой» или удаляется — в
-  // зависимости от настройки периода.
+  // ячейка снова становится пустой (или «Самоподготовка»).
   "schedule:restoreToQueue": (data) => {
     const db = getDb();
     const item = db.prepare("SELECT * FROM schedule_items WHERE id = ?").get(data.itemId);
     if (!item) throw new Error("Занятие не найдено");
     const period = db.prepare("SELECT * FROM periods WHERE id = ?").get(item.period_id);
-    const emptySlotMode = normalizeEmptySlotMode(period && period.empty_slot_mode);
-    const selfStudy = emptySlotMode === "self_study";
+    const selfStudy = period && period.empty_slot_mode === "self_study";
     const prevTopic = item.topic_id
       ? db.prepare("SELECT title FROM program_topics WHERE id = ?").get(item.topic_id)
       : null;
-    if (emptySlotMode === "delete") {
-      db.prepare("DELETE FROM locks WHERE schedule_item_id = ?").run(data.itemId);
-      db.prepare("DELETE FROM schedule_items WHERE id = ?").run(data.itemId);
-      audit(
-        item.program_id,
-        item.period_id,
-        "restored_to_queue",
-        { itemId: data.itemId, title: prevTopic ? prevTopic.title : null, slotDeleted: true },
-        data.author || null
-      );
-      return { id: data.itemId, deleted: true };
-    }
     db.prepare(
       `UPDATE schedule_items SET topic_id = NULL, teacher_ids = '[]', room_id = NULL,
         group_ids = '[]', group_label = NULL, note = NULL,
@@ -415,18 +391,8 @@ export default {
       return true; // 'all'
     }
 
-    const isEmptySlot = (it) => {
-      if (it.lesson_type === "empty" || it.lesson_type === "self_study") return true;
-      return (
-        !it.topic_id &&
-        !it.custom_title &&
-        !it.lesson_type &&
-        !it.room_id &&
-        JSON.parse(it.teacher_ids || "[]").length === 0 &&
-        JSON.parse(it.group_ids || "[]").length === 0 &&
-        !it.note
-      );
-    };
+    const isEmptySlot = (it) =>
+      it.lesson_type === "empty" || it.lesson_type === "self_study" || !it.topic_id;
 
     // Сдвигаем только реальные, незакреплённые, не «вне периода» занятия из scope
     const realToShift = allItems.filter(
@@ -434,9 +400,7 @@ export default {
     );
     if (!realToShift.length) return { shifted: 0 };
 
-    const emptySlotMode = normalizeEmptySlotMode(period.empty_slot_mode);
-    const selfStudy = emptySlotMode === "self_study";
-    const deleteEmpty = emptySlotMode === "delete";
+    const selfStudy = period.empty_slot_mode === "self_study";
 
     const tx = db.transaction(() => {
       // Удалить пустые/самоподготовка занятия в scope — пересоздадутся после сдвига
@@ -469,12 +433,10 @@ export default {
         realAfterKeys.add(`${newCell.date} ${newCell.start}`);
       }
 
-      // Пересоздать пустые ячейки для рабочих слотов scope, не занятых реальными.
-      // В режиме удаления свободные ячейки не представлены записями в расписании.
+      // Пересоздать пустые ячейки для рабочих слотов scope, не занятых реальными
       let order =
         (db.prepare("SELECT MAX(sort_order) AS m FROM schedule_items WHERE period_id = ?")
           .get(periodId).m || 0) + 1;
-      if (deleteEmpty) return;
       for (const c of allCells) {
         if (!inScope({ date: c.date })) continue;
         if (realAfterKeys.has(`${c.date} ${c.start}`)) continue;

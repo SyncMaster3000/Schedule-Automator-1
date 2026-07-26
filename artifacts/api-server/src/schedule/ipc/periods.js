@@ -3,39 +3,6 @@ import { getDb, audit } from "../db/index.js";
 import { eachDayOfInterval, parseISO, format } from "date-fns";
 
 const HOURS_PER_SLOT = 2; // академических часов в одном слоте по умолчанию
-const EMPTY_SLOT_MODES = new Set(["empty", "self_study", "delete"]);
-
-function normalizeEmptySlotMode(value, fallback = "empty") {
-  return EMPTY_SLOT_MODES.has(value) ? value : fallback;
-}
-
-// Удаляет только технические записи свободных ячеек. Произвольные занятия без
-// темы сохраняются, если у них есть название, вид, преподаватель, аудитория,
-// группа или заметка.
-function removeEmptySlots(db, periodId) {
-  const emptyItems = db
-    .prepare(
-      `SELECT id FROM schedule_items
-       WHERE period_id = ? AND topic_id IS NULL
-         AND (
-           lesson_type IN ('empty', 'self_study')
-           OR (
-             lesson_type IS NULL AND custom_title IS NULL AND room_id IS NULL
-             AND COALESCE(teacher_ids, '[]') = '[]'
-             AND COALESCE(group_ids, '[]') = '[]'
-             AND note IS NULL
-           )
-         )`
-    )
-    .all(periodId);
-  if (!emptyItems.length) return 0;
-
-  const placeholders = emptyItems.map(() => "?").join(",");
-  const ids = emptyItems.map((item) => item.id);
-  db.prepare(`DELETE FROM locks WHERE schedule_item_id IN (${placeholders})`).run(...ids);
-  db.prepare(`DELETE FROM schedule_items WHERE id IN (${placeholders})`).run(...ids);
-  return ids.length;
-}
 
 // Список видов занятий темы по часам: Лекция / Практическое занятие / Круглый стол.
 // Если разбивки нет — равномерно заполняем общий объём практическими занятиями.
@@ -129,7 +96,7 @@ const handlers = {
           JSON.stringify(data.time_grid || []),
           order,
           data.work_week || "mon-fri",
-          normalizeEmptySlotMode(data.empty_slot_mode),
+          data.empty_slot_mode || "empty",
           data.group_mode ? 1 : 0,
           data.separate_lectures ? 1 : 0
         );
@@ -165,30 +132,23 @@ const handlers = {
     const db = getDb();
     const cur = db.prepare("SELECT * FROM periods WHERE id = ?").get(data.id);
     if (!cur) throw new Error("Период не найден");
-    const emptySlotMode = normalizeEmptySlotMode(
-      data.empty_slot_mode,
-      normalizeEmptySlotMode(cur.empty_slot_mode)
+    db.prepare(
+      `UPDATE periods SET name = ?, start_date = ?, end_date = ?,
+         time_grid_json = ?, status = ?, work_week = ?, empty_slot_mode = ?,
+         group_mode = ?, separate_lectures = ? WHERE id = ?`
+    ).run(
+      data.name,
+      data.start_date,
+      data.end_date,
+      data.time_grid != null ? JSON.stringify(data.time_grid) : cur.time_grid_json,
+      data.status || "active",
+      data.work_week || cur.work_week || "mon-fri",
+      data.empty_slot_mode || cur.empty_slot_mode || "empty",
+      data.group_mode != null ? (data.group_mode ? 1 : 0) : cur.group_mode,
+      data.separate_lectures != null ? (data.separate_lectures ? 1 : 0) : cur.separate_lectures,
+      data.id
     );
-    const tx = db.transaction(() => {
-      db.prepare(
-        `UPDATE periods SET name = ?, start_date = ?, end_date = ?,
-           time_grid_json = ?, status = ?, work_week = ?, empty_slot_mode = ?,
-           group_mode = ?, separate_lectures = ? WHERE id = ?`
-      ).run(
-        data.name,
-        data.start_date,
-        data.end_date,
-        data.time_grid != null ? JSON.stringify(data.time_grid) : cur.time_grid_json,
-        data.status || "active",
-        data.work_week || cur.work_week || "mon-fri",
-        emptySlotMode,
-        data.group_mode != null ? (data.group_mode ? 1 : 0) : cur.group_mode,
-        data.separate_lectures != null ? (data.separate_lectures ? 1 : 0) : cur.separate_lectures,
-        data.id
-      );
-      return emptySlotMode === "delete" ? removeEmptySlots(db, data.id) : 0;
-    });
-    return { id: data.id, deletedEmptySlots: tx() };
+    return { id: data.id };
   },
 
   // Изменить только настройки периода (учебная неделя, режим пустых слотов, группы)
@@ -197,24 +157,17 @@ const handlers = {
     const db = getDb();
     const cur = db.prepare("SELECT * FROM periods WHERE id = ?").get(data.id);
     if (!cur) throw new Error("Период не найден");
-    const emptySlotMode = normalizeEmptySlotMode(
-      data.empty_slot_mode,
-      normalizeEmptySlotMode(cur.empty_slot_mode)
+    db.prepare(
+      `UPDATE periods SET work_week = ?, empty_slot_mode = ?,
+         group_mode = ?, separate_lectures = ? WHERE id = ?`
+    ).run(
+      data.work_week || cur.work_week || "mon-fri",
+      data.empty_slot_mode || cur.empty_slot_mode || "empty",
+      data.group_mode != null ? (data.group_mode ? 1 : 0) : cur.group_mode,
+      data.separate_lectures != null ? (data.separate_lectures ? 1 : 0) : cur.separate_lectures,
+      data.id
     );
-    const tx = db.transaction(() => {
-      db.prepare(
-        `UPDATE periods SET work_week = ?, empty_slot_mode = ?,
-           group_mode = ?, separate_lectures = ? WHERE id = ?`
-      ).run(
-        data.work_week || cur.work_week || "mon-fri",
-        emptySlotMode,
-        data.group_mode != null ? (data.group_mode ? 1 : 0) : cur.group_mode,
-        data.separate_lectures != null ? (data.separate_lectures ? 1 : 0) : cur.separate_lectures,
-        data.id
-      );
-      return emptySlotMode === "delete" ? removeEmptySlots(db, data.id) : 0;
-    });
-    return { id: data.id, deletedEmptySlots: tx() };
+    return { id: data.id };
   },
 
   "periods:delete": (id) => {
@@ -301,7 +254,7 @@ const handlers = {
 };
 
 export default handlers;
-export { buildCells, normalizeEmptySlotMode, removeEmptySlots };
+export { buildCells };
 
 // Сформировать список ячеек для ВСЕХ календарных дней (включая выходные и дни за
 // пределами периода). Используется для «переполняющего» сдвига занятий за конец периода.
