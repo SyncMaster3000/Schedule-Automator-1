@@ -187,10 +187,6 @@ onMounted(load);
             <label class="label">Должность утверждающего</label>
             <input v-model="form.approver_title" class="input" />
           </div>
-          <div class="col-span-2">
-            <label class="label">Дата утверждения</label>
-            <input v-model="form.approve_date" class="input" placeholder="напр. 01.01.2025" />
-          </div>
           <div>
             <label class="label">Подписант (ФИО)</label>
             <input v-model="form.signer_name" class="input" />
@@ -199,11 +195,10 @@ onMounted(load);
             <label class="label">Должность подписанта</label>
             <input v-model="form.signer_title" class="input" />
           </div>
-          <div class="col-span-2">
-            <label class="label">Дата подписания</label>
-            <input v-model="form.sign_date" class="input" placeholder="напр. 01.01.2025" />
-          </div>
         </div>
+        <p class="text-xs text-slate-400">
+          Даты утверждения и подписания указываются при утверждении расписания.
+        </p>
       </div>
       <template #footer>
         <button class="btn-secondary" @click="showCreate = false">Отмена</button>

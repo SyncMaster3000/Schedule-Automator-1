@@ -931,10 +931,35 @@ async function redo() {
   }
 }
 
+function isEditableTarget(target) {
+  return (
+    target instanceof Element &&
+    target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')
+  );
+}
+
 function handleUndoKey(e) {
-  if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-  if (e.key === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
-  if (e.key === "y" || (e.key === "z" && e.shiftKey)) { e.preventDefault(); redo(); }
+  // Не перехватываем системное редактирование текста. Раньше Ctrl/Cmd+Z внутри
+  // поля запускал восстановление всего расписания через API, из-за чего форма
+  // могла надолго перестать реагировать на ввод.
+  if (
+    e.defaultPrevented ||
+    e.isComposing ||
+    isEditableTarget(e.target) ||
+    !(e.ctrlKey || e.metaKey) ||
+    e.altKey
+  ) {
+    return;
+  }
+
+  const key = e.key.toLowerCase();
+  if (key === "z" && !e.shiftKey && undoStack.value.length) {
+    e.preventDefault();
+    void undo();
+  } else if ((key === "y" || (key === "z" && e.shiftKey)) && redoStack.value.length) {
+    e.preventDefault();
+    void redo();
+  }
 }
 
 // --- T4: Временные изменения ───────────────────────────────────────────────
@@ -1425,7 +1450,13 @@ onUnmounted(() => {
           <button class="btn-secondary" @click="addOrgEvent(it)" title="Добавить организационное мероприятие">Орг. мероприятие</button>
           <button class="btn-secondary" @click="addSelfStudySlot(it)" title="Заполнить самоподготовкой">Самоподготовка</button>
           <button class="btn-secondary" @click="openEditor(it)">Вписать занятие</button>
-          <button class="btn-ghost text-slate-400" @click="deleteEmpty(it)">Удалить</button>
+          <button
+            class="btn-ghost text-red-600"
+            title="Удалить именно этот пустой слот"
+            @click="deleteEmpty(it)"
+          >
+            Удалить слот
+          </button>
         </div>
         <!-- Обычное занятие -->
         <div

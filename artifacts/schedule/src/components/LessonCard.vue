@@ -79,7 +79,13 @@ function conflictTitle(it) {
       </option>
     </select>
     <button class="btn-secondary" @click="emit('edit', item)">Вписать занятие</button>
-    <button class="btn-ghost text-slate-400" @click="emit('delete-empty', item)">Удалить</button>
+    <button
+      class="btn-ghost text-red-600"
+      title="Удалить именно этот пустой слот"
+      @click="emit('delete-empty', item)"
+    >
+      Удалить слот
+    </button>
   </div>
   <!-- Обычное занятие -->
   <div

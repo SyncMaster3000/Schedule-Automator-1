@@ -34,6 +34,15 @@ const fromTemplateOpen = ref(false);
 const fromTemplateVersion = ref(null);
 const fromTemplateForm = ref({ newTitle: "", newStartDate: "" });
 
+// --- Утверждение: даты утверждения и подписания заполняются здесь, а не при
+// создании черновика; они попадают в шапку и подписи экспорта .docx.
+const showApprove = ref(false);
+const approveForm = ref({ approve_date: "", sign_date: "" });
+
+function todayRu() {
+  return new Date().toLocaleDateString("ru-RU"); // формат ДД.ММ.ГГГГ
+}
+
 function blankPeriod() {
   return {
     name: "",
@@ -238,13 +247,31 @@ async function removePeriod(id) {
   await loadAll();
 }
 
-async function approve() {
+function approve() {
   if (queue.value.remaining > 0) {
     if (!confirm("Остались нераспределенные темы. Все равно утвердить?")) return;
   }
-  await api.programs.update({ ...program.value, status: "approved" });
-  info.value = "Программа утверждена";
-  await loadAll();
+  approveForm.value = {
+    approve_date: program.value?.approve_date || todayRu(),
+    sign_date: program.value?.sign_date || todayRu(),
+  };
+  showApprove.value = true;
+}
+
+async function confirmApprove() {
+  try {
+    await api.programs.update({
+      ...program.value,
+      status: "approved",
+      approve_date: approveForm.value.approve_date || null,
+      sign_date: approveForm.value.sign_date || null,
+    });
+    showApprove.value = false;
+    info.value = "Расписание утверждено";
+    await loadAll();
+  } catch (e) {
+    error.value = e.message;
+  }
 }
 
 async function saveVersion() {
@@ -613,6 +640,29 @@ onMounted(async () => {
         <button class="btn-primary" @click="savePeriod">
           {{ editingPeriodId ? 'Сохранить' : 'Создать' }}
         </button>
+      </template>
+    </AppModal>
+
+    <!-- Утверждение расписания: даты утверждения и подписания -->
+    <AppModal v-if="showApprove" title="Утверждение расписания" @close="showApprove = false">
+      <div class="space-y-3">
+        <p class="text-sm text-slate-500">
+          Укажите даты — они попадут в шапку и подписи экспортируемого файла .docx.
+        </p>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="label">Дата утверждения</label>
+            <input v-model="approveForm.approve_date" class="input" placeholder="напр. 01.01.2025" />
+          </div>
+          <div>
+            <label class="label">Дата подписания</label>
+            <input v-model="approveForm.sign_date" class="input" placeholder="напр. 01.01.2025" />
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <button class="btn-secondary" @click="showApprove = false">Отмена</button>
+        <button class="btn-primary" @click="confirmApprove">Утвердить</button>
       </template>
     </AppModal>
   </div>
