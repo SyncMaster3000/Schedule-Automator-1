@@ -1450,7 +1450,13 @@ onUnmounted(() => {
           <button class="btn-secondary" @click="addOrgEvent(it)" title="Добавить организационное мероприятие">Орг. мероприятие</button>
           <button class="btn-secondary" @click="addSelfStudySlot(it)" title="Заполнить самоподготовкой">Самоподготовка</button>
           <button class="btn-secondary" @click="openEditor(it)">Вписать занятие</button>
-          <button class="btn-ghost text-slate-400" @click="deleteEmpty(it)">Удалить</button>
+          <button
+            class="btn-ghost text-red-600"
+            title="Удалить именно этот пустой слот"
+            @click="deleteEmpty(it)"
+          >
+            Удалить слот
+          </button>
         </div>
         <!-- Обычное занятие -->
         <div
