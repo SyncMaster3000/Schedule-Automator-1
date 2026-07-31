@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1785490668583,
+      "tag": "0000_regular_whistler",
+      "breakpoints": true
+    }
+  ]
+}
