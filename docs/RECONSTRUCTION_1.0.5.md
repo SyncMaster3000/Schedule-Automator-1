@@ -58,7 +58,7 @@ The installer is the acceptance reference. Git branch names are evidence, but no
 - [x] Backend build passes.
 - [x] Frontend production build passes with `PORT=5173`, `BASE_PATH=/`, and `NODE_ENV=production`.
 - [x] Automated unit, storage, smoke, and portability tests pass on the supported Node.js 20 runtime bundled with release 1.0.5.
-- [ ] Application starts and opens the schedule builder.
+- [x] Application starts and opens the schedule builder.
 - [ ] Existing `.db` data opens without loss.
 - [ ] DOCX and JSON import/export still work.
 - [ ] Schedule generation and conflict checks match the reference application on representative data.
@@ -77,6 +77,16 @@ Verified on `2026-07-31`:
 - All 3 desktop storage-selection tests passed on Node.js `20.18.3`, the runtime bundled with the installed release.
 - The desktop smoke and portability tests passed.
 - The rebuilt frontend contains the same release-defining controls and keyboard behavior as the installed 1.0.5 frontend.
+
+Browser acceptance on an isolated temporary database also passed:
+
+- Created a new professional-development schedule and a one-day period.
+- Filled the day grid with five empty slots.
+- Deleted one empty slot and restored it with schedule undo (`5 → 4 → 5`).
+- Confirmed that `Ctrl+Z` inside the lesson title field does not trigger schedule undo.
+- Returned from the builder to the program and then to the schedule list using the Back buttons.
+- Opened the seeded directories (`23` teachers, `7` rooms, `1` lesson-time grid).
+- No browser console errors or warnings were recorded during the scenario.
 
 Node.js 24 and later are intentionally outside the supported range for the reconstruction: their changed `fs.cp` directory behavior breaks the release's storage migration test. The repository pins Node.js 22 for development and CI and accepts Node.js 20 through 22.
 
