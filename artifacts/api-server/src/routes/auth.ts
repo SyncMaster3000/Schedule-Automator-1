@@ -5,20 +5,14 @@ import {
   type Request,
   type Response,
 } from "express";
-import { AuthError, createAuthService } from "../auth/service.js";
-import { PostgresAuthRepository } from "../auth/postgresRepository";
+import { AuthError } from "../auth/service.js";
+import { authService, sessionToken } from "../auth/runtime";
 import { SESSION_COOKIE } from "../auth/session.js";
 import { AttemptLimiter } from "../auth/attemptLimiter.js";
 
 const router = Router();
-const service = createAuthService(new PostgresAuthRepository());
 const loginAttempts = new AttemptLimiter();
 const production = process.env.NODE_ENV === "production";
-
-function sessionToken(req: Request) {
-  const value = req.cookies?.[SESSION_COOKIE];
-  return typeof value === "string" ? value : undefined;
-}
 
 function cookieOptions(expires?: Date) {
   return {
@@ -80,7 +74,7 @@ router.post(
       return;
     }
     try {
-      const result = await service.login({
+      const result = await authService.login({
         login: req.body?.login,
         password: req.body?.password,
       });
@@ -101,7 +95,7 @@ router.get(
   "/auth/me",
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const result = await service.me(sessionToken(req));
+      const result = await authService.me(sessionToken(req));
       res.setHeader("Cache-Control", "no-store");
       res.json({ ok: true, data: result });
     } catch (error) {
@@ -115,7 +109,7 @@ router.post(
   async (req: Request, res: Response, next: NextFunction) => {
     res.clearCookie(SESSION_COOKIE, cookieOptions());
     try {
-      await service.logout(sessionToken(req));
+      await authService.logout(sessionToken(req));
       res.status(204).end();
     } catch (error) {
       handleError(error, res, next);
@@ -127,7 +121,7 @@ router.post(
   "/auth/change-password",
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const result = await service.changePassword(sessionToken(req), {
+      const result = await authService.changePassword(sessionToken(req), {
         currentPassword: req.body?.currentPassword,
         newPassword: req.body?.newPassword,
       });
@@ -150,7 +144,7 @@ router.post(
       return;
     }
     try {
-      const result = await service.createDemoAccount({
+      const result = await authService.createDemoAccount({
         organizationName: req.body?.organizationName,
         login: req.body?.login,
         displayName: req.body?.displayName,

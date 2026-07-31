@@ -14,6 +14,8 @@ import versions from "./ipc/versions.js";
 import notes from "./ipc/notes.js";
 import { importUtp } from "./services/docxImport.js";
 import { exportSchedule } from "./services/docxExport.js";
+import { ScheduleChannelUnavailableError } from "./postgres/handlers.js";
+import { usesPostgresScheduleStorage } from "./storageMode.js";
 
 const handlers = {
   ...programs,
@@ -55,6 +57,7 @@ const READONLY = new Set([
 let ready = null;
 
 async function initSchedule() {
+  if (usesPostgresScheduleStorage()) return;
   const dataDir =
     process.env.SCHEDULE_DATA_DIR || path.join(process.cwd(), "schedule-data");
   await ensureDb(dataDir);
@@ -71,8 +74,13 @@ export async function ensureReady() {
 // Для пишущих каналов БД сохраняется на диск в finally — даже если обработчик
 // выбросил ошибку после уже зафиксированной транзакции (иначе изменения,
 // закоммиченные в память, были бы потеряны при перезапуске процесса).
-export async function dispatch(channel, payload) {
+export async function dispatch(channel, payload, context) {
   await ensureReady();
+  if (usesPostgresScheduleStorage()) {
+    const { dispatchPostgresSchedule } =
+      await import("./postgres/dispatcher.js");
+    return dispatchPostgresSchedule(channel, payload, context);
+  }
   const fn = handlers[channel];
   if (!fn) throw new Error("Неизвестный канал: " + channel);
   const isWrite = !READONLY.has(channel);
@@ -105,7 +113,10 @@ function mapById(rows) {
 }
 
 function isAssessmentType(value) {
-  const normalized = String(value || "").trim().toLowerCase().replace(/ё/g, "е");
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е");
   return ["зачет", "экзамен", "собеседование"].includes(normalized);
 }
 
@@ -121,13 +132,20 @@ function enrichAssessmentDisciplines(items, topics) {
   for (const topic of sortedTopics) {
     const explicit = String(topic.discipline_name || "").trim();
     if (explicit) currentDiscipline = explicit;
-    else if (topic.is_section && topic.title) currentDiscipline = String(topic.title).trim();
-    if (isAssessmentType(topic.default_lesson_type || topic.title) && currentDiscipline) {
+    else if (topic.is_section && topic.title)
+      currentDiscipline = String(topic.title).trim();
+    if (
+      isAssessmentType(topic.default_lesson_type || topic.title) &&
+      currentDiscipline
+    ) {
       inferredByTopicId.set(Number(topic.id), currentDiscipline);
     }
   }
   return (items || []).map((item) => {
-    if (!isAssessmentType(item.lesson_type) || String(item.discipline_name || "").trim()) {
+    if (
+      !isAssessmentType(item.lesson_type) ||
+      String(item.discipline_name || "").trim()
+    ) {
       return item;
     }
     const discipline = inferredByTopicId.get(Number(item.topic_id));
@@ -146,18 +164,24 @@ async function exportVersionDocxBuffer(db, data) {
   const topicById = mapById(snapshotTopics);
   const program = {
     ...(snapshot.program || {}),
-    status: version.archive_section && ["approved", "archived"].includes(version.status)
-      ? "approved"
-      : snapshot.program?.status || version.status,
+    status:
+      version.archive_section &&
+      ["approved", "archived"].includes(version.status)
+        ? "approved"
+        : snapshot.program?.status || version.status,
   };
 
   const periods = data.periodId
     ? (snapshot.periods || []).filter((p) => p.id === data.periodId)
-    : [...(snapshot.periods || [])].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+    : [...(snapshot.periods || [])].sort(
+        (a, b) => (a.sort_order || 0) - (b.sort_order || 0),
+      );
   const periodIds = new Set(periods.map((p) => p.id));
   if (!periodIds.size) throw new Error("Нет периодов для экспорта");
 
-  const groups = (snapshot.groups || []).filter((g) => periodIds.has(g.period_id));
+  const groups = (snapshot.groups || []).filter((g) =>
+    periodIds.has(g.period_id),
+  );
   const groupsById = mapById(groups);
   let items = (snapshot.items || [])
     .filter((it) => periodIds.has(it.period_id))
@@ -171,10 +195,11 @@ async function exportVersionDocxBuffer(db, data) {
         is_section: it.is_section ?? topic.is_section,
       };
     })
-    .sort((a, b) =>
-      String(a.date || "").localeCompare(String(b.date || "")) ||
-      String(a.start_time || "").localeCompare(String(b.start_time || "")) ||
-      (a.sort_order || 0) - (b.sort_order || 0)
+    .sort(
+      (a, b) =>
+        String(a.date || "").localeCompare(String(b.date || "")) ||
+        String(a.start_time || "").localeCompare(String(b.start_time || "")) ||
+        (a.sort_order || 0) - (b.sort_order || 0),
     );
   items = enrichAssessmentDisciplines(items, snapshotTopics);
 
@@ -201,24 +226,34 @@ async function exportVersionDocxBuffer(db, data) {
     groupName,
   });
 
-  const baseName = version.version_label || program.title || "Архивное расписание";
-  const filename = `Расписание_${baseName}`.replace(/[\\/:*?"<>|]/g, "_") + ".docx";
+  const baseName =
+    version.version_label || program.title || "Архивное расписание";
+  const filename =
+    `Расписание_${baseName}`.replace(/[\\/:*?"<>|]/g, "_") + ".docx";
   return { buffer, filename, count };
 }
 
 // Экспорт расписания в .docx. data: { programId, periodId?, groupId? } или { versionId }
-export async function exportDocxBuffer(data) {
+export async function exportDocxBuffer(data, context) {
   await ensureReady();
+  if (usesPostgresScheduleStorage()) {
+    void context;
+    throw new ScheduleChannelUnavailableError("schedule:exportDocx");
+  }
   const db = getDb();
   if (data.versionId) return exportVersionDocxBuffer(db, data);
 
-  const program = db.prepare("SELECT * FROM programs WHERE id = ?").get(data.programId);
+  const program = db
+    .prepare("SELECT * FROM programs WHERE id = ?")
+    .get(data.programId);
   if (!program) throw new Error("Программа не найдена");
 
   const periods = data.periodId
     ? db.prepare("SELECT * FROM periods WHERE id = ?").all(data.periodId)
     : db
-        .prepare("SELECT * FROM periods WHERE program_id = ? ORDER BY sort_order")
+        .prepare(
+          "SELECT * FROM periods WHERE program_id = ? ORDER BY sort_order",
+        )
         .all(data.programId);
 
   const periodIds = periods.map((p) => p.id);
@@ -231,11 +266,13 @@ export async function exportDocxBuffer(data) {
        FROM schedule_items si
        LEFT JOIN program_topics tp ON tp.id = si.topic_id
        WHERE si.period_id IN (${placeholders})
-       ORDER BY si.date, si.start_time, si.sort_order`
+       ORDER BY si.date, si.start_time, si.sort_order`,
     )
     .all(...periodIds);
   const topics = db
-    .prepare("SELECT * FROM program_topics WHERE program_id = ? ORDER BY sort_order")
+    .prepare(
+      "SELECT * FROM program_topics WHERE program_id = ? ORDER BY sort_order",
+    )
     .all(data.programId);
   items = enrichAssessmentDisciplines(items, topics);
 
@@ -247,7 +284,8 @@ export async function exportDocxBuffer(data) {
   }
 
   const teachersById = {};
-  for (const t of db.prepare("SELECT * FROM teachers").all()) teachersById[t.id] = t;
+  for (const t of db.prepare("SELECT * FROM teachers").all())
+    teachersById[t.id] = t;
   const roomsById = {};
   for (const r of db.prepare("SELECT * FROM rooms").all()) roomsById[r.id] = r;
   const groupsById = {};
@@ -270,6 +308,7 @@ export async function exportDocxBuffer(data) {
     groupName,
   });
 
-  const filename = `Расписание_${program.title}`.replace(/[\\/:*?"<>|]/g, "_") + ".docx";
+  const filename =
+    `Расписание_${program.title}`.replace(/[\\/:*?"<>|]/g, "_") + ".docx";
   return { buffer, filename, count };
 }

@@ -28,7 +28,10 @@ export type DesktopServer = {
 
 let frontendMounted = false;
 
-async function assertDirectory(directory: string, label: string): Promise<void> {
+async function assertDirectory(
+  directory: string,
+  label: string,
+): Promise<void> {
   const stat = await fs.stat(directory);
   if (!stat.isDirectory()) {
     throw new Error(`${label} не является каталогом: ${directory}`);
@@ -74,7 +77,9 @@ export async function startDesktopServer(
   const host = options.host || "127.0.0.1";
   const requestedPort = options.port ?? 0;
   if (host !== "127.0.0.1" && host !== "::1") {
-    throw new Error("Настольный API разрешено запускать только на loopback-адресе");
+    throw new Error(
+      "Настольный API разрешено запускать только на loopback-адресе",
+    );
   }
   if (
     !Number.isInteger(requestedPort) ||
@@ -92,6 +97,7 @@ export async function startDesktopServer(
 
   process.env.SCHEDULE_DATA_DIR = options.dataDir;
   process.env.SCHEDULE_TEMPLATES_DIR = options.templatesDir;
+  process.env.SCHEDULE_STORAGE = "sqlite";
   setDesktopSaveHandler(options.saveHandler);
   await ensureReady();
   mountFrontend(options.frontendDir);

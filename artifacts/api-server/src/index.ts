@@ -1,6 +1,8 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 
+process.env.SCHEDULE_STORAGE = "postgres";
+
 const rawPort = process.env["PORT"];
 
 if (!rawPort) {
