@@ -8,6 +8,13 @@
       "when": 1785490668583,
       "tag": "0000_regular_whistler",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785500153833,
+      "tag": "0001_faulty_morbius",
+      "breakpoints": true
     }
   ]
 }

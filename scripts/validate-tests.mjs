@@ -51,7 +51,10 @@ const buildEnv = {
   NODE_ENV: "production",
   PORT: "5173",
 };
-const unitTests = await collectTests(path.join(repoDir, "artifacts"));
+const unitTests = [
+  ...(await collectTests(path.join(repoDir, "artifacts"))),
+  ...(await collectTests(path.join(repoDir, "lib", "db", "src"))),
+].sort();
 
 const unitTestEnv = {
   SCHEDULE_TEMPLATES_DIR: path.join(
