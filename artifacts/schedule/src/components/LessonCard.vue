@@ -26,6 +26,7 @@ const emit = defineEmits([
   "add-self-study",
   "add-org-event",
   "leave-empty",
+  "delete-empty",
   "toggle-select",
   "toggle-pin",
   "drag-start",
@@ -148,6 +149,11 @@ function handleSelectionChange() {
       title="Сохранить этот слот пустым; отмена заполнения сетки его не удалит"
       @click="emit('leave-empty', item)"
     >Оставить пустым</button>
+    <button
+      class="btn-ghost text-red-600"
+      title="Удалить именно этот пустой слот"
+      @click="emit('delete-empty', item)"
+    >Удалить слот</button>
   </div>
   <!-- Обычное занятие -->
   <div

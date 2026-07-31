@@ -194,19 +194,6 @@ function roomNumber(id) {
   return rooms.value.find((r) => r.id === id)?.number || "—";
 }
 
-// Удалить пустое окошко напрямую из списка (без открытия редактора).
-async function deleteEmpty(it) {
-  pushUndo("удаление свободного окошка");
-  error.value = "";
-  try {
-    await api.schedule.deleteItem(it.id);
-    await load();
-    info.value = "Свободное окошко удалено";
-  } catch (e) {
-    error.value = e.message;
-  }
-}
-
 // Заголовок дня в списке занятий: «Понедельник, 01.06.2026»
 const WEEKDAYS = [
   "воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота",
@@ -1302,6 +1289,22 @@ async function leaveEmptySlot(it) {
   }
 }
 
+async function deleteEmptySlot(it) {
+  error.value = "";
+  pushUndo("удаление пустого слота");
+  try {
+    const result = await api.schedule.deleteItem(it.id);
+    if (result.skipped) {
+      error.value = "Пустой слот не удален";
+      return;
+    }
+    info.value = "Пустой слот удален";
+    await load();
+  } catch (e) {
+    error.value = e.message;
+  }
+}
+
 async function undoLastGridFill() {
   error.value = "";
   try {
@@ -2207,9 +2210,23 @@ async function redo() {
 }
 
 function handleUndoKey(e) {
-  if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-  if (e.key === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
-  if (e.key === "y" || (e.key === "z" && e.shiftKey)) { e.preventDefault(); redo(); }
+  const target = e.target;
+  const isEditingText =
+    target instanceof HTMLElement &&
+    (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
+
+  // В полях ввода оставляем Ctrl/Cmd+Z браузеру. Иначе сочетание запускало
+  // восстановление всего расписания через API и мешало обычной правке текста.
+  if (e.isComposing || isEditingText || !(e.ctrlKey || e.metaKey) || e.altKey) return;
+
+  const key = e.key.toLowerCase();
+  if (key === "z" && !e.shiftKey) {
+    e.preventDefault();
+    void undo();
+  } else if (key === "y" || (key === "z" && e.shiftKey)) {
+    e.preventDefault();
+    void redo();
+  }
 }
 
 // --- T4: Временные изменения ───────────────────────────────────────────────
@@ -2804,6 +2821,7 @@ onUnmounted(() => {
               @add-self-study="addSelfStudySlot"
               @add-org-event="addOrgEvent"
               @leave-empty="leaveEmptySlot"
+              @delete-empty="deleteEmptySlot"
               @toggle-select="toggleSelect"
               @toggle-pin="togglePin"
               @toggle-exchange-target="toggleGroupExchangeTarget"
@@ -2854,6 +2872,7 @@ onUnmounted(() => {
                       @add-self-study="addSelfStudySlot"
                       @add-org-event="addOrgEvent"
                       @leave-empty="leaveEmptySlot"
+                      @delete-empty="deleteEmptySlot"
                       @toggle-select="toggleSelect"
                       @toggle-pin="togglePin"
                       @toggle-exchange-target="toggleGroupExchangeTarget"
@@ -2984,6 +3003,12 @@ onUnmounted(() => {
             @click="leaveEmptySlot(it)"
           >Оставить пустым</button>
           <button class="btn-secondary" @click="openEditor(it)">Вписать занятие</button>
+          <button
+            class="btn-ghost text-red-600"
+            title="Удалить именно этот пустой слот"
+            aria-label="Удалить слот"
+            @click="deleteEmptySlot(it)"
+          >Удалить</button>
         </div>
         <!-- Обычное занятие -->
         <div

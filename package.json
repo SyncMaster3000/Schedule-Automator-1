@@ -8,8 +8,14 @@
     "desktop:dist:offline": "pnpm --dir electron-app run dist:offline",
     "desktop:dist:win": "pnpm --dir electron-app run dist:win",
     "desktop:pack:win": "pnpm --dir electron-app run pack:win",
+    "test": "node ./scripts/validate-tests.mjs",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
+  },
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=20 <23",
+    "pnpm": "10.33.0"
   },
   "private": true,
   "devDependencies": {
