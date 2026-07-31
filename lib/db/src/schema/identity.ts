@@ -1,7 +1,6 @@
 import {
   boolean,
   index,
-  integer,
   jsonb,
   pgEnum,
   pgTable,
@@ -40,10 +39,8 @@ export const organizationRole = pgEnum("organization_role", [
   "viewer",
 ]);
 
-export const accessStatus = pgEnum("organization_access_status", [
-  "trialing",
+export const demoAccessStatus = pgEnum("demo_access_status", [
   "active",
-  "past_due",
   "expired",
   "suspended",
 ]);
@@ -99,25 +96,29 @@ export const organizationMembers = pgTable(
   ],
 );
 
-export const organizationAccess = pgTable(
-  "organization_access",
+export const demoAccess = pgTable(
+  "demo_access",
   {
     organizationId: uuid("organization_id")
       .primaryKey()
       .references(() => organizations.id, { onDelete: "cascade" }),
-    status: accessStatus("status").default("trialing").notNull(),
-    trialStartsAt: timestamp("trial_starts_at", { withTimezone: true }),
-    trialEndsAt: timestamp("trial_ends_at", { withTimezone: true }),
-    paidThrough: timestamp("paid_through", { withTimezone: true }),
-    graceEndsAt: timestamp("grace_ends_at", { withTimezone: true }),
-    planCode: text("plan_code").default("pilot").notNull(),
-    seatLimit: integer("seat_limit").default(3).notNull(),
-    billingNote: text("billing_note"),
+    status: demoAccessStatus("status").default("active").notNull(),
+    startsAt: timestamp("starts_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    dataRetentionUntil: timestamp("data_retention_until", {
+      withTimezone: true,
+    }).notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
   },
-  (table) => [index("organization_access_status_idx").on(table.status)],
+  (table) => [
+    index("demo_access_status_idx").on(table.status),
+    index("demo_access_expiry_idx").on(table.expiresAt),
+    index("demo_access_retention_idx").on(table.dataRetentionUntil),
+  ],
 );
 
 export const sessions = pgTable(
@@ -181,6 +182,6 @@ export const auditEvents = pgTable(
 export type Organization = typeof organizations.$inferSelect;
 export type User = typeof users.$inferSelect;
 export type OrganizationMember = typeof organizationMembers.$inferSelect;
-export type OrganizationAccess = typeof organizationAccess.$inferSelect;
+export type DemoAccess = typeof demoAccess.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
 export type AuditEvent = typeof auditEvents.$inferSelect;

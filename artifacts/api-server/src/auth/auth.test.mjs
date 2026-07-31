@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { evaluateOrganizationAccess } from "./access.js";
+import { evaluateDemoAccess } from "./access.js";
 import { hashPassword, normalizeLogin, verifyPassword } from "./password.js";
 import {
   createSessionToken,
@@ -34,51 +34,43 @@ test("creates opaque session tokens and stores only their digest", () => {
   assert.equal(hashSessionToken(token), digest);
 });
 
-test("allows an active trial and blocks it after expiry", () => {
+test("allows a web demo and blocks it after expiry", () => {
   const now = new Date("2026-08-01T09:00:00.000Z");
   assert.deepEqual(
-    evaluateOrganizationAccess(
-      { status: "trialing", trialEndsAt: "2026-08-08T09:00:00.000Z" },
+    evaluateDemoAccess(
+      { status: "active", expiresAt: "2026-08-08T09:00:00.000Z" },
       now,
     ),
     {
       allowed: true,
-      mode: "trial",
+      mode: "demo",
       effectiveUntil: "2026-08-08T09:00:00.000Z",
-      reason: "trial_active",
+      reason: "demo_active",
     },
   );
   assert.equal(
-    evaluateOrganizationAccess(
-      { status: "trialing", trialEndsAt: "2026-08-01T08:59:59.000Z" },
+    evaluateDemoAccess(
+      { status: "active", expiresAt: "2026-08-01T08:59:59.000Z" },
       now,
     ).reason,
-    "trial_expired",
+    "demo_expired",
   );
 });
 
-test("distinguishes paid, grace, expired, and suspended access", () => {
+test("distinguishes expired and suspended demos", () => {
   const now = new Date("2026-08-01T09:00:00.000Z");
   assert.equal(
-    evaluateOrganizationAccess(
-      { status: "active", paidThrough: "2026-09-01T00:00:00.000Z" },
+    evaluateDemoAccess(
+      { status: "expired", expiresAt: "2026-07-31T00:00:00.000Z" },
       now,
-    ).mode,
-    "paid",
-  );
-  assert.equal(
-    evaluateOrganizationAccess(
-      { status: "past_due", graceEndsAt: "2026-08-03T00:00:00.000Z" },
-      now,
-    ).mode,
-    "grace",
-  );
-  assert.equal(
-    evaluateOrganizationAccess({ status: "expired" }, now).allowed,
+    ).allowed,
     false,
   );
   assert.equal(
-    evaluateOrganizationAccess({ status: "suspended" }, now).reason,
-    "organization_suspended",
+    evaluateDemoAccess(
+      { status: "suspended", expiresAt: "2026-08-08T00:00:00.000Z" },
+      now,
+    ).reason,
+    "demo_suspended",
   );
 });
