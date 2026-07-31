@@ -53,18 +53,18 @@ The installer is the acceptance reference. Git branch names are evidence, but no
 
 ## Acceptance checklist
 
-- [ ] Dependencies install from the committed lockfile.
-- [ ] Frontend type-check passes.
+- [x] Dependencies install from the committed lockfile.
+- [x] Frontend type-check passes.
 - [x] Backend build passes.
 - [x] Frontend production build passes with `PORT=5173`, `BASE_PATH=/`, and `NODE_ENV=production`.
 - [x] Automated unit, storage, smoke, and portability tests pass on the supported Node.js 20 runtime bundled with release 1.0.5.
 - [x] Application starts and opens the schedule builder.
-- [ ] Existing `.db` data opens without loss.
-- [ ] DOCX and JSON import/export still work.
-- [ ] Schedule generation and conflict checks match the reference application on representative data.
+- [x] Existing `.db` data opens without loss.
+- [x] UTP import from DOCX and schedule export to DOCX work.
+- [x] Schedule generation and conflict checks match the reference application on representative data.
 - [x] Empty-slot deletion and text-input undo behavior match release 1.0.5.
-- [ ] Back navigation and desktop startup/shutdown behave like release 1.0.5.
-- [ ] The rebuilt release has a documented version and immutable source tag.
+- [x] Back navigation and desktop startup/shutdown behave like release 1.0.5.
+- [x] The rebuilt release has a documented version and immutable source tag (`desktop-v1.0.5`).
 
 ## Verification log
 
@@ -87,6 +87,19 @@ Browser acceptance on an isolated temporary database also passed:
 - Returned from the builder to the program and then to the schedule list using the Back buttons.
 - Opened the seeded directories (`23` teachers, `7` rooms, `1` lesson-time grid).
 - No browser console errors or warnings were recorded during the scenario.
+
+Acceptance on an isolated copy of the real desktop database also passed:
+
+- Source database: `C:\Users\storm\AppData\Local\ScheduleAutomator\data\schedule.db` (`253,952` bytes).
+- Source SHA-256 before and after verification: `73A8196B0662BBE7EC458E1A639DE3C43CB896B1256109F4F9FB753E572791AB`.
+- The copied database opened without migration or content changes; its SHA-256 remained identical to the source.
+- Loaded `3` programs, each with `11` topics, `1` period, and `18` scheduled items.
+- Loaded the real directories (`23` teachers, `7` rooms, `1` lesson-time grid); no stored item was reported with a conflict.
+- Exported approved program `6`, period `5`, to a valid DOCX (`142,923` bytes, `17` ZIP entries, including `word/document.xml`).
+- Parsed the supplied UTP DOCX as an import preview: `10` topic rows across `2` disciplines from `2` source tables.
+- Ran the same representative autofill scenario directly against the installed 1.0.5 backend and the rebuilt backend on identical database copies. Both created the same `18` lessons in the same topic/date/time/type order and reported the same synthetic conflict kinds (`room`, `teacher`).
+
+The earlier draft checklist mentioned JSON import/export. Release 1.0.5 has no user-facing JSON import/export route; JSON is only used internally for API payloads and database fields. The acceptance criterion above now names the two document workflows the product actually exposes.
 
 Node.js 24 and later are intentionally outside the supported range for the reconstruction: their changed `fs.cp` directory behavior breaks the release's storage migration test. The repository pins Node.js 22 for development and CI and accepts Node.js 20 through 22.
 
