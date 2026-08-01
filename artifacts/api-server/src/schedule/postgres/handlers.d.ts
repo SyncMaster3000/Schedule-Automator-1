@@ -201,6 +201,56 @@ export type PostgresScheduleRepository = {
     periodId: number,
     date: string,
   ): Promise<unknown>;
+  listScheduleVersions(
+    organizationId: string,
+    programId: number,
+  ): Promise<unknown>;
+  searchScheduleVersions(
+    organizationId: string,
+    query: RepositoryData,
+  ): Promise<unknown>;
+  createScheduleVersion(
+    organizationId: string,
+    data: RepositoryData,
+    context: ScheduleRequestContext,
+  ): Promise<unknown>;
+  getScheduleVersion(
+    organizationId: string,
+    versionId: number,
+  ): Promise<unknown>;
+  renameScheduleVersion(
+    organizationId: string,
+    data: RepositoryData,
+  ): Promise<unknown>;
+  deleteScheduleVersion(
+    organizationId: string,
+    versionId: number,
+  ): Promise<unknown>;
+  restoreScheduleVersion(
+    organizationId: string,
+    versionId: number,
+    context: ScheduleRequestContext,
+  ): Promise<unknown>;
+  createProgramFromArchive(
+    organizationId: string,
+    versionId: number,
+    context: ScheduleRequestContext,
+  ): Promise<unknown>;
+  listScheduleAudit(
+    organizationId: string,
+    programId: number,
+  ): Promise<unknown>;
+  listScheduleNotes(
+    organizationId: string,
+    programId: number,
+    periodId?: number | null,
+  ): Promise<unknown>;
+  addScheduleNote(
+    organizationId: string,
+    data: RepositoryData,
+    context: ScheduleRequestContext,
+  ): Promise<unknown>;
+  deleteScheduleNote(organizationId: string, noteId: number): Promise<unknown>;
   listGroups(organizationId: string, periodId: number): Promise<unknown>;
   createGroup(organizationId: string, data: RepositoryData): Promise<unknown>;
   updateGroup(organizationId: string, data: RepositoryData): Promise<unknown>;

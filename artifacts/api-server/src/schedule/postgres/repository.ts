@@ -77,7 +77,7 @@ export function notFound(message: string): never {
   throw new ScheduleApiError(404, "schedule_record_not_found", message);
 }
 
-function legacyPeriod(row: Row) {
+export function legacyPeriod(row: Row) {
   const result: Row = {
     ...row,
     time_grid_json: JSON.stringify(row.time_grid || []),

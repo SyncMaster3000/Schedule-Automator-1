@@ -14,7 +14,6 @@ import versions from "./ipc/versions.js";
 import notes from "./ipc/notes.js";
 import { importUtp } from "./services/docxImport.js";
 import { exportSchedule } from "./services/docxExport.js";
-import { ScheduleChannelUnavailableError } from "./postgres/handlers.js";
 import { usesPostgresScheduleStorage } from "./storageMode.js";
 
 const handlers = {
@@ -237,8 +236,9 @@ async function exportVersionDocxBuffer(db, data) {
 export async function exportDocxBuffer(data, context) {
   await ensureReady();
   if (usesPostgresScheduleStorage()) {
-    void context;
-    throw new ScheduleChannelUnavailableError("schedule:exportDocx");
+    const { exportPostgresDocxBuffer } =
+      await import("./postgres/archiveRepository.js");
+    return exportPostgresDocxBuffer(data, context);
   }
   const db = getDb();
   if (data.versionId) return exportVersionDocxBuffer(db, data);

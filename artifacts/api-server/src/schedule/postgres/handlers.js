@@ -24,6 +24,11 @@ const READ_ONLY_CHANNELS = new Set([
   "ref:slots:list",
   "ref:grids:list",
   "lessonTypes:list",
+  "versions:list",
+  "versions:get",
+  "versions:search",
+  "audit:list",
+  "notes:list",
 ]);
 
 export class ScheduleApiError extends Error {
@@ -459,6 +464,55 @@ function normalizeProgramUpdate(input) {
   return data;
 }
 
+function normalizeVersionStatus(value) {
+  const status = String(value || "draft").trim();
+  if (!["draft", "approved", "archived"].includes(status)) {
+    throw new ScheduleApiError(
+      400,
+      "schedule_version_status_invalid",
+      "Передан неизвестный статус версии",
+    );
+  }
+  return status;
+}
+
+function normalizeArchiveSection(value) {
+  if (value === undefined || value === null || !String(value).trim()) {
+    return null;
+  }
+  const section = normalizeScheduleCategory(value);
+  if (!section) {
+    throw new ScheduleApiError(
+      400,
+      "schedule_category_invalid",
+      "Выбрана неизвестная папка расписания",
+    );
+  }
+  return section;
+}
+
+function normalizeVersionSearch(payload) {
+  const data =
+    payload && typeof payload === "object"
+      ? requireRecord(payload)
+      : { text: payload };
+  return {
+    text: optionalText(data.text, 500),
+    archive_section: normalizeArchiveSection(data.archive_section),
+  };
+}
+
+function normalizeNotesList(payload) {
+  const data =
+    payload && typeof payload === "object"
+      ? requireRecord(payload)
+      : { programId: payload };
+  return {
+    programId: requireId(data.programId),
+    periodId: optionalId(data.periodId),
+  };
+}
+
 function handlers(repository) {
   return {
     "programs:list": (_payload, context) =>
@@ -881,6 +935,92 @@ function handlers(repository) {
         Boolean(data.crossPeriod),
       );
     },
+
+    "versions:list": (programId, context) =>
+      repository.listScheduleVersions(
+        context.organizationId,
+        requireId(programId),
+      ),
+    "versions:search": (payload, context) =>
+      repository.searchScheduleVersions(
+        context.organizationId,
+        normalizeVersionSearch(payload),
+      ),
+    "versions:create": (payload, context) => {
+      const data = requireRecord(payload);
+      return repository.createScheduleVersion(
+        context.organizationId,
+        {
+          programId: requireId(data.programId),
+          version_label: requireText(
+            data.version_label,
+            "Название версии",
+            300,
+          ),
+          status: normalizeVersionStatus(data.status),
+          note: optionalText(data.note, 5000),
+          archive_section: normalizeArchiveSection(data.archive_section),
+        },
+        context,
+      );
+    },
+    "versions:get": (id, context) =>
+      repository.getScheduleVersion(context.organizationId, requireId(id)),
+    "versions:rename": (payload, context) => {
+      const data = requireRecord(payload);
+      return repository.renameScheduleVersion(context.organizationId, {
+        id: requireId(data.id),
+        version_label:
+          data.version_label === undefined
+            ? undefined
+            : requireText(data.version_label, "Название версии", 300),
+        note:
+          data.note === undefined ? undefined : optionalText(data.note, 5000),
+      });
+    },
+    "versions:delete": (id, context) =>
+      repository.deleteScheduleVersion(context.organizationId, requireId(id)),
+    "versions:restore": (id, context) =>
+      repository.restoreScheduleVersion(
+        context.organizationId,
+        requireId(id),
+        context,
+      ),
+    "versions:createFromArchive": (id, context) =>
+      repository.createProgramFromArchive(
+        context.organizationId,
+        requireId(id),
+        context,
+      ),
+
+    "audit:list": (programId, context) =>
+      repository.listScheduleAudit(
+        context.organizationId,
+        requireId(programId),
+      ),
+
+    "notes:list": (payload, context) => {
+      const data = normalizeNotesList(payload);
+      return repository.listScheduleNotes(
+        context.organizationId,
+        data.programId,
+        data.periodId,
+      );
+    },
+    "notes:add": (payload, context) => {
+      const data = requireRecord(payload);
+      return repository.addScheduleNote(
+        context.organizationId,
+        {
+          programId: requireId(data.programId),
+          periodId: optionalId(data.periodId),
+          text: requireText(data.text, "Текст заметки", 5000),
+        },
+        context,
+      );
+    },
+    "notes:delete": (id, context) =>
+      repository.deleteScheduleNote(context.organizationId, requireId(id)),
 
     "groups:list": (periodId, context) =>
       repository.listGroups(context.organizationId, requireId(periodId)),
