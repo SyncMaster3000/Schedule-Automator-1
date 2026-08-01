@@ -164,17 +164,12 @@ test("does not let a viewer change tenant data", async () => {
   );
 });
 
-test("fails closed for advanced channels that have not moved to PostgreSQL", async () => {
+test("fails closed for archive channels that have not moved to PostgreSQL", async () => {
   const dispatcher = createPostgresScheduleDispatcher(
     new MemoryTenantRepository(),
   );
   await assert.rejects(
-    () =>
-      dispatcher.dispatch(
-        "schedule:swapItems",
-        { sourceId: 1, targetId: 2 },
-        context(ORGANIZATION_A),
-      ),
+    () => dispatcher.dispatch("versions:list", 1, context(ORGANIZATION_A)),
     ScheduleChannelUnavailableError,
   );
 });

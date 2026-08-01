@@ -117,6 +117,90 @@ export type PostgresScheduleRepository = {
     itemIds: number[],
     pinned: boolean,
   ): Promise<unknown>;
+  fillScheduleGrid(
+    organizationId: string,
+    periodId: number,
+    context: ScheduleRequestContext,
+  ): Promise<unknown>;
+  getScheduleGridUndoInfo(
+    organizationId: string,
+    periodId: number,
+  ): Promise<unknown>;
+  undoScheduleGridFill(
+    organizationId: string,
+    periodId: number,
+    context: ScheduleRequestContext,
+  ): Promise<unknown>;
+  getScheduleDayRemovalInfo(
+    organizationId: string,
+    periodId: number,
+    date: string,
+  ): Promise<unknown>;
+  removeScheduleDay(
+    organizationId: string,
+    periodId: number,
+    date: string,
+    confirmRealItems: boolean,
+    context: ScheduleRequestContext,
+  ): Promise<unknown>;
+  restoreScheduleDay(
+    organizationId: string,
+    periodId: number,
+    date: string,
+    context: ScheduleRequestContext,
+  ): Promise<unknown>;
+  swapScheduleSlotRows(
+    organizationId: string,
+    data: RepositoryData,
+    context: ScheduleRequestContext,
+  ): Promise<unknown>;
+  swapScheduleItems(
+    organizationId: string,
+    data: RepositoryData,
+    context: ScheduleRequestContext,
+  ): Promise<unknown>;
+  swapScheduleGroupSlots(
+    organizationId: string,
+    data: RepositoryData,
+    context: ScheduleRequestContext,
+  ): Promise<unknown>;
+  exchangeScheduleItemSets(
+    organizationId: string,
+    data: RepositoryData,
+    context: ScheduleRequestContext,
+  ): Promise<unknown>;
+  shiftScheduleItems(
+    organizationId: string,
+    data: RepositoryData,
+    context: ScheduleRequestContext,
+  ): Promise<unknown>;
+  moveSelectedScheduleItems(
+    organizationId: string,
+    data: RepositoryData,
+    context: ScheduleRequestContext,
+  ): Promise<unknown>;
+  clearScheduleItemChangeMark(
+    organizationId: string,
+    itemId: number,
+  ): Promise<unknown>;
+  listTempScheduleItems(
+    organizationId: string,
+    periodId: number,
+  ): Promise<unknown>;
+  addTempScheduleItem(
+    organizationId: string,
+    data: RepositoryData,
+  ): Promise<unknown>;
+  updateTempScheduleItem(
+    organizationId: string,
+    data: RepositoryData,
+  ): Promise<unknown>;
+  deleteTempScheduleItem(organizationId: string, id: number): Promise<unknown>;
+  previewTempScheduleOnDate(
+    organizationId: string,
+    periodId: number,
+    date: string,
+  ): Promise<unknown>;
   listGroups(organizationId: string, periodId: number): Promise<unknown>;
   createGroup(organizationId: string, data: RepositoryData): Promise<unknown>;
   updateGroup(organizationId: string, data: RepositoryData): Promise<unknown>;

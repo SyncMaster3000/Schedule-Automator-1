@@ -14,6 +14,10 @@ const READ_ONLY_CHANNELS = new Set([
   "periods:list",
   "groups:list",
   "schedule:listByPeriod",
+  "schedule:gridFillUndoInfo",
+  "schedule:dayRemovalInfo",
+  "schedule:listTemp",
+  "schedule:previewOnDate",
   "conflicts:check",
   "ref:teachers:list",
   "ref:rooms:list",
@@ -136,7 +140,10 @@ function requireTime(value, label) {
 }
 
 function optionalId(value) {
-  return value === undefined || value === null || value === ""
+  return value === undefined ||
+    value === null ||
+    value === "" ||
+    Number(value) === 0
     ? null
     : requireId(value);
 }
@@ -198,6 +205,119 @@ function normalizeScheduleItem(payload) {
     group_label: optionalText(data.group_label, 500),
     note: optionalText(data.note, 5000),
     crossPeriod: Boolean(data.crossPeriod),
+  };
+}
+
+function normalizeScheduleSlot(payload, label, requireEnd = false) {
+  const data = requireRecord(payload);
+  const startTime = requireTime(data.start_time, `${label}: начало`);
+  const endTime =
+    data.end_time !== undefined && data.end_time !== null
+      ? requireTime(data.end_time, `${label}: окончание`)
+      : null;
+  if (requireEnd && !endTime) {
+    throw new ScheduleApiError(
+      400,
+      "schedule_slot_invalid",
+      `${label}: не указано время окончания`,
+    );
+  }
+  if (endTime && endTime <= startTime) {
+    throw new ScheduleApiError(
+      400,
+      "schedule_time_range_invalid",
+      `${label}: время окончания должно быть позже времени начала`,
+    );
+  }
+  return {
+    date: requireDate(data.date, `${label}: дата`),
+    start_time: startTime,
+    end_time: endTime,
+  };
+}
+
+function normalizeTempScheduleItem(
+  payload,
+  { requireItemId = false, requirePeriodId = false } = {},
+) {
+  const data = requireRecord(payload);
+  const validFrom = requireDate(data.valid_from, "Начало действия изменения");
+  const validUntil = requireDate(
+    data.valid_until,
+    "Окончание действия изменения",
+  );
+  if (validUntil < validFrom) {
+    throw new ScheduleApiError(
+      400,
+      "temporary_schedule_date_range_invalid",
+      "Окончание временного изменения раньше его начала",
+    );
+  }
+  const rawStartTime = String(data.start_time || "").trim();
+  const rawEndTime = String(data.end_time || "").trim();
+  const hasStart = Boolean(rawStartTime);
+  const hasEnd = Boolean(rawEndTime);
+  if (hasStart !== hasEnd) {
+    throw new ScheduleApiError(
+      400,
+      "temporary_schedule_time_invalid",
+      "Для временного изменения укажите начало и окончание занятия",
+    );
+  }
+  const startTime = hasStart
+    ? requireTime(rawStartTime, "Начало временного занятия")
+    : null;
+  const endTime = hasEnd
+    ? requireTime(rawEndTime, "Окончание временного занятия")
+    : null;
+  if (startTime && endTime && endTime <= startTime) {
+    throw new ScheduleApiError(
+      400,
+      "schedule_time_range_invalid",
+      "Время окончания должно быть позже времени начала",
+    );
+  }
+  if (
+    data.custom_teachers !== undefined &&
+    (!Array.isArray(data.custom_teachers) || data.custom_teachers.length > 20)
+  ) {
+    throw new ScheduleApiError(
+      400,
+      "schedule_custom_teachers_invalid",
+      "Передан некорректный список преподавателей",
+    );
+  }
+  return {
+    ...data,
+    id: requireItemId ? requireId(data.id) : optionalId(data.id),
+    period_id: requirePeriodId
+      ? requireId(data.period_id)
+      : optionalId(data.period_id),
+    source_item_id: optionalId(data.source_item_id),
+    valid_from: validFrom,
+    valid_until: validUntil,
+    reason: optionalText(data.reason, 2000),
+    is_cancelled: Boolean(data.is_cancelled),
+    date: String(data.date || "").trim()
+      ? requireDate(data.date, "Дата временного занятия")
+      : null,
+    start_time: startTime,
+    end_time: endTime,
+    topic_id: optionalId(data.topic_id),
+    custom_title: optionalText(data.custom_title, 1000),
+    lesson_type: optionalText(data.lesson_type, 200),
+    teacher_ids: uniqueIds(data.teacher_ids, "Преподаватели"),
+    custom_teachers: [
+      ...new Set(
+        (data.custom_teachers || [])
+          .map((name) => optionalText(name, 200))
+          .filter((name) => name !== null),
+      ),
+    ],
+    room_id: optionalId(data.room_id),
+    group_ids: uniqueIds(data.group_ids, "Группы", 2),
+    group_label: optionalText(data.group_label, 500),
+    note: optionalText(data.note, 5000),
   };
 }
 
@@ -569,6 +689,188 @@ function handlers(repository) {
         context.organizationId,
         uniqueIds(data.itemIds, "Занятия", 5000),
         Boolean(data.pinned),
+      );
+    },
+    "schedule:fillGrid": (payload, context) => {
+      const data =
+        payload && typeof payload === "object"
+          ? requireRecord(payload)
+          : { periodId: payload };
+      return repository.fillScheduleGrid(
+        context.organizationId,
+        requireId(data.periodId),
+        context,
+      );
+    },
+    "schedule:gridFillUndoInfo": (payload, context) => {
+      const data = requireRecord(payload);
+      return repository.getScheduleGridUndoInfo(
+        context.organizationId,
+        requireId(data.periodId),
+      );
+    },
+    "schedule:undoGridFill": (payload, context) => {
+      const data = requireRecord(payload);
+      return repository.undoScheduleGridFill(
+        context.organizationId,
+        requireId(data.periodId),
+        context,
+      );
+    },
+    "schedule:dayRemovalInfo": (payload, context) => {
+      const data = requireRecord(payload);
+      return repository.getScheduleDayRemovalInfo(
+        context.organizationId,
+        requireId(data.periodId),
+        requireDate(data.date, "Дата"),
+      );
+    },
+    "schedule:removeDay": (payload, context) => {
+      const data = requireRecord(payload);
+      return repository.removeScheduleDay(
+        context.organizationId,
+        requireId(data.periodId),
+        requireDate(data.date, "Дата"),
+        Boolean(data.confirmRealItems),
+        context,
+      );
+    },
+    "schedule:restoreDay": (payload, context) => {
+      const data = requireRecord(payload);
+      return repository.restoreScheduleDay(
+        context.organizationId,
+        requireId(data.periodId),
+        requireDate(data.date, "Дата"),
+        context,
+      );
+    },
+    "schedule:swapSlotRows": (payload, context) => {
+      const data = requireRecord(payload);
+      return repository.swapScheduleSlotRows(
+        context.organizationId,
+        {
+          periodId: requireId(data.periodId),
+          source: normalizeScheduleSlot(data.source, "Исходный слот"),
+          target: normalizeScheduleSlot(data.target, "Целевой слот"),
+        },
+        context,
+      );
+    },
+    "schedule:swapItems": (payload, context) => {
+      const data = requireRecord(payload);
+      const itemId = requireId(data.itemId);
+      const targetItemId = requireId(data.targetItemId);
+      if (itemId === targetItemId) {
+        throw new ScheduleApiError(
+          400,
+          "schedule_swap_items_invalid",
+          "Укажите две разные карточки для перестановки",
+        );
+      }
+      return repository.swapScheduleItems(
+        context.organizationId,
+        {
+          periodId: requireId(data.periodId),
+          itemId,
+          targetItemId,
+        },
+        context,
+      );
+    },
+    "schedule:swapGroupSlots": (payload, context) => {
+      const data = requireRecord(payload);
+      return repository.swapScheduleGroupSlots(
+        context.organizationId,
+        {
+          periodId: requireId(data.periodId),
+          itemId: requireId(data.itemId),
+          groupId: requireId(data.groupId),
+          target: normalizeScheduleSlot(data.target, "Целевой слот", true),
+        },
+        context,
+      );
+    },
+    "schedule:exchangeItemSets": (payload, context) => {
+      const data = requireRecord(payload);
+      return repository.exchangeScheduleItemSets(
+        context.organizationId,
+        {
+          periodId: requireId(data.periodId),
+          sourceItemIds: uniqueIds(
+            data.sourceItemIds,
+            "Исходные занятия",
+            5000,
+          ),
+          targetItemIds: uniqueIds(data.targetItemIds, "Целевые занятия", 5000),
+          visibleGroupId: optionalId(data.visibleGroupId),
+        },
+        context,
+      );
+    },
+    "schedule:bulkShift": (payload, context) => {
+      const data = requireRecord(payload);
+      const scope = ["all", "week", "day"].includes(data.scope)
+        ? data.scope
+        : "all";
+      const date =
+        scope === "all" ? null : requireDate(data.date, "Опорная дата");
+      return repository.shiftScheduleItems(
+        context.organizationId,
+        {
+          periodId: requireId(data.periodId),
+          scope,
+          date,
+          n: requireId(data.n),
+        },
+        context,
+      );
+    },
+    "schedule:moveSelected": (payload, context) => {
+      const data = requireRecord(payload);
+      return repository.moveSelectedScheduleItems(
+        context.organizationId,
+        {
+          periodId: requireId(data.periodId),
+          itemIds: uniqueIds(data.itemIds, "Занятия", 5000),
+          targetDate: requireDate(data.targetDate, "Целевая дата"),
+          targetStartTime: requireTime(
+            data.targetStartTime,
+            "Начало целевого слота",
+          ),
+        },
+        context,
+      );
+    },
+    "schedule:clearChangeMark": (id, context) =>
+      repository.clearScheduleItemChangeMark(
+        context.organizationId,
+        requireId(id),
+      ),
+    "schedule:listTemp": (payload, context) => {
+      const data = requireRecord(payload);
+      return repository.listTempScheduleItems(
+        context.organizationId,
+        requireId(data.periodId),
+      );
+    },
+    "schedule:addTemp": (payload, context) =>
+      repository.addTempScheduleItem(
+        context.organizationId,
+        normalizeTempScheduleItem(payload, { requirePeriodId: true }),
+      ),
+    "schedule:saveTemp": (payload, context) =>
+      repository.updateTempScheduleItem(
+        context.organizationId,
+        normalizeTempScheduleItem(payload, { requireItemId: true }),
+      ),
+    "schedule:deleteTemp": (id, context) =>
+      repository.deleteTempScheduleItem(context.organizationId, requireId(id)),
+    "schedule:previewOnDate": (payload, context) => {
+      const data = requireRecord(payload);
+      return repository.previewTempScheduleOnDate(
+        context.organizationId,
+        requireId(data.periodId),
+        requireDate(data.date, "Дата предпросмотра"),
       );
     },
     "conflicts:check": (payload, context) => {

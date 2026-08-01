@@ -1,9 +1,9 @@
 import { createPostgresScheduleDispatcher } from "./handlers.js";
-import { PostgresScheduleRepository } from "./repository";
+import { AdvancedPostgresScheduleRepository } from "./advancedRepository";
 import type { ScheduleRequestContext } from "../server.js";
 
 const dispatcher = createPostgresScheduleDispatcher(
-  new PostgresScheduleRepository(),
+  new AdvancedPostgresScheduleRepository(),
 );
 
 export function dispatchPostgresSchedule(

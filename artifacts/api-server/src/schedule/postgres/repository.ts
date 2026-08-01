@@ -2,11 +2,11 @@ import { sql } from "drizzle-orm";
 import { buildAutofillPlan } from "../services/autofillPlanner.js";
 import { ScheduleApiError } from "./handlers.js";
 
-type TenantTransaction = {
+export type TenantTransaction = {
   execute(query: unknown): Promise<unknown>;
 };
 
-type Row = Record<string, any>;
+export type Row = Record<string, any>;
 
 const DEFAULT_TIME_SLOTS = [
   { start: "08:40", end: "10:05", is_break: false },
@@ -28,7 +28,7 @@ function database() {
   return databasePromise;
 }
 
-async function inOrganization<T>(
+export async function inOrganization<T>(
   organizationId: string,
   callback: (transaction: TenantTransaction) => Promise<T>,
 ): Promise<T> {
@@ -45,7 +45,7 @@ function serializedRow(row: Row): Row {
   );
 }
 
-async function queryRows(
+export async function queryRows(
   transaction: TenantTransaction,
   query: unknown,
 ): Promise<Row[]> {
@@ -61,7 +61,7 @@ async function queryRows(
   return [];
 }
 
-async function firstRow(
+export async function firstRow(
   transaction: TenantTransaction,
   query: unknown,
 ): Promise<Row | null> {
@@ -73,7 +73,7 @@ function nullableValue(data: Row, key: string, current: Row) {
   return data[key] || null;
 }
 
-function notFound(message: string): never {
+export function notFound(message: string): never {
   throw new ScheduleApiError(404, "schedule_record_not_found", message);
 }
 
@@ -90,7 +90,7 @@ function legacyPeriod(row: Row) {
   return result;
 }
 
-function legacyScheduleItem(row: Row) {
+export function legacyScheduleItem(row: Row) {
   return {
     ...row,
     teacher_ids: JSON.stringify(safeJsonArray(row.teacher_ids).map(Number)),
@@ -159,7 +159,7 @@ async function ensureDefaultTimeReferences(
   }
 }
 
-async function recordScheduleAudit(
+export async function recordScheduleAudit(
   transaction: TenantTransaction,
   organizationId: string,
   programId: number | null,
@@ -203,7 +203,7 @@ async function requireProgram(
   return program;
 }
 
-function safeJsonArray(value: unknown): unknown[] {
+export function safeJsonArray(value: unknown): unknown[] {
   if (Array.isArray(value)) return value;
   try {
     const parsed = JSON.parse(String(value || "[]"));
@@ -213,11 +213,11 @@ function safeJsonArray(value: unknown): unknown[] {
   }
 }
 
-function scheduleDateTime(date: unknown, time: unknown) {
+export function scheduleDateTime(date: unknown, time: unknown) {
   return `${String(date)}T${String(time)}:00`;
 }
 
-function isGridPlaceholder(item: Row) {
+export function isGridPlaceholder(item: Row) {
   if (item.topic_id) return false;
   if (item.lesson_type === "empty" || item.lesson_type === "self_study") {
     return true;
@@ -543,7 +543,7 @@ function extendEndDateForSaturday(
   return parsed.getUTCDay() === 5 ? nextDay(endDate) : endDate;
 }
 
-async function refreshProgramTopicProgress(
+export async function refreshProgramTopicProgress(
   transaction: TenantTransaction,
   organizationId: string,
   programId: number,
@@ -567,7 +567,7 @@ async function refreshProgramTopicProgress(
   }
 }
 
-async function validateScheduleReferences(
+export async function validateScheduleReferences(
   transaction: TenantTransaction,
   organizationId: string,
   data: Row,
@@ -785,7 +785,7 @@ async function checkScheduleItemConflicts(
   return conflicts;
 }
 
-async function rebuildScheduleLocks(
+export async function rebuildScheduleLocks(
   transaction: TenantTransaction,
   organizationId: string,
   item: Row,
