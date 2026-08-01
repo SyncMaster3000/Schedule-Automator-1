@@ -64,6 +64,59 @@ export type PostgresScheduleRepository = {
     context: ScheduleRequestContext,
   ): Promise<unknown>;
   deletePeriod(organizationId: string, id: number): Promise<unknown>;
+  autofillPeriod(
+    organizationId: string,
+    programId: number,
+    periodId: number,
+    context: ScheduleRequestContext,
+  ): Promise<unknown>;
+  listScheduleByPeriod(
+    organizationId: string,
+    periodId: number,
+    crossPeriod?: boolean,
+  ): Promise<unknown>;
+  checkScheduleConflicts(
+    organizationId: string,
+    data: RepositoryData,
+    crossPeriod?: boolean,
+  ): Promise<unknown>;
+  saveScheduleItem(
+    organizationId: string,
+    data: RepositoryData,
+    context: ScheduleRequestContext,
+  ): Promise<unknown>;
+  deleteScheduleItem(organizationId: string, id: number): Promise<unknown>;
+  deleteScheduleItems(
+    organizationId: string,
+    itemIds: number[],
+    context: ScheduleRequestContext,
+  ): Promise<unknown>;
+  assignScheduleTopic(
+    organizationId: string,
+    data: RepositoryData,
+    context: ScheduleRequestContext,
+  ): Promise<unknown>;
+  restoreScheduleItemToQueue(
+    organizationId: string,
+    itemId: number,
+    context: ScheduleRequestContext,
+  ): Promise<unknown>;
+  bulkUpdateScheduleItems(
+    organizationId: string,
+    itemIds: number[],
+    fields: RepositoryData,
+    context: ScheduleRequestContext,
+  ): Promise<unknown>;
+  setScheduleItemPin(
+    organizationId: string,
+    itemId: number,
+    pinned: boolean,
+  ): Promise<unknown>;
+  setScheduleItemsPin(
+    organizationId: string,
+    itemIds: number[],
+    pinned: boolean,
+  ): Promise<unknown>;
   listGroups(organizationId: string, periodId: number): Promise<unknown>;
   createGroup(organizationId: string, data: RepositoryData): Promise<unknown>;
   updateGroup(organizationId: string, data: RepositoryData): Promise<unknown>;

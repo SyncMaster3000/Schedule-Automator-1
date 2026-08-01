@@ -9,7 +9,7 @@
 - `artifacts/schedule` — интерфейс Vue 3.
 - `artifacts/api-server` — сервер Express, SQLite/`sql.js`, импорт и экспорт DOCX.
 - `schedule-app` — устаревшая версия, её не дорабатывать.
-- Рабочая ветка: `claude/schedule-automation-back-button-1cjnbz`.
+- Рабочая ветка веб-демо: `web-v2`.
 
 ## Основные правила учебного расписания
 

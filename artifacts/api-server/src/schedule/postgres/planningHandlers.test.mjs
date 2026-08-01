@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  createPostgresScheduleDispatcher,
-  ScheduleChannelUnavailableError,
-} from "./handlers.js";
+import { createPostgresScheduleDispatcher } from "./handlers.js";
 
 const ORGANIZATION_A = "123e4567-e89b-42d3-a456-426614174000";
 const ORGANIZATION_B = "123e4567-e89b-42d3-a456-426614174001";
@@ -81,7 +78,13 @@ class MemoryPlanningRepository {
       groups.push({ id, period_id: periodId, name, is_active: 1 });
       return id;
     });
-    return { periodId, groupIds, autofill: null };
+    return {
+      periodId,
+      groupIds,
+      autofill: data.autofill
+        ? { created: 3, rowsUsed: 2, remainingUnits: 0 }
+        : null,
+    };
   }
 
   async listPeriods(organizationId) {
@@ -222,26 +225,23 @@ test("keeps topics, periods, and groups isolated for two organizations", async (
   );
 });
 
-test("does not create a partial period when autofill is not migrated", async () => {
+test("creates and autofills a period through one tenant-scoped operation", async () => {
   const repository = new MemoryPlanningRepository();
   const dispatcher = createPostgresScheduleDispatcher(repository);
 
-  await assert.rejects(
-    () =>
-      dispatcher.dispatch(
-        "periods:create",
-        {
-          programId: 1,
-          name: "Период с автозаполнением",
-          start_date: "2026-09-01",
-          end_date: "2026-09-05",
-          autofill: true,
-        },
-        context(ORGANIZATION_A),
-      ),
-    ScheduleChannelUnavailableError,
+  const result = await dispatcher.dispatch(
+    "periods:create",
+    {
+      programId: 1,
+      name: "Период с автозаполнением",
+      start_date: "2026-09-01",
+      end_date: "2026-09-05",
+      autofill: true,
+    },
+    context(ORGANIZATION_A),
   );
-  assert.equal(repository.createPeriodCalls, 0);
+  assert.equal(repository.createPeriodCalls, 1);
+  assert.equal(result.autofill.created, 3);
 });
 
 test("rejects an inverted period date range before database access", async () => {

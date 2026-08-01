@@ -13,6 +13,8 @@ const READ_ONLY_CHANNELS = new Set([
   "topics:queueStatus",
   "periods:list",
   "groups:list",
+  "schedule:listByPeriod",
+  "conflicts:check",
   "ref:teachers:list",
   "ref:rooms:list",
   "ref:slots:list",
@@ -119,6 +121,84 @@ function requireDate(value, label) {
     );
   }
   return date;
+}
+
+function requireTime(value, label) {
+  const time = String(value || "").trim();
+  if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time)) {
+    throw new ScheduleApiError(
+      400,
+      "schedule_time_invalid",
+      `${label}: укажите время в формате ЧЧ:ММ`,
+    );
+  }
+  return time;
+}
+
+function optionalId(value) {
+  return value === undefined || value === null || value === ""
+    ? null
+    : requireId(value);
+}
+
+function uniqueIds(value, label, limit = 100) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > limit) {
+    throw new ScheduleApiError(
+      400,
+      "schedule_ids_invalid",
+      `${label}: передан некорректный список`,
+    );
+  }
+  return [...new Set(value.map(requireId))];
+}
+
+function normalizeScheduleItem(payload) {
+  const data = requireRecord(payload);
+  const startTime = requireTime(data.start_time, "Начало занятия");
+  const endTime = requireTime(data.end_time, "Окончание занятия");
+  if (endTime <= startTime) {
+    throw new ScheduleApiError(
+      400,
+      "schedule_time_range_invalid",
+      "Время окончания должно быть позже времени начала",
+    );
+  }
+  if (
+    data.custom_teachers !== undefined &&
+    (!Array.isArray(data.custom_teachers) || data.custom_teachers.length > 20)
+  ) {
+    throw new ScheduleApiError(
+      400,
+      "schedule_custom_teachers_invalid",
+      "Передан некорректный список преподавателей",
+    );
+  }
+  return {
+    ...data,
+    id: optionalId(data.id),
+    period_id: requireId(data.period_id),
+    program_id: optionalId(data.program_id),
+    topic_id: optionalId(data.topic_id),
+    date: requireDate(data.date, "Дата занятия"),
+    start_time: startTime,
+    end_time: endTime,
+    lesson_type: optionalText(data.lesson_type, 200),
+    custom_title: optionalText(data.custom_title, 1000),
+    teacher_ids: uniqueIds(data.teacher_ids, "Преподаватели"),
+    custom_teachers: [
+      ...new Set(
+        (data.custom_teachers || [])
+          .map((name) => optionalText(name, 200))
+          .filter((name) => name !== null),
+      ),
+    ],
+    room_id: optionalId(data.room_id),
+    group_ids: uniqueIds(data.group_ids, "Группы", 2),
+    group_label: optionalText(data.group_label, 500),
+    note: optionalText(data.note, 5000),
+    crossPeriod: Boolean(data.crossPeriod),
+  };
 }
 
 function normalizeTopic(topic, index = 0) {
@@ -355,15 +435,21 @@ function handlers(repository) {
       repository.listPeriods(context.organizationId, requireId(programId)),
     "periods:create": (payload, context) => {
       const data = normalizePeriodData(payload, true);
-      if (data.autofill) {
-        throw new ScheduleChannelUnavailableError("periods:autofill");
-      }
       return repository.createPeriod(
         context.organizationId,
         {
           ...data,
           programId: requireId(data.programId),
         },
+        context,
+      );
+    },
+    "periods:autofill": (payload, context) => {
+      const data = requireRecord(payload);
+      return repository.autofillPeriod(
+        context.organizationId,
+        requireId(data.programId),
+        requireId(data.periodId),
         context,
       );
     },
@@ -395,6 +481,104 @@ function handlers(repository) {
     },
     "periods:delete": (id, context) =>
       repository.deletePeriod(context.organizationId, requireId(id)),
+
+    "schedule:listByPeriod": (payload, context) => {
+      const data =
+        payload && typeof payload === "object"
+          ? requireRecord(payload)
+          : { periodId: payload };
+      return repository.listScheduleByPeriod(
+        context.organizationId,
+        requireId(data.periodId),
+        Boolean(data.crossPeriod),
+      );
+    },
+    "schedule:saveItem": (payload, context) =>
+      repository.saveScheduleItem(
+        context.organizationId,
+        normalizeScheduleItem(payload),
+        context,
+      ),
+    "schedule:deleteItem": (id, context) =>
+      repository.deleteScheduleItem(context.organizationId, requireId(id)),
+    "schedule:bulkDelete": (payload, context) => {
+      const data = requireRecord(payload);
+      return repository.deleteScheduleItems(
+        context.organizationId,
+        uniqueIds(data.itemIds, "Занятия", 5000),
+        context,
+      );
+    },
+    "schedule:assignTopic": (payload, context) => {
+      const data = requireRecord(payload);
+      return repository.assignScheduleTopic(
+        context.organizationId,
+        {
+          itemId: requireId(data.itemId),
+          topic_id: requireId(data.topic_id),
+          lesson_type: optionalText(data.lesson_type, 200),
+        },
+        context,
+      );
+    },
+    "schedule:restoreToQueue": (payload, context) => {
+      const data = requireRecord(payload);
+      return repository.restoreScheduleItemToQueue(
+        context.organizationId,
+        requireId(data.itemId),
+        context,
+      );
+    },
+    "schedule:bulkUpdate": (payload, context) => {
+      const data = requireRecord(payload);
+      const rawFields = requireRecord(data.fields || {});
+      const fields = {};
+      if (rawFields.teacher_ids !== undefined) {
+        fields.teacher_ids = uniqueIds(rawFields.teacher_ids, "Преподаватели");
+      }
+      if (rawFields.room_id !== undefined) {
+        fields.room_id = optionalId(rawFields.room_id);
+      }
+      if (rawFields.group_label !== undefined) {
+        fields.group_label = optionalText(rawFields.group_label, 500);
+      }
+      if (rawFields.lesson_type !== undefined) {
+        fields.lesson_type = optionalText(rawFields.lesson_type, 200);
+      }
+      if (rawFields.note !== undefined) {
+        fields.note = optionalText(rawFields.note, 5000);
+      }
+      return repository.bulkUpdateScheduleItems(
+        context.organizationId,
+        uniqueIds(data.ids, "Занятия", 5000),
+        fields,
+        context,
+      );
+    },
+    "schedule:setPin": (payload, context) => {
+      const data = requireRecord(payload);
+      return repository.setScheduleItemPin(
+        context.organizationId,
+        requireId(data.itemId),
+        Boolean(data.pinned),
+      );
+    },
+    "schedule:bulkSetPin": (payload, context) => {
+      const data = requireRecord(payload);
+      return repository.setScheduleItemsPin(
+        context.organizationId,
+        uniqueIds(data.itemIds, "Занятия", 5000),
+        Boolean(data.pinned),
+      );
+    },
+    "conflicts:check": (payload, context) => {
+      const data = normalizeScheduleItem(payload);
+      return repository.checkScheduleConflicts(
+        context.organizationId,
+        data,
+        Boolean(data.crossPeriod),
+      );
+    },
 
     "groups:list": (periodId, context) =>
       repository.listGroups(context.organizationId, requireId(periodId)),
