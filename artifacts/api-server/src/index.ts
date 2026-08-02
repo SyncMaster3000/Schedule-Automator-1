@@ -1,5 +1,8 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { startDemoCleanupWorker } from "./auth/demoCleanupWorker.js";
+import { demoCleanupService } from "./auth/runtime";
+import { inspectRuntimeDatabaseRole } from "./lib/databaseSecurity.js";
 import { logger } from "./lib/logger";
 
 process.env.SCHEDULE_STORAGE = "postgres";
@@ -39,10 +42,30 @@ const [{ createApp }, { migrateWebDatabase }] = await Promise.all([
   import("./lib/migrate"),
 ]);
 const database = await migrateWebDatabase();
+delete process.env.MIGRATION_DATABASE_URL;
 logger.info(
   { migrationsDirectory: database.migrationsDirectory },
   "Database migrations applied",
 );
+const databaseRole = await inspectRuntimeDatabaseRole();
+const requireRestrictedDatabaseRole =
+  process.env.REQUIRE_RESTRICTED_DATABASE_ROLE === "true";
+if (requireRestrictedDatabaseRole && !databaseRole.restricted) {
+  throw new Error(
+    `Runtime database role "${databaseRole.role}" can bypass row-level security`,
+  );
+}
+if (databaseRole.restricted) {
+  logger.info(
+    { role: databaseRole.role },
+    "Runtime database role is restricted",
+  );
+} else {
+  logger.warn(
+    { role: databaseRole.role },
+    "Runtime database role can bypass row-level security",
+  );
+}
 
 const app = createApp({ frontendDir, production });
 const server = app.listen(port, "0.0.0.0", (err) => {
@@ -53,14 +76,19 @@ const server = app.listen(port, "0.0.0.0", (err) => {
 
   logger.info({ port }, "Server listening");
 });
+const demoCleanupWorker = startDemoCleanupWorker(demoCleanupService, {
+  logger,
+});
 
 let shuttingDown = false;
 async function shutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
+  demoCleanupWorker.stop();
   logger.info({ signal }, "Stopping server");
   server.close(async () => {
-    await database.close();
+    const { pool } = await import("@workspace/db");
+    await pool.end();
     process.exit(0);
   });
 }

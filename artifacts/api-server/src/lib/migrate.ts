@@ -9,14 +9,12 @@ export async function migrateWebDatabase(migrationsDirectory?: string) {
   );
   await fs.access(path.join(resolvedDirectory, "meta", "_journal.json"));
 
-  const [{ db, pool }, { migrate }] = await Promise.all([
-    import("@workspace/db"),
-    import("drizzle-orm/node-postgres/migrator"),
-  ]);
-  await migrate(db, { migrationsFolder: resolvedDirectory });
+  const connectionString =
+    process.env.MIGRATION_DATABASE_URL || process.env.DATABASE_URL || "";
+  const { migrateDatabase } = await import("@workspace/db/migrate");
+  await migrateDatabase(connectionString, resolvedDirectory);
 
   return {
     migrationsDirectory: resolvedDirectory,
-    close: () => pool.end(),
   };
 }

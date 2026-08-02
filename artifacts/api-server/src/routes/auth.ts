@@ -5,8 +5,9 @@ import {
   type Request,
   type Response,
 } from "express";
+import { DEMO_CLEANUP_CONFIRMATION } from "../auth/demoCleanup.js";
 import { AuthError } from "../auth/service.js";
-import { authService, sessionToken } from "../auth/runtime";
+import { authService, demoCleanupService, sessionToken } from "../auth/runtime";
 import { SESSION_COOKIE } from "../auth/session.js";
 import { AttemptLimiter } from "../auth/attemptLimiter.js";
 
@@ -155,6 +156,39 @@ router.post(
       res.status(201).json({ ok: true, data: result });
     } catch (error) {
       handleError(error, res, next);
+    }
+  },
+);
+
+router.post(
+  "/admin/demo-cleanup",
+  async (req: Request, res: Response, next: NextFunction) => {
+    if (!adminTokenIsValid(req)) {
+      res.status(401).json({
+        ok: false,
+        code: "admin_authentication_required",
+        error: "Требуется служебный токен администратора",
+      });
+      return;
+    }
+    try {
+      const input = { limit: req.body?.limit };
+      const confirmed = req.body?.confirm === DEMO_CLEANUP_CONFIRMATION;
+      const result = confirmed
+        ? await demoCleanupService.purge(input)
+        : await demoCleanupService.preview(input);
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ ok: true, data: result });
+    } catch (error) {
+      if (error instanceof TypeError) {
+        res.status(400).json({
+          ok: false,
+          code: "invalid_cleanup_request",
+          error: error.message,
+        });
+        return;
+      }
+      next(error);
     }
   },
 );
