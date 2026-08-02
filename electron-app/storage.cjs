@@ -57,6 +57,31 @@ async function ensureWritableDirectory(directory) {
   return resolved;
 }
 
+async function copyDirectoryContentsWithoutOverwrite(source, target) {
+  const entries = await fs.readdir(source, { withFileTypes: true });
+  const collisions = [];
+
+  for (const entry of entries) {
+    if (await pathExists(path.join(target, entry.name))) {
+      collisions.push(entry.name);
+    }
+  }
+
+  if (collisions.length > 0) {
+    throw new Error(
+      `В выбранной папке уже существуют файлы: ${collisions.join(", ")}`,
+    );
+  }
+
+  for (const entry of entries) {
+    await fs.cp(path.join(source, entry.name), path.join(target, entry.name), {
+      recursive: true,
+      force: false,
+      errorOnExist: true,
+    });
+  }
+}
+
 async function copyExistingDataDirectory(source, target) {
   const resolvedSource = path.resolve(source);
   const resolvedTarget = path.resolve(target);
@@ -102,15 +127,13 @@ async function copyExistingDataDirectory(source, target) {
     throw error;
   }
   if (!sourceStat.isDirectory()) {
-    throw new Error(`Текущий путь данных не является папкой: ${resolvedSource}`);
+    throw new Error(
+      `Текущий путь данных не является папкой: ${resolvedSource}`,
+    );
   }
 
   const sourceDatabaseFound = await databaseExists(resolvedSource);
-  await fs.cp(resolvedSource, resolvedTarget, {
-    recursive: true,
-    force: false,
-    errorOnExist: true,
-  });
+  await copyDirectoryContentsWithoutOverwrite(resolvedSource, resolvedTarget);
 
   if (sourceDatabaseFound) {
     const [sourceDatabase, targetDatabase] = await Promise.all([

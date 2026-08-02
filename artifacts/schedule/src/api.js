@@ -1,11 +1,26 @@
 // Клиент API расписания. Заменяет IPC-мост Electron на HTTP-запросы к api-server.
 // Бэкенд смонтирован по абсолютному пути "/api/schedule" (отдельный сервис за прокси).
+import { ApiRequestError, reportScheduleAccessError } from "./session";
+
 const BASE = "/api/schedule";
+
+function responseError(res, body, fallback) {
+  const error = new ApiRequestError(
+    (body && body.error) || fallback || "Ошибка операции",
+    {
+      code: body?.code,
+      status: res.status,
+    },
+  );
+  reportScheduleAccessError(error);
+  return error;
+}
 
 // Единый диспетчер: POST /call { channel, payload } -> { ok, data } | { ok:false, error }
 async function call(channel, payload) {
   const res = await fetch(`${BASE}/call`, {
     method: "POST",
+    credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ channel, payload }),
   });
@@ -15,8 +30,8 @@ async function call(channel, payload) {
   } catch {
     throw new Error(`Некорректный ответ сервера (${res.status})`);
   }
-  if (!body || body.ok === false) {
-    throw new Error((body && body.error) || "Ошибка операции");
+  if (!res.ok || !body || body.ok === false) {
+    throw responseError(res, body, "Ошибка операции");
   }
   return body.data;
 }
@@ -60,15 +75,19 @@ async function importUtp() {
   if (!file) return { canceled: true };
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(`${BASE}/import-utp`, { method: "POST", body: form });
+  const res = await fetch(`${BASE}/import-utp`, {
+    method: "POST",
+    credentials: "same-origin",
+    body: form,
+  });
   let body;
   try {
     body = await res.json();
   } catch {
     throw new Error(`Некорректный ответ сервера (${res.status})`);
   }
-  if (!body || body.ok === false) {
-    throw new Error((body && body.error) || "Не удалось импортировать УТП");
+  if (!res.ok || !body || body.ok === false) {
+    throw responseError(res, body, "Не удалось импортировать УТП");
   }
   return body.data;
 }
@@ -87,18 +106,18 @@ function downloadBlob(blob, filename) {
 async function downloadDocx(requestPayload) {
   const res = await fetch(`${BASE}/export-docx`, {
     method: "POST",
+    credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(requestPayload),
   });
   if (!res.ok) {
-    let msg = `Ошибка экспорта (${res.status})`;
+    let body = null;
     try {
-      const body = await res.json();
-      if (body && body.error) msg = body.error;
+      body = await res.json();
     } catch {
       /* пустой ответ */
     }
-    throw new Error(msg);
+    throw responseError(res, body, `Ошибка экспорта (${res.status})`);
   }
   const count = Number(res.headers.get("X-Item-Count") || 0);
   const disposition = res.headers.get("Content-Disposition") || "";
@@ -123,6 +142,7 @@ async function exportDocx(payload) {
   const requestPayload = payload || {};
   const res = await fetch(`${BASE}/export-docx/save`, {
     method: "POST",
+    credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(requestPayload),
   });
@@ -135,7 +155,7 @@ async function exportDocx(payload) {
     throw new Error(`Некорректный ответ сервера (${res.status})`);
   }
   if (!res.ok || !body || body.ok === false) {
-    throw new Error((body && body.error) || `Ошибка экспорта (${res.status})`);
+    throw responseError(res, body, `Ошибка экспорта (${res.status})`);
   }
   return body.data;
 }
@@ -200,7 +220,8 @@ export const api = {
     deleteItem: (id) => call("schedule:deleteItem", id),
     bulkDelete: (data) => call("schedule:bulkDelete", data),
     fillGrid: (periodId) => call("schedule:fillGrid", { periodId }),
-    gridFillUndoInfo: (periodId) => call("schedule:gridFillUndoInfo", { periodId }),
+    gridFillUndoInfo: (periodId) =>
+      call("schedule:gridFillUndoInfo", { periodId }),
     undoGridFill: (data) => call("schedule:undoGridFill", data),
     dayRemovalInfo: (data) => call("schedule:dayRemovalInfo", data),
     removeDay: (data) => call("schedule:removeDay", data),
@@ -245,4 +266,3 @@ export const api = {
 };
 
 export default api;
-

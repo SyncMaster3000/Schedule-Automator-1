@@ -54,6 +54,7 @@ const buildEnv = {
 const unitTests = [
   ...(await collectTests(path.join(repoDir, "artifacts"))),
   ...(await collectTests(path.join(repoDir, "lib", "db", "src"))),
+  ...(await collectTests(path.join(repoDir, "scripts"))),
 ].sort();
 
 const unitTestEnv = {

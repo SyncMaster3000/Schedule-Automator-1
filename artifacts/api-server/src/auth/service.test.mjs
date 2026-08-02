@@ -139,6 +139,18 @@ test("changes a temporary password and keeps the current session", async () => {
     now,
   );
 
+  await assert.rejects(
+    service.changePassword(
+      first.token,
+      {
+        currentPassword: "Temporary-Password-42",
+        newPassword: "Temporary-Password-42",
+      },
+      now,
+    ),
+    (error) => error.code === "password_unchanged",
+  );
+
   await service.changePassword(
     first.token,
     {

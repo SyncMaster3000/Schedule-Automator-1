@@ -1,0 +1,38 @@
+services:
+  - type: web
+    name: schedule-automator-demo
+    runtime: docker
+    region: frankfurt
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/healthz
+    maxShutdownDelaySeconds: 30
+    autoDeployTrigger: off
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: schedule-automator-db
+          property: connectionString
+      - key: DEMO_ADMIN_TOKEN
+        generateValue: true
+      - key: SALES_CONTACT_URL
+        value: https://t.me/SyncMaster3000
+      - key: WEB_PUBLIC_DIR
+        value: /app/artifacts/schedule/dist/public
+      - key: MIGRATIONS_DIR
+        value: /app/lib/db/migrations
+      - key: SCHEDULE_TEMPLATES_DIR
+        value: /app/artifacts/api-server/templates
+
+databases:
+  - name: schedule-automator-db
+    region: frankfurt
+    plan: basic-256mb
+    diskSizeGB: 15
+    postgresMajorVersion: "17"
+    databaseName: schedule_demo
+    user: schedule_app
+    ipAllowList: []

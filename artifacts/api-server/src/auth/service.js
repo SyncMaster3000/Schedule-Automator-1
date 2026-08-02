@@ -200,6 +200,13 @@ export function createAuthService(repository, options = {}) {
           "Текущий пароль указан неверно",
         );
       }
+      if (currentPassword === newPassword) {
+        throw new AuthError(
+          400,
+          "password_unchanged",
+          "Новый пароль должен отличаться от временного",
+        );
+      }
       let passwordHash;
       try {
         passwordHash = await hashPassword(newPassword);

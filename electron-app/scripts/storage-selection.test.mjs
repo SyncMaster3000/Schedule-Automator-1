@@ -23,8 +23,10 @@ test("copies an existing database without deleting the source", async (context) 
   const source = path.join(root, "source");
   const target = path.join(root, "target");
   await fs.mkdir(source, { recursive: true });
+  await fs.mkdir(target, { recursive: true });
   await fs.writeFile(path.join(source, "schedule.db"), "database-content");
   await fs.writeFile(path.join(source, "sidecar.json"), '{"ok":true}');
+  await fs.writeFile(path.join(target, "keep.txt"), "keep");
 
   const result = await copyExistingDataDirectory(source, target);
 
@@ -39,6 +41,10 @@ test("copies an existing database without deleting the source", async (context) 
   assert.equal(
     await fs.readFile(path.join(target, "sidecar.json"), "utf8"),
     '{"ok":true}',
+  );
+  assert.equal(
+    await fs.readFile(path.join(target, "keep.txt"), "utf8"),
+    "keep",
   );
 });
 
@@ -63,6 +69,33 @@ test("does not overwrite a database already present in the selected folder", asy
   assert.equal(result.targetDatabaseFound, true);
   assert.equal(
     await fs.readFile(path.join(target, "schedule.db"), "utf8"),
+    "target",
+  );
+});
+
+test("does not partially copy data when another file would be overwritten", async (context) => {
+  const root = await fs.mkdtemp(
+    path.join(os.tmpdir(), "schedule-automator-storage-collision-"),
+  );
+  context.after(() => fs.rm(root, { recursive: true, force: true }));
+
+  const source = path.join(root, "source");
+  const target = path.join(root, "target");
+  await Promise.all([
+    ensureWritableDirectory(source),
+    ensureWritableDirectory(target),
+  ]);
+  await fs.writeFile(path.join(source, "schedule.db"), "database-content");
+  await fs.writeFile(path.join(source, "sidecar.json"), "source");
+  await fs.writeFile(path.join(target, "sidecar.json"), "target");
+
+  await assert.rejects(
+    copyExistingDataDirectory(source, target),
+    /уже существуют файлы: sidecar\.json/,
+  );
+  assert.equal(await databaseExists(target), false);
+  assert.equal(
+    await fs.readFile(path.join(target, "sidecar.json"), "utf8"),
     "target",
   );
 });
