@@ -1,5 +1,9 @@
 import { sql } from "drizzle-orm";
 import { buildAutofillPlan } from "../services/autofillPlanner.js";
+import {
+  PeriodRebaseCapacityError,
+  planPeriodScheduleRebase,
+} from "../services/periodRebase.js";
 import { ScheduleApiError } from "./handlers.js";
 import { postgresIntegerArray } from "./postgresArray.js";
 
@@ -265,6 +269,105 @@ function buildPeriodCells(period: Row) {
     current.setUTCDate(current.getUTCDate() + 1);
   }
   return cells;
+}
+
+function normalizedPeriodGrid(value: unknown) {
+  return safeJsonArray(value).map((slot) =>
+    slot && typeof slot === "object" && !Array.isArray(slot)
+      ? {
+          start: String((slot as Row).start || ""),
+          end: String((slot as Row).end || ""),
+          is_break: Boolean((slot as Row).is_break),
+        }
+      : slot,
+  );
+}
+
+function periodCalendarChanged(current: Row, next: Row) {
+  return (
+    String(current.start_date) !== String(next.start_date) ||
+    String(current.end_date) !== String(next.end_date) ||
+    String(current.work_week || "mon-fri") !==
+      String(next.work_week || "mon-fri") ||
+    JSON.stringify(normalizedPeriodGrid(current.time_grid)) !==
+      JSON.stringify(normalizedPeriodGrid(next.time_grid))
+  );
+}
+
+async function rebasePeriodScheduleInTransaction(
+  transaction: TenantTransaction,
+  organizationId: string,
+  current: Row,
+  next: Row,
+) {
+  const items = await queryRows(
+    transaction,
+    sql`select *
+        from schedule_items
+        where organization_id = ${organizationId}
+          and period_id = ${Number(current.id)}
+        order by date, start_time, sort_order, id`,
+  );
+  let plan;
+  try {
+    plan = planPeriodScheduleRebase(
+      items.map((item) => ({
+        id: Number(item.id),
+        date: item.date,
+        start_time: item.start_time,
+        sort_order: item.sort_order,
+      })),
+      buildPeriodCells({
+        ...next,
+        excluded_dates: [],
+      }),
+    );
+  } catch (error) {
+    if (error instanceof PeriodRebaseCapacityError) {
+      throw new ScheduleApiError(409, error.code, error.message);
+    }
+    throw error;
+  }
+
+  await queryRows(
+    transaction,
+    sql`delete from schedule_locks
+        where organization_id = ${organizationId}
+          and period_id = ${Number(current.id)}`,
+  );
+  await queryRows(
+    transaction,
+    sql`delete from schedule_temp_items
+        where organization_id = ${organizationId}
+          and period_id = ${Number(current.id)}`,
+  );
+  const savedItems: Row[] = [];
+  for (const assignment of plan.assignments) {
+    const saved = await firstRow(
+      transaction,
+      sql`update schedule_items
+          set date = ${assignment.date},
+              start_time = ${assignment.start},
+              end_time = ${assignment.end},
+              start_dt = ${scheduleDateTime(
+                assignment.date,
+                assignment.start,
+              )},
+              end_dt = ${scheduleDateTime(assignment.date, assignment.end)},
+              is_outside_period = false,
+              grid_fill_id = null,
+              grid_fill_signature = null
+          where organization_id = ${organizationId}
+            and period_id = ${Number(current.id)}
+            and id = ${assignment.itemId}
+          returning *`,
+    );
+    if (saved) savedItems.push(saved);
+  }
+  for (const item of savedItems) {
+    await rebuildScheduleLocks(transaction, organizationId, item);
+  }
+  return plan;
 }
 
 async function listTopicsWithActualProgress(
@@ -1552,41 +1655,93 @@ export class PostgresScheduleRepository {
         sql`select *
             from periods
             where organization_id = ${organizationId}
-              and id = ${data.id}`,
+              and id = ${data.id}
+            for update`,
       );
       if (!current) notFound("Период не найден");
+      const next = {
+        ...current,
+        name: data.name ?? current.name,
+        start_date: data.start_date ?? current.start_date,
+        end_date: data.end_date ?? current.end_date,
+        time_grid:
+          data.time_grid !== undefined
+            ? data.time_grid
+            : safeJsonArray(current.time_grid),
+        status: data.status || current.status || "active",
+        work_week: data.work_week || current.work_week || "mon-fri",
+        empty_slot_mode:
+          data.empty_slot_mode || current.empty_slot_mode || "empty",
+        group_mode:
+          data.group_mode !== undefined
+            ? Boolean(data.group_mode)
+            : Boolean(current.group_mode),
+        separate_lectures:
+          data.separate_lectures !== undefined
+            ? Boolean(data.separate_lectures)
+            : Boolean(current.separate_lectures),
+      };
+      const rebase = periodCalendarChanged(current, next);
+      const plan = rebase
+        ? await rebasePeriodScheduleInTransaction(
+            transaction,
+            organizationId,
+            current,
+            next,
+          )
+        : {
+            movedItems: 0,
+            movedRows: 0,
+            availableCells: 0,
+          };
       const rows = await queryRows(
         transaction,
         sql`update periods
-            set name = ${data.name ?? current.name},
-                start_date = ${data.start_date ?? current.start_date},
-                end_date = ${data.end_date ?? current.end_date},
-                time_grid = ${
-                  data.time_grid !== undefined
-                    ? JSON.stringify(data.time_grid)
-                    : JSON.stringify(current.time_grid || [])
+            set name = ${next.name},
+                start_date = ${next.start_date},
+                end_date = ${next.end_date},
+                time_grid = ${JSON.stringify(next.time_grid)}::jsonb,
+                status = ${next.status},
+                work_week = ${next.work_week},
+                empty_slot_mode = ${next.empty_slot_mode},
+                group_mode = ${next.group_mode},
+                separate_lectures = ${next.separate_lectures},
+                day_grids = ${
+                  rebase ? "{}" : JSON.stringify(current.day_grids || {})
                 }::jsonb,
-                status = ${data.status || current.status || "active"},
-                work_week = ${data.work_week || current.work_week || "mon-fri"},
-                empty_slot_mode = ${
-                  data.empty_slot_mode || current.empty_slot_mode || "empty"
-                },
-                group_mode = ${
-                  data.group_mode !== undefined
-                    ? Boolean(data.group_mode)
-                    : Boolean(current.group_mode)
-                },
-                separate_lectures = ${
-                  data.separate_lectures !== undefined
-                    ? Boolean(data.separate_lectures)
-                    : Boolean(current.separate_lectures)
-                }
+                excluded_dates = ${
+                  rebase ? "[]" : JSON.stringify(current.excluded_dates || [])
+                }::jsonb,
+                last_grid_fill_id = ${rebase ? null : current.last_grid_fill_id}
             where organization_id = ${organizationId}
               and id = ${data.id}
             returning id`,
       );
       if (!rows.length) notFound("Период не найден");
-      return { id: Number(rows[0].id) };
+      if (rebase) {
+        await recordScheduleAudit(
+          transaction,
+          organizationId,
+          Number(current.program_id),
+          "period_rebased",
+          {
+            previousStartDate: current.start_date,
+            previousEndDate: current.end_date,
+            startDate: next.start_date,
+            endDate: next.end_date,
+            movedItems: plan.movedItems,
+            movedRows: plan.movedRows,
+          },
+          null,
+          Number(current.id),
+        );
+      }
+      return {
+        id: Number(rows[0].id),
+        rebased: rebase,
+        movedItems: plan.movedItems,
+        movedRows: plan.movedRows,
+      };
     });
   }
 

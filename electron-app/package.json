@@ -1,7 +1,7 @@
 {
   "name": "@workspace/desktop",
   "productName": "Конструктор расписаний",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Настольное приложение для автоматизации учебных расписаний",
   "author": "Schedule Automator",
   "license": "MIT",
@@ -18,7 +18,13 @@
     "dist:win": "node ./scripts/prepare-runtime.mjs && node ./scripts/build-windows.mjs nsis"
   },
   "devDependencies": {
+    "7zip-bin": "5.2.0",
     "electron": "33.4.11",
     "electron-builder": "25.1.8"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron"
+    ]
   }
 }

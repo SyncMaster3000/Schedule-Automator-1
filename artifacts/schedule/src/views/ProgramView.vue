@@ -408,7 +408,7 @@ async function savePeriod() {
   try {
     if (editingPeriodId.value) {
       // Редактирование существующего периода
-      await api.periods.update({
+      const updatedPeriod = await api.periods.update({
         id: editingPeriodId.value,
         name: periodForm.value.name,
         start_date: periodForm.value.start_date,
@@ -420,7 +420,9 @@ async function savePeriod() {
         empty_slot_mode: periodForm.value.empty_slot_mode,
       });
       showPeriod.value = false;
-      info.value = "Период обновлен";
+      info.value = updatedPeriod.rebased
+        ? `Период обновлен. Перенесено занятий: ${updatedPeriod.movedItems}`
+        : "Период обновлен";
     } else {
       // Создание нового периода
       const groups = periodForm.value.groups

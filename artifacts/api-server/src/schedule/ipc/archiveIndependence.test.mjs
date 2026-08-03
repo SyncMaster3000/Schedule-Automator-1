@@ -178,6 +178,7 @@ test("архив переживает миграцию, удаление раб�
 
     const dbUrl = new URL("../db/index.js", import.meta.url).href;
     const versionsUrl = new URL("./versions.js", import.meta.url).href;
+    const periodsUrl = new URL("./periods.js", import.meta.url).href;
     const docxExportUrl = new URL("../services/docxExport.js", import.meta.url)
       .href;
     const { ensureDb, getDb, persist } = await import("../db/index.js");
@@ -227,6 +228,7 @@ test("архив переживает миграцию, удаление раб�
       const { ensureDb, getDb, persist } = await import(${JSON.stringify(dbUrl)});
       await ensureDb(process.env.SCHEDULE_DATA_DIR);
       const versions = (await import(${JSON.stringify(versionsUrl)})).default;
+      const periods = (await import(${JSON.stringify(periodsUrl)})).default;
       const { exportSchedule } = await import(${JSON.stringify(docxExportUrl)});
       const found = versions["versions:search"]("Архивный курс");
       const details = versions["versions:get"](11);
@@ -255,6 +257,27 @@ test("архив переживает миграцию, удаление раб�
       });
       const copy = versions["versions:createFromArchive"](11);
       const copiedProgram = getDb().prepare("SELECT * FROM programs WHERE id = ?").get(copy.id);
+      const copiedPeriodBefore = getDb()
+        .prepare("SELECT * FROM periods WHERE program_id = ?")
+        .get(copy.id);
+      const copiedItemBefore = getDb()
+        .prepare("SELECT * FROM schedule_items WHERE period_id = ?")
+        .get(copiedPeriodBefore.id);
+      const periodUpdate = periods["periods:update"]({
+        id: copiedPeriodBefore.id,
+        name: copiedPeriodBefore.name,
+        start_date: "2026-08-03",
+        end_date: "2026-08-03",
+        time_grid: JSON.parse(copiedPeriodBefore.time_grid_json || "[]"),
+        work_week: "mon-fri",
+        empty_slot_mode: "empty",
+      });
+      const copiedPeriodAfter = getDb()
+        .prepare("SELECT * FROM periods WHERE id = ?")
+        .get(copiedPeriodBefore.id);
+      const copiedItemAfter = getDb()
+        .prepare("SELECT * FROM schedule_items WHERE period_id = ?")
+        .get(copiedPeriodBefore.id);
       versions["versions:delete"](11);
       persist();
       const remaining = versions["versions:search"]("Архивный курс");
@@ -266,6 +289,13 @@ test("архив переживает миграцию, удаление раб�
         copyId: copy.id,
         copyTitle: copiedProgram.title,
         copyCategory: copiedProgram.category,
+        oldItemDate: copiedItemBefore.date,
+        periodStartDate: copiedPeriodAfter.start_date,
+        periodEndDate: copiedPeriodAfter.end_date,
+        itemDate: copiedItemAfter.date,
+        itemStart: copiedItemAfter.start_dt,
+        rebased: periodUpdate.rebased,
+        movedItems: periodUpdate.movedItems,
         remaining: remaining.length,
       }));
     `;
@@ -288,6 +318,13 @@ test("архив переживает миграцию, удаление раб�
     assert.equal(restartedState.exportedItems, 1);
     assert.match(restartedState.copyTitle, /^Копия: Архивный курс$/);
     assert.equal(restartedState.copyCategory, null);
+    assert.equal(restartedState.oldItemDate, "2026-07-21");
+    assert.equal(restartedState.periodStartDate, "2026-08-03");
+    assert.equal(restartedState.periodEndDate, "2026-08-03");
+    assert.equal(restartedState.itemDate, "2026-08-03");
+    assert.equal(restartedState.itemStart, "2026-08-03T09:00:00");
+    assert.equal(restartedState.rebased, true);
+    assert.equal(restartedState.movedItems, 1);
     assert.equal(restartedState.remaining, 0);
 
     const persisted = new SQL.Database(

@@ -3,6 +3,8 @@ import { getDb, audit } from "../db/index.js";
 import { eachDayOfInterval, parseISO, format } from "date-fns";
 import { listTopicsWithActualProgress } from "./topics.js";
 import { buildAutofillPlan } from "../services/autofillPlanner.js";
+import { rebuildLocksForItem } from "../services/conflicts.js";
+import { planPeriodScheduleRebase } from "../services/periodRebase.js";
 
 function listPeriods(programId) {
   return getDb()
@@ -54,6 +56,77 @@ function buildCells(
     }
   }
   return cells;
+}
+
+function parsedGrid(value) {
+  if (Array.isArray(value)) return value;
+  try {
+    const parsed = JSON.parse(value || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function periodCalendarChanged(current, next) {
+  return (
+    String(current.start_date) !== String(next.start_date) ||
+    String(current.end_date) !== String(next.end_date) ||
+    String(current.work_week || "mon-fri") !==
+      String(next.work_week || "mon-fri") ||
+    JSON.stringify(parsedGrid(current.time_grid_json)) !==
+      JSON.stringify(parsedGrid(next.time_grid))
+  );
+}
+
+function rebasePeriodSchedule(db, current, next) {
+  const items = db
+    .prepare(
+      `SELECT * FROM schedule_items
+       WHERE period_id = ?
+       ORDER BY date, start_time, sort_order, id`,
+    )
+    .all(current.id);
+  const cells = buildCells(
+    next.start_date,
+    next.end_date,
+    parsedGrid(next.time_grid),
+    next.work_week || "mon-fri",
+    [],
+  );
+  const plan = planPeriodScheduleRebase(items, cells);
+
+  db.prepare("DELETE FROM locks WHERE period_id = ?").run(current.id);
+  db.prepare("DELETE FROM schedule_temp_items WHERE period_id = ?").run(
+    current.id,
+  );
+  const updateItem = db.prepare(
+    `UPDATE schedule_items
+     SET date = ?, start_time = ?, end_time = ?, start_dt = ?, end_dt = ?,
+         is_outside_period = 0, grid_fill_id = NULL,
+         grid_fill_signature = NULL
+     WHERE id = ? AND period_id = ?`,
+  );
+  for (const assignment of plan.assignments) {
+    updateItem.run(
+      assignment.date,
+      assignment.start,
+      assignment.end,
+      `${assignment.date}T${assignment.start}:00`,
+      `${assignment.date}T${assignment.end}:00`,
+      assignment.itemId,
+      current.id,
+    );
+  }
+  const savedItems = db
+    .prepare(
+      `SELECT * FROM schedule_items
+       WHERE period_id = ?
+       ORDER BY date, start_time, sort_order, id`,
+    )
+    .all(current.id);
+  for (const item of savedItems) rebuildLocksForItem(item);
+  return plan;
 }
 
 const handlers = {
@@ -126,23 +199,81 @@ const handlers = {
     const db = getDb();
     const cur = db.prepare("SELECT * FROM periods WHERE id = ?").get(data.id);
     if (!cur) throw new Error("Период не найден");
-    db.prepare(
-      `UPDATE periods SET name = ?, start_date = ?, end_date = ?,
-         time_grid_json = ?, status = ?, work_week = ?, empty_slot_mode = ?,
-         group_mode = ?, separate_lectures = ? WHERE id = ?`
-    ).run(
-      data.name,
-      data.start_date,
-      data.end_date,
-      data.time_grid != null ? JSON.stringify(data.time_grid) : cur.time_grid_json,
-      data.status || "active",
-      data.work_week || cur.work_week || "mon-fri",
-      data.empty_slot_mode || cur.empty_slot_mode || "empty",
-      data.group_mode != null ? (data.group_mode ? 1 : 0) : cur.group_mode,
-      data.separate_lectures != null ? (data.separate_lectures ? 1 : 0) : cur.separate_lectures,
-      data.id
-    );
-    return { id: data.id };
+    const next = {
+      name: data.name ?? cur.name,
+      start_date: data.start_date ?? cur.start_date,
+      end_date: data.end_date ?? cur.end_date,
+      time_grid:
+        data.time_grid != null
+          ? data.time_grid
+          : parsedGrid(cur.time_grid_json),
+      status: data.status || cur.status || "active",
+      work_week: data.work_week || cur.work_week || "mon-fri",
+      empty_slot_mode:
+        data.empty_slot_mode || cur.empty_slot_mode || "empty",
+      group_mode:
+        data.group_mode != null
+          ? data.group_mode
+            ? 1
+            : 0
+          : cur.group_mode,
+      separate_lectures:
+        data.separate_lectures != null
+          ? data.separate_lectures
+            ? 1
+            : 0
+          : cur.separate_lectures,
+    };
+    const rebase = periodCalendarChanged(cur, next);
+    const tx = db.transaction(() => {
+      const plan = rebase
+        ? rebasePeriodSchedule(db, cur, next)
+        : {
+            movedItems: 0,
+            movedRows: 0,
+            availableCells: 0,
+          };
+      db.prepare(
+        `UPDATE periods SET name = ?, start_date = ?, end_date = ?,
+           time_grid_json = ?, status = ?, work_week = ?, empty_slot_mode = ?,
+           group_mode = ?, separate_lectures = ?,
+           day_grids_json = ?, excluded_dates_json = ?,
+           last_grid_fill_id = ?
+         WHERE id = ?`,
+      ).run(
+        next.name,
+        next.start_date,
+        next.end_date,
+        JSON.stringify(next.time_grid),
+        next.status,
+        next.work_week,
+        next.empty_slot_mode,
+        next.group_mode,
+        next.separate_lectures,
+        rebase ? "{}" : cur.day_grids_json || "{}",
+        rebase ? "[]" : cur.excluded_dates_json || "[]",
+        rebase ? null : cur.last_grid_fill_id,
+        data.id,
+      );
+      if (rebase) {
+        audit(cur.program_id, cur.id, "period_rebased", {
+          previousStartDate: cur.start_date,
+          previousEndDate: cur.end_date,
+          startDate: next.start_date,
+          endDate: next.end_date,
+          movedItems: plan.movedItems,
+          movedRows: plan.movedRows,
+        });
+      }
+      return plan;
+    });
+    const plan = tx();
+    return {
+      id: data.id,
+      rebased: rebase,
+      movedItems: plan.movedItems,
+      movedRows: plan.movedRows,
+    };
   },
 
   // Изменить только настройки периода (учебная неделя, режим пустых слотов, группы)

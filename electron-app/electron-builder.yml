@@ -18,6 +18,7 @@ files:
 win:
   executableName: ScheduleAutomator
   icon: build/icon.ico
+  signAndEditExecutable: false
   target:
     - target: nsis
       arch:
