@@ -241,4 +241,42 @@ async function submit() {
 :global(:root[data-theme="dark"]) .auth-card-footer svg {
   color: var(--brand-200);
 }
+
+@media (max-width: 1024px) {
+  .password-toggle {
+    right: 0.125rem;
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+}
+
+@media (max-width: 767px) {
+  .auth-card {
+    padding: 1.25rem;
+  }
+
+  .auth-card-header {
+    margin-bottom: 1.25rem;
+  }
+
+  .auth-card-header h2 {
+    font-size: 1.125rem;
+  }
+
+  .auth-card-header p {
+    font-size: 0.8125rem;
+    line-height: 1.4;
+  }
+
+  .auth-form {
+    gap: 1rem;
+  }
+
+  .auth-card-footer {
+    align-items: flex-start;
+    margin-top: 1.25rem;
+    padding-top: 1rem;
+    line-height: 1.4;
+  }
+}
 </style>

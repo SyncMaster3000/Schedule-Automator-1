@@ -663,6 +663,24 @@ div.bg-brand-50\/70.rounded-xl {
   --tw-ring-color: var(--brand-400);
 }
 
+@media (max-width: 1024px) {
+  .auth-page .input {
+    min-height: 3rem;
+    font-size: 1rem;
+  }
+
+  .auth-page .btn-primary,
+  .auth-page .btn-secondary,
+  .auth-page .btn-ghost {
+    min-height: 2.75rem;
+  }
+
+  .auth-page .btn-primary {
+    min-height: 3rem;
+    font-size: 1rem;
+  }
+}
+
 @media (max-width: 767px) {
   .page-shell {
     width: 100%;

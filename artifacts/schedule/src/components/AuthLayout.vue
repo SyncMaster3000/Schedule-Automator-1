@@ -34,21 +34,27 @@ const { theme, toggleTheme } = useTheme();
     </button>
 
     <div class="auth-grid">
-      <section class="auth-product" aria-labelledby="product-title">
-        <div class="auth-brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24">
-            <rect x="3" y="4" width="18" height="18" rx="2" />
-            <path d="M16 2v4M8 2v4M3 10h18" />
-            <path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01" />
-          </svg>
-        </div>
+      <div class="auth-content">
+        <slot />
+      </div>
 
-        <div>
-          <h1 id="product-title" class="auth-product-title">
-            Конструктор расписаний
-          </h1>
-          <p class="auth-product-subtitle">Учебное планирование</p>
-        </div>
+      <section class="auth-product" aria-labelledby="product-title">
+        <header class="auth-product-header">
+          <div class="auth-brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <rect x="3" y="4" width="18" height="18" rx="2" />
+              <path d="M16 2v4M8 2v4M3 10h18" />
+              <path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01" />
+            </svg>
+          </div>
+
+          <div>
+            <h1 id="product-title" class="auth-product-title">
+              Конструктор расписаний
+            </h1>
+            <p class="auth-product-subtitle">Учебное планирование</p>
+          </div>
+        </header>
 
         <p class="auth-description">
           Веб-демо позволяет временно протестировать составление расписания,
@@ -76,10 +82,6 @@ const { theme, toggleTheme } = useTheme();
           </RouterLink>
         </div>
       </section>
-
-      <div class="auth-content">
-        <slot />
-      </div>
     </div>
   </div>
 </template>
@@ -89,22 +91,44 @@ const { theme, toggleTheme } = useTheme();
   position: relative;
   display: flex;
   width: 100%;
-  min-height: 100%;
-  align-items: center;
+  height: 100%;
+  min-height: 0;
+  align-items: flex-start;
   justify-content: center;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  scroll-padding-block: 1rem;
   padding: clamp(1.25rem, 4vw, 3rem);
+}
+
+@supports (height: 100dvh) {
+  .auth-page {
+    height: 100dvh;
+  }
 }
 
 .auth-grid {
   display: grid;
   width: min(100%, 64rem);
+  margin-block: auto;
   grid-template-columns: minmax(0, 1fr) minmax(22rem, 26rem);
   align-items: center;
   gap: clamp(3rem, 7vw, 5rem);
 }
 
 .auth-product {
+  display: flex;
+  min-width: 0;
+  grid-column: 1;
+  grid-row: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1.5rem;
+}
+
+.auth-product-header {
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -208,6 +232,8 @@ const { theme, toggleTheme } = useTheme();
 .auth-content {
   min-width: 0;
   width: 100%;
+  grid-column: 2;
+  grid-row: 1;
 }
 
 .auth-theme-toggle {
@@ -248,30 +274,79 @@ const { theme, toggleTheme } = useTheme();
   color: var(--brand-200);
 }
 
+@media (max-width: 1024px) {
+  .auth-theme-toggle {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+}
+
 @media (max-width: 767px) {
   .auth-page {
-    align-items: flex-start;
-    padding: 4.5rem 1rem 1.5rem;
+    scroll-padding-block: calc(1rem + env(safe-area-inset-top))
+      calc(1.5rem + env(safe-area-inset-bottom));
+    padding: calc(1rem + env(safe-area-inset-top))
+      calc(1rem + env(safe-area-inset-right))
+      calc(1.5rem + env(safe-area-inset-bottom))
+      calc(1rem + env(safe-area-inset-left));
   }
 
   .auth-grid {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 2rem;
+    display: flex;
+    width: min(100%, 24.375rem);
+    margin-block: 0;
+    flex-direction: column;
+    gap: 0;
   }
 
   .auth-product {
-    gap: 1rem;
+    display: contents;
+  }
+
+  .auth-product-header {
+    order: 1;
+    width: 100%;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+    padding-right: 3.75rem;
+  }
+
+  .auth-content {
+    order: 2;
+    margin-bottom: 2rem;
+  }
+
+  .auth-description {
+    order: 3;
+    width: 100%;
+    margin-bottom: 1.5rem;
+  }
+
+  .auth-offer {
+    order: 4;
   }
 
   .auth-brand-mark {
-    width: 3rem;
-    height: 3rem;
-    border-radius: 1rem;
+    width: 2.75rem;
+    height: 2.75rem;
+    flex: 0 0 2.75rem;
+    border-radius: 0.875rem;
   }
 
   .auth-brand-mark svg {
-    width: 1.625rem;
-    height: 1.625rem;
+    width: 1.5rem;
+    height: 1.5rem;
+  }
+
+  .auth-product-title {
+    font-size: 1.125rem;
+  }
+
+  .auth-product-subtitle {
+    margin-top: 0.25rem;
+    font-size: 0.625rem;
   }
 
   .auth-description {
@@ -279,13 +354,14 @@ const { theme, toggleTheme } = useTheme();
   }
 
   .auth-offer {
+    width: 100%;
     padding-top: 1rem;
   }
 
   .auth-theme-toggle {
     position: absolute;
-    top: 1rem;
-    right: 1rem;
+    top: calc(1rem + env(safe-area-inset-top));
+    right: calc(1rem + env(safe-area-inset-right));
   }
 }
 </style>
