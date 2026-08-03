@@ -15,6 +15,13 @@
       "when": 1785500153833,
       "tag": "0001_faulty_morbius",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785749000000,
+      "tag": "0002_update_demo_signatures",
+      "breakpoints": true
     }
   ]
 }

@@ -46,11 +46,23 @@ test("создаются утверждённое расписание и чер
   );
 
   assert.equal(approved.status, "approved");
+  assert.equal(approved.approverName, "Шальнов И.П.");
+  assert.equal(approved.approverTitle, "Начальник Института");
+  assert.equal(approved.signerName, "Ветров В.В.");
+  assert.equal(approved.signerTitle, "Начальник учебного отдела");
+  assert.equal(approved.approveDate, "2026-08-03");
+  assert.equal(approved.signDate, "2026-08-03");
   assert.equal(approved.period.groupMode, false);
   assert.equal(approved.period.groups.length, 0);
   assert.equal(approved.archive.archiveSection, "Переподготовка");
 
   assert.equal(draft.status, "draft");
+  assert.equal(draft.approverName, "Шальнов И.П.");
+  assert.equal(draft.approverTitle, "Начальник Института");
+  assert.equal(draft.signerName, "Ветров В.В.");
+  assert.equal(draft.signerTitle, "Начальник учебного отдела");
+  assert.equal(draft.approveDate, null);
+  assert.equal(draft.signDate, null);
   assert.equal(draft.period.groupMode, true);
   assert.deepEqual(
     draft.period.groups.map((group) => group.name),
