@@ -19,7 +19,7 @@ function seedReferences() {
     "INSERT INTO teachers (fio, department) VALUES (?, ?)"
   );
   const insertRoom = db.prepare(
-    "INSERT INTO rooms (number, type, capacity) VALUES (?, ?, ?)"
+    "INSERT INTO rooms (number, type) VALUES (?, ?)"
   );
   const insertSlot = db.prepare(
     "INSERT INTO time_slots (start, end, is_break) VALUES (?, ?, ?)"
@@ -31,7 +31,7 @@ function seedReferences() {
     }
     if (roomCount === 0 && Array.isArray(data.rooms)) {
       for (const r of data.rooms)
-        insertRoom.run(r.number, r.type || null, r.capacity || null);
+        insertRoom.run(r.number, r.type || null);
     }
     if (slotCount === 0 && Array.isArray(data.time_slots)) {
       for (const s of data.time_slots)
@@ -43,8 +43,8 @@ function seedReferences() {
   seedDefaultGrid(db);
 }
 
-// Создаём одну именованную сетку «Основная сетка» из базовых слотов,
-// если именованных сеток ещё нет. Так per-day выбор сетки работает «из коробки».
+// Создаем одну именованную сетку «Основная сетка» из базовых слотов,
+// если именованных сеток еще нет. Так per-day выбор сетки работает «из коробки».
 function seedDefaultGrid(db) {
   const gridCount = db.prepare("SELECT COUNT(*) AS c FROM time_grids").get().c;
   if (gridCount > 0) return;
@@ -56,3 +56,4 @@ function seedDefaultGrid(db) {
 }
 
 export { seedReferences };
+

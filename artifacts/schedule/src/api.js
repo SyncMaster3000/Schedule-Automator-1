@@ -1,11 +1,26 @@
 // Клиент API расписания. Заменяет IPC-мост Electron на HTTP-запросы к api-server.
 // Бэкенд смонтирован по абсолютному пути "/api/schedule" (отдельный сервис за прокси).
+import { ApiRequestError, reportScheduleAccessError } from "./session";
+
 const BASE = "/api/schedule";
+
+function responseError(res, body, fallback) {
+  const error = new ApiRequestError(
+    (body && body.error) || fallback || "Ошибка операции",
+    {
+      code: body?.code,
+      status: res.status,
+    },
+  );
+  reportScheduleAccessError(error);
+  return error;
+}
 
 // Единый диспетчер: POST /call { channel, payload } -> { ok, data } | { ok:false, error }
 async function call(channel, payload) {
   const res = await fetch(`${BASE}/call`, {
     method: "POST",
+    credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ channel, payload }),
   });
@@ -15,8 +30,8 @@ async function call(channel, payload) {
   } catch {
     throw new Error(`Некорректный ответ сервера (${res.status})`);
   }
-  if (!body || body.ok === false) {
-    throw new Error((body && body.error) || "Ошибка операции");
+  if (!res.ok || !body || body.ok === false) {
+    throw responseError(res, body, "Ошибка операции");
   }
   return body.data;
 }
@@ -43,7 +58,7 @@ function pickFile(accept) {
       finish(input.files && input.files[0] ? input.files[0] : null);
     });
     // Запасной механизм для браузеров без события "cancel": при возврате фокуса
-    // без выбора файла считаем диалог отменённым.
+    // без выбора файла считаем диалог отмененным.
     const onFocus = () => {
       setTimeout(() => finish(null), 1000);
     };
@@ -60,35 +75,49 @@ async function importUtp() {
   if (!file) return { canceled: true };
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(`${BASE}/import-utp`, { method: "POST", body: form });
+  const res = await fetch(`${BASE}/import-utp`, {
+    method: "POST",
+    credentials: "same-origin",
+    body: form,
+  });
   let body;
   try {
     body = await res.json();
   } catch {
     throw new Error(`Некорректный ответ сервера (${res.status})`);
   }
-  if (!body || body.ok === false) {
-    throw new Error((body && body.error) || "Не удалось импортировать УТП");
+  if (!res.ok || !body || body.ok === false) {
+    throw responseError(res, body, "Не удалось импортировать УТП");
   }
   return body.data;
 }
 
-// Экспорт в .docx: получаем файл и инициируем скачивание в браузере.
-async function exportDocx(payload) {
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function downloadDocx(requestPayload) {
   const res = await fetch(`${BASE}/export-docx`, {
     method: "POST",
+    credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload || {}),
+    body: JSON.stringify(requestPayload),
   });
   if (!res.ok) {
-    let msg = `Ошибка экспорта (${res.status})`;
+    let body = null;
     try {
-      const body = await res.json();
-      if (body && body.error) msg = body.error;
+      body = await res.json();
     } catch {
       /* пустой ответ */
     }
-    throw new Error(msg);
+    throw responseError(res, body, `Ошибка экспорта (${res.status})`);
   }
   const count = Number(res.headers.get("X-Item-Count") || 0);
   const disposition = res.headers.get("Content-Disposition") || "";
@@ -102,15 +131,33 @@ async function exportDocx(payload) {
     }
   }
   const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  downloadBlob(blob, filename);
   return { canceled: false, count, filePath: filename };
+}
+
+// На локальном Windows-сервере окно сохранения открывается отдельно от браузера.
+// Это исключает сбой встроенного браузера и позволяет помнить последнюю папку.
+// На других платформах сохраняем совместимость через обычное скачивание.
+async function exportDocx(payload) {
+  const requestPayload = payload || {};
+  const res = await fetch(`${BASE}/export-docx/save`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(requestPayload),
+  });
+  if (res.status === 501) return downloadDocx(requestPayload);
+
+  let body;
+  try {
+    body = await res.json();
+  } catch {
+    throw new Error(`Некорректный ответ сервера (${res.status})`);
+  }
+  if (!res.ok || !body || body.ok === false) {
+    throw responseError(res, body, `Ошибка экспорта (${res.status})`);
+  }
+  return body.data;
 }
 
 export const api = {
@@ -128,6 +175,7 @@ export const api = {
     update: (data) => call("topics:update", data),
     setExcluded: (data) => call("topics:setExcluded", data),
     remove: (id) => call("topics:delete", id),
+    bulkRemove: (data) => call("topics:bulkDelete", data),
     queueStatus: (programId) => call("topics:queueStatus", programId),
   },
   periods: {
@@ -135,6 +183,7 @@ export const api = {
     create: (data) => call("periods:create", data),
     update: (data) => call("periods:update", data),
     updateSettings: (data) => call("periods:updateSettings", data),
+    setDayGrid: (data) => call("periods:setDayGrid", data),
     remove: (id) => call("periods:delete", id),
     autofill: (data) => call("periods:autofill", data),
   },
@@ -164,8 +213,19 @@ export const api = {
     listByPeriod: (periodId, crossPeriod = false) =>
       call("schedule:listByPeriod", { periodId, crossPeriod }),
     saveItem: (data) => call("schedule:saveItem", data),
+    swapSlotRows: (data) => call("schedule:swapSlotRows", data),
+    swapItems: (data) => call("schedule:swapItems", data),
+    swapGroupSlots: (data) => call("schedule:swapGroupSlots", data),
+    exchangeItemSets: (data) => call("schedule:exchangeItemSets", data),
     deleteItem: (id) => call("schedule:deleteItem", id),
+    bulkDelete: (data) => call("schedule:bulkDelete", data),
     fillGrid: (periodId) => call("schedule:fillGrid", { periodId }),
+    gridFillUndoInfo: (periodId) =>
+      call("schedule:gridFillUndoInfo", { periodId }),
+    undoGridFill: (data) => call("schedule:undoGridFill", data),
+    dayRemovalInfo: (data) => call("schedule:dayRemovalInfo", data),
+    removeDay: (data) => call("schedule:removeDay", data),
+    restoreDay: (data) => call("schedule:restoreDay", data),
     assignTopic: (data) => call("schedule:assignTopic", data),
     restoreToQueue: (data) => call("schedule:restoreToQueue", data),
     bulkUpdate: (data) => call("schedule:bulkUpdate", data),
@@ -197,10 +257,11 @@ export const api = {
     list: (programId) => call("versions:list", programId),
     create: (data) => call("versions:create", data),
     get: (id) => call("versions:get", id),
-    fromTemplate: (data) => call("versions:fromTemplate", data),
     search: (query) => call("versions:search", query),
     rename: (data) => call("versions:rename", data),
     delete: (id) => call("versions:delete", id),
+    restore: (id) => call("versions:restore", id),
+    createFromArchive: (id) => call("versions:createFromArchive", id),
   },
 };
 

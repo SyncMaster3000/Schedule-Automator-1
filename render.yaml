@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: schedule-automator-demo
+    runtime: docker
+    region: frankfurt
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/healthz
+    autoDeployTrigger: off
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: MIGRATION_DATABASE_URL
+        sync: false
+      - key: REQUIRE_RESTRICTED_DATABASE_ROLE
+        value: "true"
+      - key: DEMO_ADMIN_TOKEN
+        sync: false
+      - key: DEMO_CLEANUP_ENABLED
+        value: "true"
+      - key: DEMO_CLEANUP_INTERVAL_HOURS
+        value: "6"
+      - key: DEMO_CLEANUP_BATCH_SIZE
+        value: "25"
+      - key: SALES_CONTACT_URL
+        value: https://t.me/SyncMaster3000
+      - key: WEB_PUBLIC_DIR
+        value: /app/artifacts/schedule/dist/public
+      - key: MIGRATIONS_DIR
+        value: /app/lib/db/migrations
+      - key: SCHEDULE_TEMPLATES_DIR
+        value: /app/artifacts/api-server/templates
