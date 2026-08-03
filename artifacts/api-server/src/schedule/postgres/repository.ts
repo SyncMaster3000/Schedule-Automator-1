@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { buildAutofillPlan } from "../services/autofillPlanner.js";
 import { ScheduleApiError } from "./handlers.js";
+import { postgresIntegerArray } from "./postgresArray.js";
 
 export type TenantTransaction = {
   execute(query: unknown): Promise<unknown>;
@@ -449,7 +450,7 @@ async function deleteTopicRows(
         from program_topics
         where organization_id = ${organizationId}
           and program_id = ${programId}
-          and id = any(${requestedIds}::integer[])`,
+          and id = any(${postgresIntegerArray(requestedIds)}::integer[])`,
   );
   const topicIds = topics.map((topic) => Number(topic.id));
   if (!topicIds.length) return { count: 0, scheduleItemsCleared: 0 };
@@ -460,7 +461,7 @@ async function deleteTopicRows(
         from schedule_items
         where organization_id = ${organizationId}
           and program_id = ${programId}
-          and topic_id = any(${topicIds}::integer[])`,
+          and topic_id = any(${postgresIntegerArray(topicIds)}::integer[])`,
   );
   const pinnedCount = scheduleItems.filter((item) =>
     Boolean(item.is_pinned),
@@ -478,7 +479,7 @@ async function deleteTopicRows(
       transaction,
       sql`delete from schedule_locks
           where organization_id = ${organizationId}
-            and schedule_item_id = any(${itemIds}::integer[])`,
+            and schedule_item_id = any(${postgresIntegerArray(itemIds)}::integer[])`,
     );
     await queryRows(
       transaction,
@@ -509,7 +510,7 @@ async function deleteTopicRows(
                 else null
               end
           where organization_id = ${organizationId}
-            and id = any(${itemIds}::integer[])`,
+            and id = any(${postgresIntegerArray(itemIds)}::integer[])`,
     );
   }
   await queryRows(
@@ -517,7 +518,7 @@ async function deleteTopicRows(
     sql`delete from program_topics
         where organization_id = ${organizationId}
           and program_id = ${programId}
-          and id = any(${topicIds}::integer[])`,
+          and id = any(${postgresIntegerArray(topicIds)}::integer[])`,
   );
   return {
     count: topicIds.length,
@@ -600,7 +601,7 @@ export async function validateScheduleReferences(
       sql`select id
           from teachers
           where organization_id = ${organizationId}
-            and id = any(${teacherIds}::integer[])`,
+            and id = any(${postgresIntegerArray(teacherIds)}::integer[])`,
     );
     if (teachers.length !== teacherIds.length) {
       notFound("Один из преподавателей не найден");
@@ -626,7 +627,7 @@ export async function validateScheduleReferences(
           where organization_id = ${organizationId}
             and period_id = ${Number(period.id)}
             and is_active = true
-            and id = any(${groupIds}::integer[])`,
+            and id = any(${postgresIntegerArray(groupIds)}::integer[])`,
     );
     if (groups.length !== groupIds.length) {
       throw new ScheduleApiError(
@@ -1976,13 +1977,13 @@ export class PostgresScheduleRepository {
             transaction,
             sql`delete from schedule_locks
                 where organization_id = ${organizationId}
-                  and schedule_item_id = any(${placeholderIds}::integer[])`,
+                  and schedule_item_id = any(${postgresIntegerArray(placeholderIds)}::integer[])`,
           );
           await queryRows(
             transaction,
             sql`delete from schedule_items
                 where organization_id = ${organizationId}
-                  and id = any(${placeholderIds}::integer[])`,
+                  and id = any(${postgresIntegerArray(placeholderIds)}::integer[])`,
           );
         }
       }
@@ -2057,7 +2058,7 @@ export class PostgresScheduleRepository {
         sql`select *
             from schedule_items
             where organization_id = ${organizationId}
-              and id = any(${itemIds}::integer[])`,
+              and id = any(${postgresIntegerArray(itemIds)}::integer[])`,
       );
       const removable = items.filter((item) => !Boolean(item.is_pinned));
       const removableIds = removable.map((item) => Number(item.id));
@@ -2066,13 +2067,13 @@ export class PostgresScheduleRepository {
           transaction,
           sql`delete from schedule_locks
               where organization_id = ${organizationId}
-                and schedule_item_id = any(${removableIds}::integer[])`,
+                and schedule_item_id = any(${postgresIntegerArray(removableIds)}::integer[])`,
         );
         await queryRows(
           transaction,
           sql`delete from schedule_items
               where organization_id = ${organizationId}
-                and id = any(${removableIds}::integer[])`,
+                and id = any(${postgresIntegerArray(removableIds)}::integer[])`,
         );
       }
       const programIds = [
@@ -2390,7 +2391,7 @@ export class PostgresScheduleRepository {
                 grid_fill_id = null,
                 grid_fill_signature = null
             where organization_id = ${organizationId}
-              and id = any(${itemIds}::integer[])
+              and id = any(${postgresIntegerArray(itemIds)}::integer[])
             returning id`,
       );
       return { updated: rows.length, is_pinned: pinned ? 1 : 0 };

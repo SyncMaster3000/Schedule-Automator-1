@@ -3,6 +3,7 @@ import { normalizeScheduleCategory } from "../categories.js";
 import { exportSchedule } from "../services/docxExport.js";
 import { AdvancedPostgresScheduleRepository } from "./advancedRepository";
 import { ScheduleApiError } from "./handlers.js";
+import { postgresIntegerArray } from "./postgresArray.js";
 import {
   firstRow,
   inOrganization,
@@ -241,13 +242,13 @@ async function restoreSnapshotToProgram(
           set period_id = null
           where organization_id = ${organizationId}
             and program_id = ${programId}
-            and period_id = any(${oldPeriodIds}::integer[])`,
+            and period_id = any(${postgresIntegerArray(oldPeriodIds)}::integer[])`,
     );
     await queryRows(
       transaction,
       sql`delete from schedule_temp_items
           where organization_id = ${organizationId}
-            and period_id = any(${oldPeriodIds}::integer[])`,
+            and period_id = any(${postgresIntegerArray(oldPeriodIds)}::integer[])`,
     );
   }
   await queryRows(
@@ -1060,7 +1061,7 @@ async function exportCurrentDocx(
          and tp.id = si.topic_id
         where si.organization_id = ${organizationId}
           and si.program_id = ${programId}
-          and si.period_id = any(${periodIds}::integer[])
+          and si.period_id = any(${postgresIntegerArray(periodIds)}::integer[])
         order by si.date, si.start_time, si.sort_order`,
   );
   items = enrichAssessmentDisciplines(items, topics);
@@ -1069,7 +1070,7 @@ async function exportCurrentDocx(
     sql`select *
         from groups
         where organization_id = ${organizationId}
-          and period_id = any(${periodIds}::integer[])`,
+          and period_id = any(${postgresIntegerArray(periodIds)}::integer[])`,
   );
   const groupsById = mapById(groups);
   const requestedGroupId = data.groupId

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { ScheduleApiError } from "./handlers.js";
+import { postgresIntegerArray } from "./postgresArray.js";
 import {
   PostgresScheduleRepository,
   type Row,
@@ -298,13 +299,13 @@ async function fillGridPlaceholders(
         transaction,
         sql`delete from schedule_locks
             where organization_id = ${organizationId}
-              and schedule_item_id = any(${redundantIds}::integer[])`,
+              and schedule_item_id = any(${postgresIntegerArray(redundantIds)}::integer[])`,
       );
       await queryRows(
         transaction,
         sql`delete from schedule_items
             where organization_id = ${organizationId}
-              and id = any(${redundantIds}::integer[])`,
+              and id = any(${postgresIntegerArray(redundantIds)}::integer[])`,
       );
       removedLegacy += redundantIds.length;
     }
@@ -600,13 +601,13 @@ async function shiftScheduleItemsInTransaction(
       transaction,
       sql`delete from schedule_locks
           where organization_id = ${organizationId}
-            and schedule_item_id = any(${placeholderIds}::integer[])`,
+            and schedule_item_id = any(${postgresIntegerArray(placeholderIds)}::integer[])`,
     );
     await queryRows(
       transaction,
       sql`delete from schedule_items
           where organization_id = ${organizationId}
-            and id = any(${placeholderIds}::integer[])`,
+            and id = any(${postgresIntegerArray(placeholderIds)}::integer[])`,
     );
   }
   for (const item of realToShift) {
@@ -740,13 +741,13 @@ export class AdvancedPostgresScheduleRepository extends PostgresScheduleReposito
           transaction,
           sql`delete from schedule_locks
               where organization_id = ${organizationId}
-                and schedule_item_id = any(${removableIds}::integer[])`,
+                and schedule_item_id = any(${postgresIntegerArray(removableIds)}::integer[])`,
         );
         await queryRows(
           transaction,
           sql`delete from schedule_items
               where organization_id = ${organizationId}
-                and id = any(${removableIds}::integer[])`,
+                and id = any(${postgresIntegerArray(removableIds)}::integer[])`,
         );
       }
       await queryRows(
@@ -837,13 +838,13 @@ export class AdvancedPostgresScheduleRepository extends PostgresScheduleReposito
           transaction,
           sql`delete from schedule_locks
               where organization_id = ${organizationId}
-                and schedule_item_id = any(${itemIds}::integer[])`,
+                and schedule_item_id = any(${postgresIntegerArray(itemIds)}::integer[])`,
         );
         await queryRows(
           transaction,
           sql`delete from schedule_items
               where organization_id = ${organizationId}
-                and id = any(${itemIds}::integer[])`,
+                and id = any(${postgresIntegerArray(itemIds)}::integer[])`,
         );
       }
       const excludedDates = [
