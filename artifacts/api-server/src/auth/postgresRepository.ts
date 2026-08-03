@@ -7,6 +7,7 @@ import {
   sessions,
   users,
 } from "@workspace/db/schema";
+import { seedDemoStarterData } from "./demoStarterSeed.js";
 import type { AuthRepository } from "./service.js";
 
 async function loadDatabase() {
@@ -292,6 +293,7 @@ export class PostgresAuthRepository implements AuthRepository {
         },
         createdAt: data.now,
       });
+      await seedDemoStarterData(tx, organization.id, data.now);
 
       return {
         organizationId: organization.id,
