@@ -2,13 +2,22 @@
 import { computed } from "vue";
 import AuthLayout from "../components/AuthLayout.vue";
 import { sessionState } from "../session";
+import {
+  DEFAULT_DEMO_CONTACT_URL,
+  normalizeSalesContactUrl,
+  telegramContactLabel,
+} from "../../../../lib/demoContact.mjs";
 
 const salesContactUrl = computed(() =>
-  String(
+  normalizeSalesContactUrl(
     sessionState.runtime?.salesContactUrl ||
       import.meta.env.VITE_SALES_CONTACT_URL ||
-      "",
-  ).trim(),
+      DEFAULT_DEMO_CONTACT_URL,
+  ),
+);
+
+const telegramContact = computed(() =>
+  telegramContactLabel(salesContactUrl.value),
 );
 
 const returnTarget = computed(() => (sessionState.session ? "/" : "/login"));
@@ -56,7 +65,11 @@ const returnTarget = computed(() => (sessionState.session ? "/" : "/login"));
         target="_blank"
         rel="noopener noreferrer"
       >
-        Связаться по вопросу установки
+        {{
+          telegramContact
+            ? `Связаться в Telegram: ${telegramContact}`
+            : "Связаться по вопросу установки"
+        }}
       </a>
       <RouterLink class="btn-secondary purchase-action" :to="returnTarget">
         {{

@@ -66,6 +66,20 @@ export function createApp(options: AppOptions = {}): Express {
     }),
   );
   app.use(cookieParser());
+  // Must precede the larger schedule/DOCX payload parser.
+  app.use(
+    "/api/auth/register-demo",
+    (req, res, next) => {
+      if (req.method === "POST" && !req.is("application/json")) {
+        res
+          .status(415)
+          .json({ ok: false, code: "json_required", error: "Требуется JSON" });
+        return;
+      }
+      next();
+    },
+    express.json({ limit: "8kb" }),
+  );
   app.use(express.json({ limit: "25mb" }));
   app.use(express.urlencoded({ extended: true, limit: "25mb" }));
 
@@ -82,6 +96,19 @@ export function createApp(options: AppOptions = {}): Express {
       res: express.Response,
       next: express.NextFunction,
     ) => {
+      if (
+        err &&
+        typeof err === "object" &&
+        "type" in err &&
+        (err.type === "entity.too.large" || err.type === "entity.parse.failed")
+      ) {
+        res.status(err.type === "entity.too.large" ? 413 : 400).json({
+          ok: false,
+          code: "invalid_request_body",
+          error: "Некорректное или слишком большое тело запроса",
+        });
+        return;
+      }
       logger.error({ err }, "Unhandled request error");
       if (res.headersSent) {
         next(err);

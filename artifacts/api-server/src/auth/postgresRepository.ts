@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull, ne } from "drizzle-orm";
+import { and, eq, gt, isNull, ne, sql } from "drizzle-orm";
 import {
   auditEvents,
   demoAccess,
@@ -59,8 +59,9 @@ function mapContext(row: Record<string, any>) {
 }
 
 export class PostgresAuthRepository implements AuthRepository {
+  constructor(private readonly getDatabase = database) {}
   async findUserForLogin(login: string) {
-    const db = await database();
+    const db = await this.getDatabase();
     const rows = await db
       .select(contextSelection())
       .from(users)
@@ -76,7 +77,7 @@ export class PostgresAuthRepository implements AuthRepository {
   }
 
   async findSessionByTokenHash(tokenHash: string, now: Date) {
-    const db = await database();
+    const db = await this.getDatabase();
     const rows = await db
       .select({
         ...contextSelection(),
@@ -116,7 +117,7 @@ export class PostgresAuthRepository implements AuthRepository {
     expiresAt: Date;
     now: Date;
   }) {
-    const db = await database();
+    const db = await this.getDatabase();
     return db.transaction(async (tx) => {
       const rows = await tx
         .insert(sessions)
@@ -139,7 +140,7 @@ export class PostgresAuthRepository implements AuthRepository {
   }
 
   async touchSession(sessionId: string, now: Date) {
-    const db = await database();
+    const db = await this.getDatabase();
     await db
       .update(sessions)
       .set({ lastSeenAt: now })
@@ -147,7 +148,7 @@ export class PostgresAuthRepository implements AuthRepository {
   }
 
   async revokeSessionByTokenHash(tokenHash: string, now: Date) {
-    const db = await database();
+    const db = await this.getDatabase();
     const rows = await db
       .update(sessions)
       .set({ revokedAt: now })
@@ -166,7 +167,7 @@ export class PostgresAuthRepository implements AuthRepository {
     passwordHash: string;
     now: Date;
   }) {
-    const db = await database();
+    const db = await this.getDatabase();
     await db.transaction(async (tx) => {
       await tx
         .update(users)
@@ -214,7 +215,7 @@ export class PostgresAuthRepository implements AuthRepository {
     details: Record<string, unknown>;
     now: Date;
   }) {
-    const db = await database();
+    const db = await this.getDatabase();
     await db.insert(auditEvents).values({
       organizationId: data.organizationId,
       actorUserId: data.actorUserId,
@@ -227,6 +228,9 @@ export class PostgresAuthRepository implements AuthRepository {
   }
 
   async createDemoAccount(data: {
+    selfService?: boolean;
+    role?: "scheduler";
+    mustChangePassword?: false;
     organizationName: string;
     slug: string;
     login: string;
@@ -236,72 +240,107 @@ export class PostgresAuthRepository implements AuthRepository {
     dataRetentionUntil: Date;
     now: Date;
   }) {
-    const db = await database();
-    return db.transaction(async (tx) => {
-      const organizationRows = await tx
-        .insert(organizations)
-        .values({
-          name: data.organizationName,
-          slug: data.slug,
-          status: "active",
+    const db = await this.getDatabase();
+    return db.transaction(
+      async (tx) => {
+        if (data.selfService) {
+          // Serialize quota checks across processes without queuing connections
+          // behind another signup's starter-data transaction.
+          const lock = await tx.execute(
+            sql`select pg_try_advisory_xact_lock(731842, 1) as locked`,
+          );
+          if (lock.rows[0]?.locked !== true) {
+            throw Object.assign(new Error("Registration is busy"), {
+              code: "registration_busy",
+            });
+          }
+          const result = await tx.execute(sql`
+          select count(*)::int as count from audit_events
+          where event_type = 'demo.self_registered'
+            and created_at >= statement_timestamp() - interval '24 hours'
+        `);
+          const count = result.rows[0]?.count;
+          if (
+            typeof count !== "number" ||
+            !Number.isSafeInteger(count) ||
+            count < 0
+          ) {
+            throw new Error("Invalid registration quota counter");
+          }
+          if (count >= 50) {
+            throw Object.assign(new Error("Registration capacity reached"), {
+              code: "registration_capacity",
+            });
+          }
+        }
+        const organizationRows = await tx
+          .insert(organizations)
+          .values({
+            name: data.organizationName,
+            slug: data.slug,
+            status: "active",
+            createdAt: data.now,
+            updatedAt: data.now,
+          })
+          .returning({ id: organizations.id });
+        const organization = organizationRows[0];
+        if (!organization) throw new Error("Не удалось создать организацию");
+
+        const userRows = await tx
+          .insert(users)
+          .values({
+            login: data.login,
+            passwordHash: data.passwordHash,
+            displayName: data.displayName,
+            status: "active",
+            mustChangePassword: data.selfService ? false : true,
+            createdAt: data.now,
+            updatedAt: data.now,
+          })
+          .returning({ id: users.id });
+        const user = userRows[0];
+        if (!user) throw new Error("Не удалось создать пользователя");
+
+        await tx.insert(organizationMembers).values({
+          organizationId: organization.id,
+          userId: user.id,
+          role: data.selfService ? "scheduler" : "owner",
           createdAt: data.now,
-          updatedAt: data.now,
-        })
-        .returning({ id: organizations.id });
-      const organization = organizationRows[0];
-      if (!organization) throw new Error("Не удалось создать организацию");
-
-      const userRows = await tx
-        .insert(users)
-        .values({
-          login: data.login,
-          passwordHash: data.passwordHash,
-          displayName: data.displayName,
+        });
+        await tx.insert(demoAccess).values({
+          organizationId: organization.id,
           status: "active",
-          mustChangePassword: true,
-          createdAt: data.now,
+          startsAt: data.now,
+          expiresAt: data.expiresAt,
+          dataRetentionUntil: data.dataRetentionUntil,
           updatedAt: data.now,
-        })
-        .returning({ id: users.id });
-      const user = userRows[0];
-      if (!user) throw new Error("Не удалось создать пользователя");
+        });
+        await tx.insert(auditEvents).values({
+          organizationId: organization.id,
+          actorUserId: null,
+          eventType: data.selfService
+            ? "demo.self_registered"
+            : "demo.account_created",
+          entityType: "user",
+          entityId: user.id,
+          details: {
+            login: data.login,
+            expiresAt: data.expiresAt.toISOString(),
+            dataRetentionUntil: data.dataRetentionUntil.toISOString(),
+          },
+          createdAt: data.selfService ? sql`statement_timestamp()` : data.now,
+        });
+        await seedDemoStarterData(tx, organization.id, data.now);
 
-      await tx.insert(organizationMembers).values({
-        organizationId: organization.id,
-        userId: user.id,
-        role: "owner",
-        createdAt: data.now,
-      });
-      await tx.insert(demoAccess).values({
-        organizationId: organization.id,
-        status: "active",
-        startsAt: data.now,
-        expiresAt: data.expiresAt,
-        dataRetentionUntil: data.dataRetentionUntil,
-        updatedAt: data.now,
-      });
-      await tx.insert(auditEvents).values({
-        organizationId: organization.id,
-        actorUserId: null,
-        eventType: "demo.account_created",
-        entityType: "user",
-        entityId: user.id,
-        details: {
+        return {
+          organizationId: organization.id,
+          userId: user.id,
           login: data.login,
-          expiresAt: data.expiresAt.toISOString(),
-          dataRetentionUntil: data.dataRetentionUntil.toISOString(),
-        },
-        createdAt: data.now,
-      });
-      await seedDemoStarterData(tx, organization.id, data.now);
-
-      return {
-        organizationId: organization.id,
-        userId: user.id,
-        login: data.login,
-        expiresAt: data.expiresAt,
-        dataRetentionUntil: data.dataRetentionUntil,
-      };
-    });
+          expiresAt: data.expiresAt,
+          dataRetentionUntil: data.dataRetentionUntil,
+        };
+      },
+      data.selfService ? { isolationLevel: "read committed" } : undefined,
+    );
   }
 }

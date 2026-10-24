@@ -146,6 +146,19 @@ export async function login(loginValue, password) {
   }
 }
 
+export async function registerDemo(input) {
+  return request("/api/auth/register-demo", {
+    method: "POST",
+    body: JSON.stringify({
+      organizationName: input.organizationName,
+      displayName: input.displayName,
+      login: input.login,
+      password: input.password,
+      website: input.website || "",
+    }),
+  });
+}
+
 export async function changePassword(currentPassword, newPassword) {
   try {
     await request("/api/auth/change-password", {

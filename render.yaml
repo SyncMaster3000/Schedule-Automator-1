@@ -26,7 +26,7 @@ services:
       - key: DEMO_CLEANUP_BATCH_SIZE
         value: "25"
       - key: SALES_CONTACT_URL
-        value: https://t.me/SyncMaster3000
+        value: https://t.me/SyncMaster30001
       - key: WEB_PUBLIC_DIR
         value: /app/artifacts/schedule/dist/public
       - key: MIGRATIONS_DIR

@@ -54,6 +54,9 @@ export type AuthRepository = {
     now: Date;
   }): Promise<void>;
   createDemoAccount(data: {
+    selfService?: boolean;
+    role?: "scheduler";
+    mustChangePassword?: false;
     organizationName: string;
     slug: string;
     login: string;
@@ -80,6 +83,16 @@ export function createAuthService(
   repository: AuthRepository,
   options?: { sessionDurationMs?: number },
 ): {
+  registerDemoAccount(
+    input: {
+      organizationName: string;
+      displayName: string;
+      login: string;
+      password: string;
+      website?: string;
+    },
+    now?: Date,
+  ): Promise<Record<string, unknown>>;
   login(
     input: { login: string; password: string },
     now?: Date,

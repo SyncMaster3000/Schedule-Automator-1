@@ -1,12 +1,14 @@
 <script setup>
 import { computed, ref } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { RouterLink, useRoute, useRouter } from "vue-router";
 import AuthLayout from "../components/AuthLayout.vue";
 import { login, sessionState } from "../session";
 
 const router = useRouter();
 const route = useRoute();
-const loginValue = ref("");
+const loginValue = ref(
+  typeof route.query.login === "string" ? route.query.login : "",
+);
 const password = ref("");
 const showPassword = ref(false);
 const submitting = ref(false);
@@ -17,9 +19,10 @@ const displayedError = computed(
 );
 
 async function submit() {
+  if (submitting.value) return;
   error.value = "";
   if (!loginValue.value.trim() || !password.value) {
-    error.value = "Введите логин и временный пароль";
+    error.value = "Введите логин и пароль";
     return;
   }
 
@@ -53,7 +56,7 @@ async function submit() {
     <section class="auth-card card" aria-labelledby="login-title">
       <header class="auth-card-header">
         <h2 id="login-title">Вход в веб-демо</h2>
-        <p>Используйте логин и временный пароль, выданные администратором</p>
+        <p>Введите свой логин и пароль для работы с расписаниями</p>
       </header>
 
       <form class="auth-form" @submit.prevent="submit">
@@ -74,9 +77,7 @@ async function submit() {
         </div>
 
         <div>
-          <label class="label" for="temporary-password">
-            Временный пароль
-          </label>
+          <label class="label" for="temporary-password"> Пароль </label>
           <div class="password-field">
             <input
               id="temporary-password"
@@ -125,6 +126,16 @@ async function submit() {
           {{ submitting ? "Выполняется вход…" : "Войти" }}
         </button>
       </form>
+
+      <div
+        v-if="sessionState.runtime?.demoRegistrationEnabled === true"
+        class="auth-registration"
+      >
+        <p>Нет учётной записи? Создайте отдельное пространство на 7 дней.</p>
+        <RouterLink class="btn-secondary auth-submit" to="/register">
+          Попробовать демо
+        </RouterLink>
+      </div>
 
       <footer class="auth-card-footer">
         <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -203,6 +214,18 @@ async function submit() {
   stroke-width: 1.8;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.auth-registration {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 1.25rem;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  line-height: 1.5;
 }
 
 .auth-error {

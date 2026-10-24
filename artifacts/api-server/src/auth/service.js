@@ -104,7 +104,7 @@ export function createAuthService(repository, options = {}) {
     return { context, decision, tokenHash };
   }
 
-  return {
+  const service = {
     async login({ login, password }, now = new Date()) {
       let normalizedLogin;
       try {
@@ -222,92 +222,147 @@ export function createAuthService(repository, options = {}) {
       return { changed: true };
     },
 
-    async createDemoAccount(
-      {
-        organizationName,
-        login,
-        displayName,
-        temporaryPassword,
-        demoDays = 7,
-        retentionDays = 30,
-      },
-      now = new Date(),
-    ) {
-      const cleanOrganizationName = String(organizationName || "").trim();
-      const cleanDisplayName = String(displayName || "").trim();
+    async registerDemoAccount(input, now = new Date()) {
       if (
-        cleanOrganizationName.length < 3 ||
-        cleanOrganizationName.length > 200
+        !input ||
+        typeof input !== "object" ||
+        Array.isArray(input) ||
+        [
+          input.organizationName,
+          input.displayName,
+          input.login,
+          input.password,
+        ].some((value) => typeof value !== "string") ||
+        (input.website !== undefined && input.website !== "")
       ) {
         throw new AuthError(
           400,
-          "organization_name_invalid",
-          "Название учреждения должно содержать от 3 до 200 символов",
+          "registration_invalid",
+          "Проверьте поля регистрации",
         );
       }
-      if (cleanDisplayName.length < 2 || cleanDisplayName.length > 150) {
-        throw new AuthError(
-          400,
-          "display_name_invalid",
-          "Имя пользователя должно содержать от 2 до 150 символов",
-        );
-      }
-      let normalizedLogin;
-      try {
-        normalizedLogin = normalizeLogin(login);
-      } catch (error) {
-        throw new AuthError(400, "login_invalid", error.message);
-      }
-      if (
-        !Number.isInteger(demoDays) ||
-        demoDays < 1 ||
-        demoDays > 30 ||
-        !Number.isInteger(retentionDays) ||
-        retentionDays < 1 ||
-        retentionDays > 90
-      ) {
-        throw new AuthError(
-          400,
-          "demo_period_invalid",
-          "Срок демонстрации или хранения данных указан неверно",
-        );
-      }
-
-      let passwordHash;
-      try {
-        passwordHash = await hashPassword(temporaryPassword);
-      } catch (error) {
-        throw new AuthError(400, "password_invalid", error.message);
-      }
-      const expiresAt = new Date(
-        now.valueOf() + demoDays * 24 * 60 * 60 * 1000,
+      return createAccount(
+        {
+          organizationName: input.organizationName,
+          displayName: input.displayName,
+          login: input.login,
+          temporaryPassword: input.password,
+          demoDays: 7,
+          retentionDays: 30,
+        },
+        now,
+        true,
       );
-      const dataRetentionUntil = new Date(
-        expiresAt.valueOf() + retentionDays * 24 * 60 * 60 * 1000,
-      );
-      const slug = `demo-${now.valueOf().toString(36)}-${randomBytes(4).toString("hex")}`;
-
-      try {
-        return await repository.createDemoAccount({
-          organizationName: cleanOrganizationName,
-          slug,
-          login: normalizedLogin,
-          displayName: cleanDisplayName,
-          passwordHash,
-          expiresAt,
-          dataRetentionUntil,
-          now,
-        });
-      } catch (error) {
-        if (error?.code === "23505" || error?.code === "duplicate_login") {
-          throw new AuthError(
-            409,
-            "login_already_exists",
-            "Такой логин уже используется",
-          );
-        }
-        throw error;
-      }
     },
+    createDemoAccount: (input, now = new Date()) => createAccount(input, now),
   };
+  return service;
+
+  async function createAccount(
+    {
+      organizationName,
+      login,
+      displayName,
+      temporaryPassword,
+      demoDays = 7,
+      retentionDays = 30,
+    },
+    now = new Date(),
+    selfService = false,
+  ) {
+    const cleanOrganizationName = String(organizationName || "").trim();
+    const cleanDisplayName = String(displayName || "").trim();
+    if (
+      cleanOrganizationName.length < 3 ||
+      cleanOrganizationName.length > 200
+    ) {
+      throw new AuthError(
+        400,
+        "organization_name_invalid",
+        "Название учреждения должно содержать от 3 до 200 символов",
+      );
+    }
+    if (cleanDisplayName.length < 2 || cleanDisplayName.length > 150) {
+      throw new AuthError(
+        400,
+        "display_name_invalid",
+        "Имя пользователя должно содержать от 2 до 150 символов",
+      );
+    }
+    let normalizedLogin;
+    try {
+      normalizedLogin = normalizeLogin(login);
+    } catch (error) {
+      throw new AuthError(400, "login_invalid", error.message);
+    }
+    if (
+      !Number.isInteger(demoDays) ||
+      demoDays < 1 ||
+      demoDays > 30 ||
+      !Number.isInteger(retentionDays) ||
+      retentionDays < 1 ||
+      retentionDays > 90
+    ) {
+      throw new AuthError(
+        400,
+        "demo_period_invalid",
+        "Срок демонстрации или хранения данных указан неверно",
+      );
+    }
+
+    let passwordHash;
+    try {
+      passwordHash = await hashPassword(temporaryPassword);
+    } catch (error) {
+      throw new AuthError(400, "password_invalid", error.message);
+    }
+    const expiresAt = new Date(now.valueOf() + demoDays * 24 * 60 * 60 * 1000);
+    const dataRetentionUntil = new Date(
+      expiresAt.valueOf() + retentionDays * 24 * 60 * 60 * 1000,
+    );
+    const slug = `demo-${now.valueOf().toString(36)}-${randomBytes(4).toString("hex")}`;
+
+    try {
+      return await repository.createDemoAccount({
+        ...(selfService
+          ? { selfService: true, role: "scheduler", mustChangePassword: false }
+          : {}),
+        organizationName: cleanOrganizationName,
+        slug,
+        login: normalizedLogin,
+        displayName: cleanDisplayName,
+        passwordHash,
+        expiresAt,
+        dataRetentionUntil,
+        now,
+      });
+    } catch (error) {
+      if (error?.code === "registration_busy") {
+        throw new AuthError(
+          429,
+          "registration_busy",
+          "Регистрация временно занята. Повторите через несколько секунд",
+        );
+      }
+      if (error?.code === "registration_capacity") {
+        throw new AuthError(
+          429,
+          "registration_capacity",
+          "Дневной лимит деморегистраций исчерпан. Попробуйте завтра",
+        );
+      }
+      if (
+        error?.code === "23505" ||
+        error?.cause?.code === "23505" ||
+        error?.code === "duplicate_login"
+      ) {
+        throw new AuthError(
+          409,
+          "login_already_exists",
+          "Такой логин уже используется",
+        );
+      }
+      throw error;
+    }
+  }
 }

@@ -10,10 +10,20 @@ import { AuthError } from "../auth/service.js";
 import { authService, demoCleanupService, sessionToken } from "../auth/runtime";
 import { SESSION_COOKIE } from "../auth/session.js";
 import { AttemptLimiter } from "../auth/attemptLimiter.js";
+import { createRegistrationRouter } from "./registration";
+import { demoRegistrationEnabled } from "../runtimeConfig";
+import { usesPostgresScheduleStorage } from "../schedule/storageMode.js";
 
 const router = Router();
 const loginAttempts = new AttemptLimiter();
 const production = process.env.NODE_ENV === "production";
+
+router.use(
+  createRegistrationRouter(
+    authService,
+    () => usesPostgresScheduleStorage() && demoRegistrationEnabled(),
+  ),
+);
 
 function cookieOptions(expires?: Date) {
   return {

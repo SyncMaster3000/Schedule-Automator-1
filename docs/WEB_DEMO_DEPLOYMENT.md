@@ -81,7 +81,7 @@ Render засыпает при отсутствии обращений, а пе�
 
 ## Публичные контакты
 
-- Telegram: [@SyncMaster3000](https://t.me/SyncMaster3000)
+- Telegram: [@SyncMaster30001](https://t.me/SyncMaster30001)
 - Телефон: [+375 29 287-69-03](tel:+375292876903)
 - Email: [syncmaster30001@gmail.com](mailto:syncmaster30001@gmail.com)
 - Instagram: [@qwerty0070088](https://www.instagram.com/qwerty0070088/)

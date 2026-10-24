@@ -33,6 +33,12 @@ const routes = [
     meta: { standalone: true, webOnly: true, guestAllowed: true },
   },
   {
+    path: "/register",
+    name: "register",
+    component: () => import("./views/RegisterView.vue"),
+    meta: { standalone: true, webOnly: true, guestAllowed: true },
+  },
+  {
     path: "/change-password",
     name: "change-password",
     component: () => import("./views/ChangePasswordView.vue"),
@@ -65,6 +71,13 @@ router.beforeEach(async (to) => {
     return to.meta.webOnly ? { name: "home" } : true;
   }
 
+  if (
+    to.name === "register" &&
+    sessionState.runtime?.demoRegistrationEnabled !== true
+  ) {
+    return { name: "login" };
+  }
+
   if (sessionState.accessBlock) {
     if (to.name === "demo-ended" || to.name === "purchase") return true;
     return { name: "demo-ended" };
@@ -85,6 +98,7 @@ router.beforeEach(async (to) => {
 
   if (
     to.name === "login" ||
+    to.name === "register" ||
     to.name === "change-password" ||
     to.name === "demo-ended"
   ) {
