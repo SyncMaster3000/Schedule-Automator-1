@@ -3,10 +3,22 @@
   "version": "0.0.0",
   "license": "MIT",
   "scripts": {
-    "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
+    "preinstall": "node -e \"const fs=require('fs');for(const f of['package-lock.json','yarn.lock']){try{fs.unlinkSync(f)}catch(e){}}if(!String(process.env.npm_config_user_agent||'').startsWith('pnpm')){console.error('Use pnpm instead');process.exit(1)}\"",
+    "demo:backup": "node ./scripts/backup-demo-database.mjs",
     "build": "pnpm run typecheck && pnpm -r --if-present run build",
+    "demo:cleanup": "node ./scripts/cleanup-demo-data.mjs",
+    "demo:create": "node ./scripts/create-demo-account.mjs",
+    "desktop:dist:offline": "pnpm --dir electron-app run dist:offline",
+    "desktop:dist:win": "pnpm --dir electron-app run dist:win",
+    "desktop:pack:win": "pnpm --dir electron-app run pack:win",
+    "test": "node ./scripts/validate-tests.mjs",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
+  },
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=20 <23",
+    "pnpm": "10.33.0"
   },
   "private": true,
   "devDependencies": {

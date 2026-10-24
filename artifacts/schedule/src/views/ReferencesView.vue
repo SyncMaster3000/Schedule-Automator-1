@@ -12,8 +12,8 @@ const teachers = ref([]);
 const rooms = ref([]);
 const grids = ref([]);
 
-const newTeacher = ref({ fio: "", department: "", is_guest: 0 });
-const newRoom = ref({ number: "", type: "", capacity: null });
+const newTeacher = ref({ fio: "", department: "" });
+const newRoom = ref({ number: "", type: "" });
 
 // Редактирование существующих записей
 const editTeacher = ref(null);
@@ -24,11 +24,6 @@ function flash(msg) {
   info.value = msg;
   error.value = "";
   setTimeout(() => (info.value = ""), 2500);
-}
-
-// Пустое значение -> null, иначе число (0 сохраняется)
-function normCap(v) {
-  return v === "" || v === null || v === undefined || Number.isNaN(v) ? null : v;
 }
 
 async function loadAll() {
@@ -52,7 +47,7 @@ async function addTeacher() {
   }
   try {
     await api.references.addTeacher({ ...newTeacher.value });
-    newTeacher.value = { fio: "", department: "", is_guest: 0 };
+    newTeacher.value = { fio: "", department: "" };
     teachers.value = await api.references.teachers();
     flash("Преподаватель добавлен");
   } catch (e) {
@@ -94,9 +89,8 @@ async function addRoom() {
     await api.references.addRoom({
       number: newRoom.value.number,
       type: newRoom.value.type,
-      capacity: normCap(newRoom.value.capacity),
     });
-    newRoom.value = { number: "", type: "", capacity: null };
+    newRoom.value = { number: "", type: "" };
     rooms.value = await api.references.rooms();
     flash("Аудитория добавлена");
   } catch (e) {
@@ -113,7 +107,6 @@ async function saveRoom() {
       id: editRoom.value.id,
       number: editRoom.value.number,
       type: editRoom.value.type,
-      capacity: normCap(editRoom.value.capacity),
     });
     editRoom.value = null;
     rooms.value = await api.references.rooms();
@@ -185,13 +178,13 @@ onMounted(loadAll);
 </script>
 
 <template>
-  <div class="mx-auto max-w-5xl px-8 py-8">
+  <div class="page-shell">
     <h1 class="mb-6 text-2xl font-bold text-slate-800">Справочники</h1>
 
     <div v-if="error" class="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{{ error }}</div>
     <div v-if="info" class="mb-4 rounded-lg bg-green-50 px-4 py-3 text-sm text-green-700">{{ info }}</div>
 
-    <div class="mb-5 flex gap-2 border-b border-slate-200">
+    <div class="mb-5 flex gap-2 overflow-x-auto border-b border-slate-200">
       <button class="tab" :class="{ 'tab-active': tab === 'teachers' }" @click="tab = 'teachers'">
         Преподаватели ({{ teachers.length }})
       </button>
@@ -204,26 +197,17 @@ onMounted(loadAll);
     </div>
 
     <!-- Преподаватели -->
-    <div v-if="tab === 'teachers'" class="card p-5">
-      <div class="mb-2 flex gap-2">
+    <div v-if="tab === 'teachers'" class="card responsive-table p-5">
+      <div class="mb-2 flex flex-col gap-2 lg:flex-row">
         <input v-model="newTeacher.fio" class="input flex-1" placeholder="ФИО преподавателя" @keyup.enter="addTeacher" />
         <input v-model="newTeacher.department" class="input flex-1" placeholder="Кафедра / отдел" @keyup.enter="addTeacher" />
         <button class="btn-primary" @click="addTeacher">Добавить</button>
       </div>
-      <label class="mb-4 flex items-center gap-2 text-sm text-slate-600">
-        <input
-          type="checkbox"
-          :checked="!!newTeacher.is_guest"
-          @change="newTeacher.is_guest = $event.target.checked ? 1 : 0"
-        />
-        Приглашенный (не учитывать в проверке накладок)
-      </label>
-      <table class="w-full">
+      <table class="w-full min-w-[640px]">
         <thead>
           <tr class="text-left text-xs uppercase text-slate-400">
             <th class="table-cell">ФИО</th>
             <th class="table-cell">Кафедра</th>
-            <th class="table-cell">Статус</th>
             <th class="table-cell w-32"></th>
           </tr>
         </thead>
@@ -231,39 +215,30 @@ onMounted(loadAll);
           <tr v-for="t in teachers" :key="t.id">
             <td class="table-cell">{{ t.fio }}</td>
             <td class="table-cell text-slate-500">{{ t.department || "—" }}</td>
-            <td class="table-cell">
-              <span
-                v-if="t.is_guest"
-                class="badge bg-amber-50 text-amber-700"
-              >Приглашенный</span>
-              <span v-else class="text-slate-400">штатный</span>
-            </td>
             <td class="table-cell text-right">
               <button class="btn-ghost" @click="editTeacher = { ...t }">Изменить</button>
               <button class="btn-ghost text-red-500" @click="removeTeacher(t.id)">✕</button>
             </td>
           </tr>
           <tr v-if="!teachers.length">
-            <td class="table-cell text-slate-400" colspan="4">Список пуст. Добавьте преподавателя выше.</td>
+            <td class="table-cell text-slate-400" colspan="3">Список пуст. Добавьте преподавателя выше.</td>
           </tr>
         </tbody>
       </table>
     </div>
 
     <!-- Аудитории -->
-    <div v-if="tab === 'rooms'" class="card p-5">
-      <div class="mb-4 flex gap-2">
+    <div v-if="tab === 'rooms'" class="card responsive-table p-5">
+      <div class="mb-4 flex flex-col gap-2 lg:flex-row">
         <input v-model="newRoom.number" class="input flex-1" placeholder="Номер / название" @keyup.enter="addRoom" />
         <input v-model="newRoom.type" class="input flex-1" placeholder="Тип (лекционная…)" @keyup.enter="addRoom" />
-        <input v-model.number="newRoom.capacity" type="number" min="0" class="input w-28" placeholder="Мест" @keyup.enter="addRoom" />
         <button class="btn-primary" @click="addRoom">Добавить</button>
       </div>
-      <table class="w-full">
+      <table class="w-full min-w-[640px]">
         <thead>
           <tr class="text-left text-xs uppercase text-slate-400">
             <th class="table-cell">Номер</th>
             <th class="table-cell">Тип</th>
-            <th class="table-cell">Вместимость</th>
             <th class="table-cell w-32"></th>
           </tr>
         </thead>
@@ -271,7 +246,6 @@ onMounted(loadAll);
           <tr v-for="r in rooms" :key="r.id">
             <td class="table-cell">{{ r.number }}</td>
             <td class="table-cell text-slate-500">{{ r.type || "—" }}</td>
-            <td class="table-cell text-slate-500">{{ r.capacity ?? "—" }}</td>
             <td class="table-cell text-right">
               <button class="btn-ghost" @click="editRoom = { ...r }">Изменить</button>
               <button class="btn-ghost text-red-500" @click="removeRoom(r.id)">✕</button>
@@ -286,7 +260,7 @@ onMounted(loadAll);
 
     <!-- Сетки учебных часов -->
     <div v-if="tab === 'slots'" class="card p-5">
-      <div class="mb-4 flex items-center justify-between">
+      <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p class="text-sm text-slate-500">
           Сетки учебных часов. Создавайте несколько вариантов — их можно выбирать
           при создании расписания и для отдельного дня в конструкторе.
@@ -296,7 +270,7 @@ onMounted(loadAll);
       <div v-if="!grids.length" class="text-sm text-slate-400">
         Сеток пока нет. Создайте первую, чтобы планировать занятия.
       </div>
-      <div v-else class="grid gap-3 sm:grid-cols-2">
+      <div v-else class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
         <div v-for="g in grids" :key="g.id" class="rounded-lg border border-slate-200 p-4">
           <div class="flex items-start justify-between">
             <h3 class="font-semibold text-slate-800">{{ g.name }}</h3>
@@ -313,7 +287,7 @@ onMounted(loadAll);
               v-for="(s, i) in g.slots"
               :key="i"
               class="badge"
-              :class="s.is_break ? 'bg-slate-100 text-slate-400' : 'bg-blue-50 text-blue-700'"
+              :class="s.is_break ? 'bg-slate-100 text-slate-400' : 'bg-brand-50 text-brand-700'"
             >
               {{ s.start }}–{{ s.end }}{{ s.is_break ? " (перерыв)" : "" }}
             </span>
@@ -333,14 +307,6 @@ onMounted(loadAll);
           <label class="label">Кафедра / отдел</label>
           <input v-model="editTeacher.department" class="input" />
         </div>
-        <label class="flex items-center gap-2 text-sm text-slate-600">
-          <input
-            type="checkbox"
-            :checked="!!editTeacher.is_guest"
-            @change="editTeacher.is_guest = $event.target.checked ? 1 : 0"
-          />
-          Приглашенный (не учитывать в проверке накладок)
-        </label>
       </div>
       <template #footer>
         <button class="btn-secondary" @click="editTeacher = null">Отмена</button>
@@ -358,10 +324,6 @@ onMounted(loadAll);
         <div>
           <label class="label">Тип</label>
           <input v-model="editRoom.type" class="input" placeholder="лекционная, компьютерный класс…" />
-        </div>
-        <div>
-          <label class="label">Количество мест</label>
-          <input v-model.number="editRoom.capacity" type="number" min="0" class="input" />
         </div>
       </div>
       <template #footer>
@@ -385,7 +347,7 @@ onMounted(loadAll);
           Отметьте перерывы — они не заполняются занятиями автоматически.
         </p>
         <div class="space-y-2">
-          <div v-for="(s, i) in editGrid.slots" :key="i" class="flex items-center gap-2">
+          <div v-for="(s, i) in editGrid.slots" :key="i" class="flex flex-wrap items-center gap-2">
             <input v-model="s.start" type="time" class="input w-32" />
             <span class="text-slate-400">—</span>
             <input v-model="s.end" type="time" class="input w-32" />
@@ -408,9 +370,24 @@ onMounted(loadAll);
 
 <style scoped>
 .tab {
-  @apply -mb-px border-b-2 border-transparent px-4 py-2 text-sm font-medium text-slate-500 hover:text-slate-700;
+  @apply -mb-px border-b-2 border-transparent px-4 py-2 text-sm font-semibold;
+  border-radius: 0.625rem 0.625rem 0 0;
+  color: var(--text-muted);
+  transition:
+    color 150ms ease,
+    border-color 150ms ease,
+    background-color 150ms ease;
+}
+.tab:hover {
+  color: var(--text-strong);
+  background: var(--surface-subtle);
 }
 .tab-active {
-  @apply border-brand-600 text-brand-700;
+  border-color: var(--brand-600);
+  color: var(--brand-700);
+  background: var(--brand-soft);
+}
+:global(:root[data-theme="dark"]) .tab-active {
+  color: var(--brand-200);
 }
 </style>

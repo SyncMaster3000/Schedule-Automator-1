@@ -2,21 +2,46 @@
 // Карточка одного занятия (или пустого «окошка»). Используется как в плоском
 // списке с drag-and-drop, так и в групповом режиме (две колонки A/B), поэтому
 // время, ручка переноса, чекбокс и бейдж группы скрываются через пропсы.
+import UtpSourceBadge from "./UtpSourceBadge.vue";
+
 const props = defineProps({
   item: { type: Object, required: true },
   selected: { type: Boolean, default: false },
   unallocatedTopics: { type: Array, default: () => [] },
+  unallocatedTopicGroups: { type: Array, default: () => [] },
   teachers: { type: Array, default: () => [] },
   rooms: { type: Array, default: () => [] },
   showDrag: { type: Boolean, default: true },
   showTime: { type: Boolean, default: true },
   showSelect: { type: Boolean, default: true },
+  showPin: { type: Boolean, default: true },
   showGroupBadge: { type: Boolean, default: true },
+  exchangeMode: { type: Boolean, default: false },
+  exchangeRole: { type: String, default: "" }, // '' | 'source' | 'target'
+  exchangeAllowed: { type: Boolean, default: false },
 });
-const emit = defineEmits(["edit", "delete-empty", "assign-topic", "toggle-select"]);
+const emit = defineEmits([
+  "edit",
+  "assign-topic",
+  "add-self-study",
+  "add-org-event",
+  "leave-empty",
+  "delete-empty",
+  "toggle-select",
+  "toggle-pin",
+  "drag-start",
+  "toggle-exchange-target",
+]);
 
 function isSelfStudy(it) {
   return !it.topic_id && it.lesson_type === "self_study";
+}
+
+function topicRemainingHours(topic) {
+  return Math.max(
+    0,
+    Number(topic?.total_hours || 0) - Number(topic?.scheduled_hours || 0),
+  );
 }
 function itemTitle(it) {
   if (isSelfStudy(it)) return "Самоподготовка";
@@ -32,15 +57,15 @@ function isEmptyItem(it) {
     (!it.lesson_type || it.lesson_type === "empty") &&
     !it.room_id &&
     !(it.teacher_ids && it.teacher_ids.length) &&
-    !(it.group_ids && it.group_ids.length) &&
+    !(it.custom_teachers && it.custom_teachers.length) &&
     !it.note
   );
 }
-function teacherNames(ids) {
-  return (ids || [])
+function teacherNames(ids, customNames = []) {
+  const directoryNames = (ids || [])
     .map((id) => props.teachers.find((t) => t.id === id)?.fio)
-    .filter(Boolean)
-    .join(", ");
+    .filter(Boolean);
+  return [...directoryNames, ...customNames].join(", ");
 }
 function roomNumber(id) {
   return props.rooms.find((r) => r.id === id)?.number || "—";
@@ -48,58 +73,130 @@ function roomNumber(id) {
 function conflictTitle(it) {
   return (it.conflicts || []).map((c) => c.message).join("\n");
 }
+function handleSelectionChange() {
+  if (props.exchangeMode) emit("toggle-exchange-target", props.item);
+  else emit("toggle-select", props.item.id);
+}
 </script>
 
 <template>
   <!-- Свободное окошко: пустой слот для вписания занятия -->
   <div
     v-if="isEmptyItem(item)"
-    class="card flex items-center gap-3 border-2 border-dashed border-slate-300 bg-slate-50/70 px-4 py-3 transition"
+    class="card flex flex-wrap items-center gap-3 border-2 border-dashed border-slate-300 bg-slate-50/70 px-4 py-3 transition-colors duration-100"
+    :class="{
+      'border-amber-400 bg-amber-50 ring-2 ring-amber-300': exchangeRole === 'source',
+      'border-emerald-400 bg-emerald-50 ring-2 ring-emerald-300': exchangeRole === 'target',
+      'border-emerald-200 bg-emerald-50/40': exchangeMode && exchangeAllowed && !exchangeRole,
+      'border-rose-200 bg-rose-50/40 opacity-70':
+        exchangeMode && !exchangeAllowed && exchangeRole !== 'source',
+    }"
   >
-    <span v-if="showDrag" class="drag-handle cursor-grab select-none text-slate-300">⋮⋮</span>
+    <input
+      v-if="exchangeMode"
+      type="checkbox"
+      class="shrink-0 accent-emerald-600"
+      :checked="exchangeRole === 'target'"
+      :disabled="!exchangeAllowed"
+      aria-label="Выбрать целевую позицию"
+      @change="handleSelectionChange"
+    />
+    <span
+      v-if="showDrag && (!exchangeMode || exchangeRole === 'source')"
+      class="drag-handle touch-none cursor-grab select-none text-slate-300 active:cursor-grabbing"
+      @pointerdown.stop="emit('drag-start', $event)"
+    >⋮⋮</span>
     <div v-if="showTime" class="w-24 shrink-0 text-sm">
       <div class="text-slate-400">{{ item.start_time }}–{{ item.end_time }}</div>
     </div>
     <div class="min-w-0 flex-1">
       <div class="truncate font-medium italic text-slate-400">Свободное окошко</div>
       <div class="truncate text-xs text-slate-400">
-        Впишите занятие или подставьте нераспределённую тему
+        Впишите занятие или подставьте нераспределенную тему
       </div>
     </div>
     <select
-      class="input h-9 w-56 py-0 text-sm"
+      class="input h-9 w-full py-0 text-sm sm:w-56"
       :disabled="!unallocatedTopics.length"
       @change="emit('assign-topic', item, Number($event.target.value)); $event.target.value = ''"
     >
       <option value="">
-        {{ unallocatedTopics.length ? "Из нераспределённых…" : "Нет нераспределённых" }}
+        {{ unallocatedTopics.length ? "Из нераспределенных…" : "Нет нераспределенных" }}
       </option>
-      <option v-for="t in unallocatedTopics" :key="t.id" :value="t.id">
-        {{ t.utp_number }}. {{ t.title }}
-      </option>
+      <optgroup
+        v-for="group in unallocatedTopicGroups"
+        :key="group.key"
+        :label="group.name"
+      >
+        <option v-for="t in group.topics" :key="t.id" :value="t.id">
+          {{ t.utp_number }}. {{ t.title }} · {{ t.default_lesson_type || "вид не указан" }} · осталось {{ topicRemainingHours(t) }} ч. из {{ t.total_hours }}
+        </option>
+      </optgroup>
     </select>
+    <button
+      class="btn-secondary"
+      title="Заполнить самоподготовкой только для этой группы"
+      @click="emit('add-self-study', item)"
+    >Самоподготовка</button>
+    <button
+      class="btn-secondary"
+      title="Добавить организационное мероприятие для этой группы"
+      @click="emit('add-org-event', item)"
+    >Орг. мероприятие</button>
     <button class="btn-secondary" @click="emit('edit', item)">Вписать занятие</button>
-    <button class="btn-ghost text-slate-400" @click="emit('delete-empty', item)">Удалить</button>
+    <button
+      class="btn-ghost text-slate-500"
+      title="Сохранить этот слот пустым; отмена заполнения сетки его не удалит"
+      @click="emit('leave-empty', item)"
+    >Оставить пустым</button>
+    <button
+      class="btn-ghost text-red-600"
+      title="Удалить именно этот пустой слот"
+      @click="emit('delete-empty', item)"
+    >Удалить слот</button>
   </div>
   <!-- Обычное занятие -->
   <div
     v-else
-    class="card flex items-center gap-3 px-4 py-3 transition"
+    class="card flex flex-wrap items-center gap-3 px-4 py-3 transition-colors duration-100"
     :class="{
       'border-red-400 bg-red-50': item.is_outside_period,
       'conflict-row border-red-200': !item.is_outside_period && item.conflicts && item.conflicts.length,
-      'ring-2 ring-blue-300': selected,
+      'ring-2 ring-brand-300': selected && !exchangeMode,
+      'border-amber-400 bg-amber-50 ring-2 ring-amber-300': exchangeRole === 'source',
+      'border-emerald-400 bg-emerald-50 ring-2 ring-emerald-300': exchangeRole === 'target',
+      'border-emerald-200 bg-emerald-50/40': exchangeMode && exchangeAllowed && !exchangeRole,
+      'border-rose-200 bg-rose-50/40 opacity-70':
+        exchangeMode && !exchangeAllowed && exchangeRole !== 'source',
     }"
     :title="item.is_outside_period ? 'Занятие вне рабочего расписания — попало в нерабочий день при сдвиге. Перенесите вручную или удалите.' : conflictTitle(item)"
   >
     <input
-      v-if="showSelect"
+      v-if="showSelect || exchangeMode"
       type="checkbox"
       class="shrink-0"
-      :checked="selected"
-      @change="emit('toggle-select', item.id)"
+      :class="exchangeMode ? 'accent-emerald-600' : ''"
+      :checked="exchangeMode ? exchangeRole === 'target' : selected"
+      :disabled="exchangeMode && !exchangeAllowed"
+      :aria-label="exchangeMode ? 'Выбрать целевую позицию' : 'Выбрать занятие'"
+      @change="handleSelectionChange"
     />
-    <span v-if="showDrag" class="drag-handle cursor-grab select-none text-slate-300">⋮⋮</span>
+    <button
+      v-if="showPin"
+      class="flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-1 text-xs font-semibold leading-none transition"
+      :class="item.is_pinned ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-slate-200 bg-white text-slate-500 hover:border-brand-300 hover:text-brand-600'"
+      :title="item.is_pinned ? 'Открепить занятие' : 'Закрепить занятие (не смещать при авто-операциях)'"
+      :aria-pressed="Boolean(item.is_pinned)"
+      @click.stop="emit('toggle-pin', item)"
+    >
+      <span aria-hidden="true">{{ item.is_pinned ? "🔒" : "📌" }}</span>
+      <span class="hidden 2xl:inline">{{ item.is_pinned ? "Закреплено" : "Закрепить" }}</span>
+    </button>
+    <span
+      v-if="showDrag && !item.is_pinned && (!exchangeMode || exchangeRole === 'source')"
+      class="drag-handle touch-none cursor-grab select-none text-slate-300 active:cursor-grabbing"
+      @pointerdown.stop="emit('drag-start', $event)"
+    >⋮⋮</span>
     <div v-if="showTime" class="w-24 shrink-0 text-sm">
       <div class="text-slate-400">{{ item.start_time }}–{{ item.end_time }}</div>
     </div>
@@ -111,15 +208,16 @@ function conflictTitle(it) {
         {{ itemTitle(item) }}
         <span
           v-if="showGroupBadge && item.group_label"
-          class="badge ml-1 bg-blue-50 text-blue-700"
+          class="badge ml-1 bg-brand-50 text-brand-700"
         >Группа {{ item.group_label }}</span>
       </div>
+      <UtpSourceBadge :item="item" />
       <div v-if="isSelfStudy(item)" class="truncate text-xs text-slate-400">
         Самостоятельная подготовка
       </div>
       <div v-else class="truncate text-xs text-slate-500">
         <template v-if="item.lesson_type">{{ item.lesson_type }} · </template>
-        {{ teacherNames(item.teacher_ids) || "преп. не назначен" }} ·
+        {{ teacherNames(item.teacher_ids, item.custom_teachers) || "преп. не назначен" }} ·
         ауд. {{ roomNumber(item.room_id) }}
       </div>
     </div>
@@ -138,3 +236,4 @@ function conflictTitle(it) {
     <button class="btn-secondary" @click="emit('edit', item)">Изменить</button>
   </div>
 </template>
+

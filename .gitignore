@@ -31,15 +31,24 @@ node_modules
 /.sass-cache
 /connect.lock
 /coverage
+/backups/
 /libpeerconnection.log
 npm-debug.log
 yarn-error.log
 testem.log
 /typings
+.env
+.env.*
+!.env.example
 
 # System Files
 .DS_Store
 Thumbs.db
+
+# Windows desktop build output (generated locally)
+/electron-app/runtime/
+/electron-app/release/
+/electron-app/.cache/
 
 .cursor/rules/nx-rules.mdc
 .github/instructions/nx.instructions.md

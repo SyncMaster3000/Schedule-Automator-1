@@ -10,7 +10,8 @@ export default {
       "Практическое занятие",
       "Семинар",
       "Круглый стол",
-      "Зачёт",
+      "Зачет",
+      "Собеседование",
       "Экзамен",
     ];
     const used = getDb()
@@ -32,19 +33,19 @@ export default {
 
   // --- Преподаватели ---
   "ref:teachers:list": () =>
-    getDb().prepare("SELECT * FROM teachers ORDER BY department, fio").all(),
+    getDb().prepare("SELECT id, fio, department FROM teachers ORDER BY department, fio").all(),
 
   "ref:teachers:add": (data) => {
     const info = getDb()
-      .prepare("INSERT INTO teachers (fio, department, is_guest) VALUES (?, ?, ?)")
-      .run(data.fio, data.department || null, data.is_guest ? 1 : 0);
+      .prepare("INSERT INTO teachers (fio, department) VALUES (?, ?)")
+      .run(data.fio, data.department || null);
     return { id: info.lastInsertRowid };
   },
 
   "ref:teachers:update": (data) => {
     getDb()
-      .prepare("UPDATE teachers SET fio = ?, department = ?, is_guest = ? WHERE id = ?")
-      .run(data.fio, data.department || null, data.is_guest ? 1 : 0, data.id);
+      .prepare("UPDATE teachers SET fio = ?, department = ? WHERE id = ?")
+      .run(data.fio, data.department || null, data.id);
     return { id: data.id };
   },
 
@@ -55,19 +56,19 @@ export default {
 
   // --- Аудитории ---
   "ref:rooms:list": () =>
-    getDb().prepare("SELECT * FROM rooms ORDER BY number").all(),
+    getDb().prepare("SELECT id, number, type FROM rooms ORDER BY number").all(),
 
   "ref:rooms:add": (data) => {
     const info = getDb()
-      .prepare("INSERT INTO rooms (number, type, capacity) VALUES (?, ?, ?)")
-      .run(data.number, data.type || null, data.capacity ?? null);
+      .prepare("INSERT INTO rooms (number, type) VALUES (?, ?)")
+      .run(data.number, data.type || null);
     return { id: info.lastInsertRowid };
   },
 
   "ref:rooms:update": (data) => {
     getDb()
-      .prepare("UPDATE rooms SET number = ?, type = ?, capacity = ? WHERE id = ?")
-      .run(data.number, data.type || null, data.capacity ?? null, data.id);
+      .prepare("UPDATE rooms SET number = ?, type = ? WHERE id = ?")
+      .run(data.number, data.type || null, data.id);
     return { id: data.id };
   },
 
@@ -133,3 +134,4 @@ export default {
     return { id };
   },
 };
+

@@ -62,6 +62,19 @@ export default defineConfig({
     fs: {
       strict: true,
     },
+    // Локальный запуск вне Replit: роутера, который проксирует /api на api-server,
+    // здесь нет, поэтому проксируем сами. На Replit (REPL_ID задан) прокси не
+    // добавляется — маршрутизацией занимается инфраструктура Replit.
+    ...(process.env.REPL_ID === undefined
+      ? {
+          proxy: {
+            "/api": {
+              target: process.env.API_TARGET || "http://localhost:8080",
+              changeOrigin: true,
+            },
+          },
+        }
+      : {}),
   },
   preview: {
     port,

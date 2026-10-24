@@ -1,41 +1,10 @@
 // Учебные периоды (блоки дат) + полуавтоматическое заполнение очередью тем
 import { getDb, audit } from "../db/index.js";
 import { eachDayOfInterval, parseISO, format } from "date-fns";
-
-const HOURS_PER_SLOT = 2; // академических часов в одном слоте по умолчанию
-
-// Список видов занятий темы по часам: Лекция / Практическое занятие / Круглый стол.
-// Если разбивки нет — равномерно заполняем общий объём практическими занятиями.
-function plannedSlots(topic) {
-  const slots = [];
-  const addType = (hours, type) => {
-    for (let h = 0; h < (hours || 0); h += HOURS_PER_SLOT) slots.push(type);
-  };
-
-  // Тема с заданным видом по умолчанию (напр. «Зачёт»/«Экзамен» из формы
-  // итоговой аттестации) — все её часы заполняются этим видом занятия.
-  if (topic.default_lesson_type) {
-    addType(topic.total_hours || HOURS_PER_SLOT, topic.default_lesson_type);
-    return slots;
-  }
-
-  addType(topic.lecture_hours, "Лекция");
-  addType(topic.practice_hours, "Практическое занятие");
-  addType(topic.roundtable_hours, "Круглый стол");
-
-  const planned =
-    (topic.lecture_hours || 0) +
-    (topic.practice_hours || 0) +
-    (topic.roundtable_hours || 0);
-  const total = topic.total_hours || 0;
-
-  if (slots.length === 0) {
-    addType(total || HOURS_PER_SLOT, "Практическое занятие");
-  } else if (total > planned) {
-    addType(total - planned, "Практическое занятие");
-  }
-  return slots;
-}
+import { listTopicsWithActualProgress } from "./topics.js";
+import { buildAutofillPlan } from "../services/autofillPlanner.js";
+import { rebuildLocksForItem } from "../services/conflicts.js";
+import { planPeriodScheduleRebase } from "../services/periodRebase.js";
 
 function listPeriods(programId) {
   return getDb()
@@ -52,12 +21,32 @@ function isWorkDay(d, workWeek) {
   return true;
 }
 
-// Сформировать список ячеек (дата × слот) в строгом порядке с учётом учебной недели
-function buildCells(startDate, endDate, timeGrid, workWeek = "mon-fri") {
+// У недельного периода Пн–Пт конечная дата обычно приходится на пятницу.
+// При включении субботы продлеваем такую границу на один день, иначе смена
+// режима недели визуально сохранится, но суббота останется за пределами периода.
+function extendEndDateForSaturday(endDate, previousWorkWeek, nextWorkWeek) {
+  if (previousWorkWeek === "mon-sat" || nextWorkWeek !== "mon-sat") return endDate;
+  const end = parseISO(endDate);
+  if (end.getDay() !== 5) return endDate;
+  end.setDate(end.getDate() + 1);
+  return format(end, "yyyy-MM-dd");
+}
+
+// Сформировать список ячеек (дата × слот) в строгом порядке с учетом учебной недели
+function buildCells(
+  startDate,
+  endDate,
+  timeGrid,
+  workWeek = "mon-fri",
+  excludedDates = [],
+) {
+  const excluded = new Set(excludedDates || []);
   const days = eachDayOfInterval({
     start: parseISO(startDate),
     end: parseISO(endDate),
-  }).filter((d) => isWorkDay(d, workWeek));
+  }).filter(
+    (d) => isWorkDay(d, workWeek) && !excluded.has(format(d, "yyyy-MM-dd")),
+  );
   const slots = (timeGrid || []).filter((s) => !s.is_break);
   const cells = [];
   for (const d of days) {
@@ -67,6 +56,77 @@ function buildCells(startDate, endDate, timeGrid, workWeek = "mon-fri") {
     }
   }
   return cells;
+}
+
+function parsedGrid(value) {
+  if (Array.isArray(value)) return value;
+  try {
+    const parsed = JSON.parse(value || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function periodCalendarChanged(current, next) {
+  return (
+    String(current.start_date) !== String(next.start_date) ||
+    String(current.end_date) !== String(next.end_date) ||
+    String(current.work_week || "mon-fri") !==
+      String(next.work_week || "mon-fri") ||
+    JSON.stringify(parsedGrid(current.time_grid_json)) !==
+      JSON.stringify(parsedGrid(next.time_grid))
+  );
+}
+
+function rebasePeriodSchedule(db, current, next) {
+  const items = db
+    .prepare(
+      `SELECT * FROM schedule_items
+       WHERE period_id = ?
+       ORDER BY date, start_time, sort_order, id`,
+    )
+    .all(current.id);
+  const cells = buildCells(
+    next.start_date,
+    next.end_date,
+    parsedGrid(next.time_grid),
+    next.work_week || "mon-fri",
+    [],
+  );
+  const plan = planPeriodScheduleRebase(items, cells);
+
+  db.prepare("DELETE FROM locks WHERE period_id = ?").run(current.id);
+  db.prepare("DELETE FROM schedule_temp_items WHERE period_id = ?").run(
+    current.id,
+  );
+  const updateItem = db.prepare(
+    `UPDATE schedule_items
+     SET date = ?, start_time = ?, end_time = ?, start_dt = ?, end_dt = ?,
+         is_outside_period = 0, grid_fill_id = NULL,
+         grid_fill_signature = NULL
+     WHERE id = ? AND period_id = ?`,
+  );
+  for (const assignment of plan.assignments) {
+    updateItem.run(
+      assignment.date,
+      assignment.start,
+      assignment.end,
+      `${assignment.date}T${assignment.start}:00`,
+      `${assignment.date}T${assignment.end}:00`,
+      assignment.itemId,
+      current.id,
+    );
+  }
+  const savedItems = db
+    .prepare(
+      `SELECT * FROM schedule_items
+       WHERE period_id = ?
+       ORDER BY date, start_time, sort_order, id`,
+    )
+    .all(current.id);
+  for (const item of savedItems) rebuildLocksForItem(item);
+  return plan;
 }
 
 const handlers = {
@@ -102,7 +162,14 @@ const handlers = {
         );
       const periodId = info.lastInsertRowid;
 
-      const groupNames = Array.isArray(data.groups) ? data.groups : [];
+      // Интерфейс и алгоритм групповой сетки рассчитаны максимум на две группы.
+      const groupNames = [
+        ...new Set(
+          (Array.isArray(data.groups) ? data.groups : [])
+            .map((name) => String(name || "").trim())
+            .filter(Boolean),
+        ),
+      ].slice(0, 2);
       const groupIds = [];
       const insertGroup = db.prepare(
         "INSERT INTO groups (period_id, name, is_active) VALUES (?, ?, 1)"
@@ -122,33 +189,91 @@ const handlers = {
     const res = tx();
 
     // Автозаполнение оставшимися темами очереди
-    if (data.autofill) {
-      handlers["periods:autofill"]({ programId, periodId: res.periodId });
-    }
-    return res;
+    const autofill = data.autofill
+      ? handlers["periods:autofill"]({ programId, periodId: res.periodId })
+      : null;
+    return { ...res, autofill };
   },
 
   "periods:update": (data) => {
     const db = getDb();
     const cur = db.prepare("SELECT * FROM periods WHERE id = ?").get(data.id);
     if (!cur) throw new Error("Период не найден");
-    db.prepare(
-      `UPDATE periods SET name = ?, start_date = ?, end_date = ?,
-         time_grid_json = ?, status = ?, work_week = ?, empty_slot_mode = ?,
-         group_mode = ?, separate_lectures = ? WHERE id = ?`
-    ).run(
-      data.name,
-      data.start_date,
-      data.end_date,
-      data.time_grid != null ? JSON.stringify(data.time_grid) : cur.time_grid_json,
-      data.status || "active",
-      data.work_week || cur.work_week || "mon-fri",
-      data.empty_slot_mode || cur.empty_slot_mode || "empty",
-      data.group_mode != null ? (data.group_mode ? 1 : 0) : cur.group_mode,
-      data.separate_lectures != null ? (data.separate_lectures ? 1 : 0) : cur.separate_lectures,
-      data.id
-    );
-    return { id: data.id };
+    const next = {
+      name: data.name ?? cur.name,
+      start_date: data.start_date ?? cur.start_date,
+      end_date: data.end_date ?? cur.end_date,
+      time_grid:
+        data.time_grid != null
+          ? data.time_grid
+          : parsedGrid(cur.time_grid_json),
+      status: data.status || cur.status || "active",
+      work_week: data.work_week || cur.work_week || "mon-fri",
+      empty_slot_mode:
+        data.empty_slot_mode || cur.empty_slot_mode || "empty",
+      group_mode:
+        data.group_mode != null
+          ? data.group_mode
+            ? 1
+            : 0
+          : cur.group_mode,
+      separate_lectures:
+        data.separate_lectures != null
+          ? data.separate_lectures
+            ? 1
+            : 0
+          : cur.separate_lectures,
+    };
+    const rebase = periodCalendarChanged(cur, next);
+    const tx = db.transaction(() => {
+      const plan = rebase
+        ? rebasePeriodSchedule(db, cur, next)
+        : {
+            movedItems: 0,
+            movedRows: 0,
+            availableCells: 0,
+          };
+      db.prepare(
+        `UPDATE periods SET name = ?, start_date = ?, end_date = ?,
+           time_grid_json = ?, status = ?, work_week = ?, empty_slot_mode = ?,
+           group_mode = ?, separate_lectures = ?,
+           day_grids_json = ?, excluded_dates_json = ?,
+           last_grid_fill_id = ?
+         WHERE id = ?`,
+      ).run(
+        next.name,
+        next.start_date,
+        next.end_date,
+        JSON.stringify(next.time_grid),
+        next.status,
+        next.work_week,
+        next.empty_slot_mode,
+        next.group_mode,
+        next.separate_lectures,
+        rebase ? "{}" : cur.day_grids_json || "{}",
+        rebase ? "[]" : cur.excluded_dates_json || "[]",
+        rebase ? null : cur.last_grid_fill_id,
+        data.id,
+      );
+      if (rebase) {
+        audit(cur.program_id, cur.id, "period_rebased", {
+          previousStartDate: cur.start_date,
+          previousEndDate: cur.end_date,
+          startDate: next.start_date,
+          endDate: next.end_date,
+          movedItems: plan.movedItems,
+          movedRows: plan.movedRows,
+        });
+      }
+      return plan;
+    });
+    const plan = tx();
+    return {
+      id: data.id,
+      rebased: rebase,
+      movedItems: plan.movedItems,
+      movedRows: plan.movedRows,
+    };
   },
 
   // Изменить только настройки периода (учебная неделя, режим пустых слотов, группы)
@@ -157,26 +282,56 @@ const handlers = {
     const db = getDb();
     const cur = db.prepare("SELECT * FROM periods WHERE id = ?").get(data.id);
     if (!cur) throw new Error("Период не найден");
+    const workWeek = data.work_week || cur.work_week || "mon-fri";
+    const endDate = extendEndDateForSaturday(cur.end_date, cur.work_week, workWeek);
     db.prepare(
-      `UPDATE periods SET work_week = ?, empty_slot_mode = ?,
+      `UPDATE periods SET end_date = ?, work_week = ?, empty_slot_mode = ?,
          group_mode = ?, separate_lectures = ? WHERE id = ?`
     ).run(
-      data.work_week || cur.work_week || "mon-fri",
+      endDate,
+      workWeek,
       data.empty_slot_mode || cur.empty_slot_mode || "empty",
       data.group_mode != null ? (data.group_mode ? 1 : 0) : cur.group_mode,
       data.separate_lectures != null ? (data.separate_lectures ? 1 : 0) : cur.separate_lectures,
       data.id
     );
-    return { id: data.id };
+    return { id: data.id, end_date: endDate };
   },
 
+  // Сохранить выбор сетки учебных часов для конкретной даты периода.
+  "periods:setDayGrid": (data) => {
+    const db = getDb();
+    const period = db.prepare("SELECT * FROM periods WHERE id = ?").get(data.id);
+    if (!period) throw new Error("Период не найден");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(data.date || "")) throw new Error("Некорректная дата");
+    const dayGrids = JSON.parse(period.day_grids_json || "{}");
+    if (data.gridId) {
+      const grid = db.prepare("SELECT id FROM time_grids WHERE id = ?").get(data.gridId);
+      if (!grid) throw new Error("Сетка учебных часов не найдена");
+      dayGrids[data.date] = Number(data.gridId);
+    } else {
+      delete dayGrids[data.date];
+    }
+    db.prepare("UPDATE periods SET day_grids_json = ? WHERE id = ?").run(
+      JSON.stringify(dayGrids),
+      data.id
+    );
+    audit(period.program_id, period.id, "day_grid_selected", {
+      date: data.date,
+      gridId: data.gridId || null,
+    });
+    return { id: data.id, date: data.date, gridId: data.gridId || null };
+
+  },
   "periods:delete": (id) => {
     getDb().prepare("DELETE FROM periods WHERE id = ?").run(id);
     return { id };
   },
 
-  // Полуавтоматическое заполнение периода следующими нераспределёнными темами.
-  // Соблюдается строгий порядок очереди; темы partial идут первыми.
+  // Полуавтоматическое заполнение периода фактически нераспределёнными темами.
+  // Для двух групп лекции по умолчанию общие, а остальные занятия размещаются
+  // в двух колонках одного временного слота. Одинаковая практическая/семинарская
+  // тема одновременно обеим группам не назначается.
   "periods:autofill": (data) => {
     const db = getDb();
     const { programId, periodId } = data;
@@ -188,68 +343,136 @@ const handlers = {
       period.start_date,
       period.end_date,
       timeGrid,
-      period.work_week || "mon-fri"
+      period.work_week || "mon-fri",
+      JSON.parse(period.excluded_dates_json || "[]"),
     );
 
-    const topics = db
-      .prepare(
-        `SELECT * FROM program_topics
-         WHERE program_id = ? AND excluded = 0 AND status IN ('pending', 'partial')
-         ORDER BY (status = 'partial') DESC, sort_order`
+    const activeGroups = period.group_mode
+      ? db
+          .prepare(
+            "SELECT id, name FROM groups WHERE period_id = ? AND is_active = 1 ORDER BY id",
+          )
+          .all(periodId)
+          .slice(0, 2)
+      : [];
+    const targetGroupCount = activeGroups.length > 1 ? 2 : 1;
+    const topics = listTopicsWithActualProgress(db, programId, {
+      onlyIncluded: true,
+    })
+      .filter(
+        (topic) =>
+          !topic.is_section &&
+          Number(topic.total_hours || 0) > 0 &&
+          topic.status !== "scheduled" &&
+          topic.status !== "completed",
       )
-      .all(programId);
+      .sort((a, b) => {
+        if (a.status === "partial" && b.status !== "partial") return -1;
+        if (b.status === "partial" && a.status !== "partial") return 1;
+        return Number(a.sort_order || 0) - Number(b.sort_order || 0);
+      });
 
-    let cellIdx = 0;
+    const autofillPlan = buildAutofillPlan({
+      topics,
+      cells,
+      groupCount: targetGroupCount,
+      groupMode: !!period.group_mode,
+      separateLectures: !!period.separate_lectures,
+    });
+
     let created = 0;
+    let rowsUsed = 0;
+    let sharedCreated = 0;
+    let separateCreated = 0;
+    let sortOrder =
+      Number(
+        db
+          .prepare(
+            "SELECT MAX(sort_order) AS value FROM schedule_items WHERE period_id = ?",
+          )
+          .get(periodId)?.value || 0,
+      ) + 1;
     const insertItem = db.prepare(
       `INSERT INTO schedule_items
         (period_id, program_id, topic_id, date, start_time, end_time, start_dt, end_dt,
-         lesson_type, teacher_ids, room_id, group_ids, sort_order)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', NULL, '[]', ?)`
+         lesson_type, teacher_ids, room_id, group_ids, group_label, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', NULL, ?, ?, ?)`
     );
 
+    const insertEntry = (entry, cell, groupsForItem) => {
+      insertItem.run(
+        periodId,
+        programId,
+        entry.topicId,
+        cell.date,
+        cell.start,
+        cell.end,
+        `${cell.date}T${cell.start}:00`,
+        `${cell.date}T${cell.end}:00`,
+        entry.lessonType,
+        JSON.stringify(groupsForItem.map((group) => group.id)),
+        groupsForItem.length ? groupsForItem.map((group) => group.name).join("; ") : null,
+        sortOrder++,
+      );
+      created += 1;
+    };
+
     const tx = db.transaction(() => {
-      for (const topic of topics) {
-        const slots = plannedSlots(topic);
-        let placed = 0;
-
-        for (const lessonType of slots) {
-          if (cellIdx >= cells.length) break;
-          const cell = cells[cellIdx++];
-          insertItem.run(
-            periodId,
-            programId,
-            topic.id,
-            cell.date,
-            cell.start,
-            cell.end,
-            `${cell.date}T${cell.start}:00`,
-            `${cell.date}T${cell.end}:00`,
-            lessonType,
-            created
-          );
-          created += 1;
-          placed += 1;
+      for (const row of autofillPlan.rows) {
+        for (const assignment of row.assignments) {
+          const groupsForItem = activeGroups.length
+            ? assignment.groupIndexes
+                .map((groupIndex) => activeGroups[groupIndex])
+                .filter(Boolean)
+            : [];
+          insertEntry(assignment.entry, row.cell, groupsForItem);
+          if (assignment.groupIndexes.length > 1) sharedCreated += 1;
+          else separateCreated += 1;
         }
+        rowsUsed += 1;
+      }
 
-        const fullyScheduled = placed >= slots.length;
-        const scheduledHours = placed * HOURS_PER_SLOT;
-        db.prepare(
-          `UPDATE program_topics SET status = ?, assigned_period_id = ?, scheduled_hours = ?
-           WHERE id = ?`
-        ).run(
-          fullyScheduled ? "scheduled" : "partial",
-          periodId,
-          scheduledHours,
-          topic.id
+      // Сохраняем вычисленный по фактическим занятиям прогресс. Это также
+      // исправляет старые статусы, из-за которых автозаполнение создавало 0 строк.
+      const refreshedTopics = listTopicsWithActualProgress(db, programId);
+      const updateProgress = db.prepare(
+        `UPDATE program_topics
+         SET status = ?, assigned_period_id = ?, scheduled_hours = ?
+         WHERE id = ?`,
+      );
+      for (const topic of refreshedTopics) {
+        updateProgress.run(
+          topic.status,
+          topic.assigned_period_id,
+          topic.scheduled_hours,
+          topic.id,
         );
-
-        if (cellIdx >= cells.length && !fullyScheduled) break;
       }
     });
     tx();
-    audit(programId, periodId, "period_autofilled", { created });
-    return { created };
+    const remainingUnits = autofillPlan.remainingUnits;
+    audit(programId, periodId, "period_autofilled", {
+      created,
+      rowsUsed,
+      sharedCreated,
+      separateCreated,
+      remainingUnits,
+      groupCount: targetGroupCount,
+      blockedAssessmentUnits: autofillPlan.blockedAssessmentUnits,
+      planCount: autofillPlan.planCount,
+      plansUsed: autofillPlan.plansUsed,
+    });
+    return {
+      created,
+      rowsUsed,
+      sharedCreated,
+      separateCreated,
+      remainingUnits,
+      groupCount: targetGroupCount,
+      blockedAssessmentUnits: autofillPlan.blockedAssessmentUnits,
+      planCount: autofillPlan.planCount,
+      plansUsed: autofillPlan.plansUsed,
+    };
   },
 };
 
@@ -273,3 +496,4 @@ export function buildExtendedCells(startDate, endDate, timeGrid) {
   }
   return cells;
 }
+

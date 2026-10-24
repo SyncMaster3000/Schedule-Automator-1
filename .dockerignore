@@ -1,0 +1,15 @@
+.git
+.github
+.superdesign
+.env
+.env.*
+!.env.example
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+electron-app/.cache
+electron-app/release
+electron-app/runtime
+artifacts/api-server/schedule-data
+coverage
+tmp

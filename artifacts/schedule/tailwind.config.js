@@ -1,32 +1,48 @@
 /** @type {import('tailwindcss').Config} */
 export default {
+  darkMode: "class",
   content: ["./index.html", "./src/**/*.{vue,js,ts,jsx,tsx,html}"],
   theme: {
     extend: {
       colors: {
-        // Сдержанная корпоративная палитра (slate/blue) + акцентные статусы
+        // Спокойный кобальт: уверенный акцент без излишней яркости.
         brand: {
-          50: "#eff6ff",
-          100: "#dbeafe",
-          200: "#bfdbfe",
-          300: "#93c5fd",
-          400: "#60a5fa",
-          500: "#3b82f6",
-          600: "#2563eb",
-          700: "#1d4ed8",
-          800: "#1e40af",
-          900: "#1e3a8a",
+          50: "#f0f4ff",
+          100: "#e0e8fb",
+          200: "#c4d2f4",
+          300: "#9eb3e8",
+          400: "#7891d8",
+          500: "#5b73c2",
+          600: "#465ca8",
+          700: "#394a89",
+          800: "#303e70",
+          900: "#263258",
+          950: "#19213c",
         },
       },
       fontFamily: {
-        sans: [
-          "Inter",
-          "-apple-system",
-          "BlinkMacSystemFont",
+        display: [
+          "Segoe UI Variable",
           "Segoe UI",
-          "Roboto",
+          "Noto Sans",
+          "DejaVu Sans",
+          "Arial",
           "sans-serif",
         ],
+        sans: [
+          "Segoe UI Variable",
+          "Segoe UI",
+          "Noto Sans",
+          "DejaVu Sans",
+          "Arial",
+          "sans-serif",
+        ],
+      },
+      boxShadow: {
+        card:
+          "0 1px 2px rgba(21, 31, 51, 0.04), 0 8px 24px rgba(31, 42, 73, 0.06)",
+        "card-hover":
+          "0 2px 5px rgba(21, 31, 51, 0.06), 0 14px 32px rgba(31, 42, 73, 0.1)",
       },
     },
   },
